@@ -16,7 +16,7 @@ A device mounted at the centre of a kayak paddle shaft that measures paddle cycl
 
 | Component | Part |
 |-----------|------|
-| Processor | ESP32 |
+| Processor | WEMOS LOLIN32 Lite (ESP32) |
 | IMU | Bosch BNO085 |
 | IMU Interface | SPI |
 | IDE | Arduino IDE |
@@ -131,3 +131,136 @@ PaddleStroke v1.0 — ready
 | 1 | **Cycle rate** is reported (one left stroke + one right stroke = one cycle). |
 | 2 | BNO085 is mounted at the **centre of the paddle shaft**; roll = rotation about the shaft's long axis. |
 | 3 | Rate averaging uses an **event-based window** (last 4 qualifying cycles). |
+
+---
+
+## 8. Test Plan
+
+All tests are manual, performed with the ESP32 connected via USB and the Arduino Serial Monitor open at **115200 baud**. Unless stated otherwise, the BNO085 is connected and the firmware is freshly flashed.
+
+---
+
+### T-01 Startup Banner
+
+**Steps:**
+1. Flash firmware and power-cycle the ESP32.
+2. Observe serial output within 2 s.
+
+**Pass:** The first line received is exactly `PaddleStroke v1.0 — ready`.
+
+---
+
+### T-02 IMU Initialisation Failure
+
+**Steps:**
+1. Disconnect the BNO085 SPI wiring (or remove the chip).
+2. Flash firmware and power-cycle.
+3. Observe serial output.
+
+**Pass:** An error message indicating IMU failure is printed and no further output is produced (firmware halts).
+
+---
+
+### T-03 Static / No Motion — Timeout Output
+
+**Steps:**
+1. Hold the paddle completely still for at least 4 s after startup.
+2. Observe serial output.
+
+**Pass:** After 3 s of no qualifying cycles, the line `CYCLE_RATE: 0 CPM  (0.00 Hz)` is emitted, with no spurious cycle-rate lines before it.
+
+---
+
+### T-04 Amplitude Gate — Below Threshold (< 45°)
+
+**Steps:**
+1. Rotate the paddle shaft slowly back and forth through an arc of approximately 20°–30° (well below 45°) at a rate that would otherwise be valid (≈ 1 Hz).
+2. Observe serial output for 10 s.
+
+**Pass:** No `CYCLE_RATE` lines with a non-zero rate are emitted; the 3 s timeout line may appear.
+
+---
+
+### T-05 Amplitude Gate — Above Threshold (≥ 45°)
+
+**Steps:**
+1. Rotate the paddle shaft through a smooth ±45° arc (90° peak-to-trough) at approximately 1 Hz.
+2. Observe serial output.
+
+**Pass:** Non-zero `CYCLE_RATE` lines are emitted within one cycle period of the first qualifying cycle.
+
+---
+
+### T-06 Rate Gate — Too Fast (> 2.5 Hz)
+
+**Steps:**
+1. Oscillate the paddle shaft through ≥ 45° at approximately 3 Hz (one cycle every ≈ 0.33 s).
+2. Observe serial output for 10 s.
+
+**Pass:** No non-zero `CYCLE_RATE` lines are emitted; cycles at this period are discarded.
+
+---
+
+### T-07 Rate Gate — Too Slow (< 0.25 Hz)
+
+**Steps:**
+1. Oscillate the paddle shaft through ≥ 45° with a period of approximately 5 s per cycle.
+2. Observe serial output.
+
+**Pass:** No non-zero `CYCLE_RATE` lines are emitted for those slow cycles; the 3 s timeout line may appear mid-cycle.
+
+---
+
+### T-08 Rate Gate — Valid Boundaries
+
+**Steps:**
+1. Perform cycles at approximately 0.25 Hz (4.0 s period). Record whether accepted.
+2. Perform cycles at approximately 2.5 Hz (0.4 s period). Record whether accepted.
+
+**Pass:** Both boundary rates produce non-zero `CYCLE_RATE` output.
+
+---
+
+### T-09 Output Format
+
+**Steps:**
+1. Paddle at a steady ≈ 1 Hz for several cycles.
+2. Copy 3–5 consecutive `CYCLE_RATE` lines from the serial monitor.
+
+**Pass:** Every line matches one of the two valid formats exactly:
+- `CYCLE_RATE: <integer> CPM  (<two-decimal> Hz)` — two spaces between `CPM` and `(`
+- `CYCLE_RATE: 0 CPM  (0.00 Hz)`
+
+No trailing spaces, no extra fields, no missing fields.
+
+---
+
+### T-10 Rate Averaging (4-Cycle Window)
+
+**Steps:**
+1. Paddle at a steady 1.0 Hz (60 CPM) for 5 cycles; note reported rates.
+2. Abruptly increase to ≈ 2.0 Hz (120 CPM) for 4 more cycles; note reported rates after each cycle.
+
+**Pass:**
+- During the step-change, the reported rate blends gradually over 4 cycles rather than jumping immediately.
+- After 4 cycles at the new rate, the reported value is within ±5 CPM of 120 CPM.
+
+---
+
+### T-11 Output Latency
+
+**Steps:**
+1. Paddle at ≈ 1 Hz.
+2. With a second observer or video capture, estimate the time from the moment a cycle visually completes (paddle returns to starting position) to when the serial line appears.
+
+**Pass:** Latency is consistently below 500 ms.
+
+---
+
+### T-12 Sustained Operation
+
+**Steps:**
+1. Paddle at a steady ≈ 1 Hz for 5 minutes without interruption.
+2. Observe output throughout.
+
+**Pass:** Output remains continuous and correctly formatted; no freezes, crashes, or garbled lines.
