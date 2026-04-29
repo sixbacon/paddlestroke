@@ -1,12 +1,16 @@
 #include "StrokeDetector.h"
 #include <math.h>
 
-static const float         AMPLITUDE_GATE_DEG = 45.0f;
-static const float         PERIOD_MIN_S       = 0.4f;
-static const float         PERIOD_MAX_S       = 4.0f;
-static const unsigned long TIMEOUT_US         = 3000000UL;
+static const float         AMPLITUDE_GATE_DEG   = 45.0f;
+static const float         PERIOD_MIN_S         = 0.4f;
+static const float         PERIOD_MAX_S         = 4.0f;
+static const unsigned long TIMEOUT_US           = 3000000UL;
+static const unsigned long MIN_EXTREMA_INTERVAL = 200000UL;  // 200 ms — half of min valid period
 
 void StrokeDetector::reset() {
+    _inBuf[0] = _inBuf[1] = _inBuf[2] = 0.0f;
+    _inFill = 0;
+
     _prev2 = _prev1 = _curr = 0.0f;
     _samplesSeen = 0;
     _prevTs = 0;
@@ -23,6 +27,11 @@ void StrokeDetector::reset() {
 }
 
 bool StrokeDetector::update(float rollDeg, unsigned long timestampUs) {
+    // 3-sample moving average — suppresses noise-induced false extrema
+    _inBuf[2] = _inBuf[1]; _inBuf[1] = _inBuf[0]; _inBuf[0] = rollDeg;
+    if (_inFill < 3) _inFill++;
+    rollDeg = (_inBuf[0] + _inBuf[1] + _inBuf[2]) / (float)_inFill;
+
     unsigned long candidateTs = _prevTs;
 
     _prev2 = _prev1;
@@ -47,6 +56,8 @@ bool StrokeDetector::_onExtrema(bool isPeak, float val, unsigned long tsUs) {
     bool qualified = false;
 
     if (isPeak) {
+        if (_hasPeak && (tsUs - _lastPeakTs) < MIN_EXTREMA_INTERVAL) return false;
+
         if (!_hasTrough) {
             _lastPeakVal = val; _lastPeakTs = tsUs; _hasPeak = true;
             return false;
@@ -66,6 +77,8 @@ bool StrokeDetector::_onExtrema(bool isPeak, float val, unsigned long tsUs) {
         _lastPeakVal = val; _lastPeakTs = tsUs; _hasPeak = true;
 
     } else {
+        if (_hasTrough && (tsUs - _lastTroughTs) < MIN_EXTREMA_INTERVAL) return false;
+
         if (!_hasPeak) {
             _lastTroughVal = val; _lastTroughTs = tsUs; _hasTrough = true;
             return false;

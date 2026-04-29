@@ -9,6 +9,9 @@ public:
     bool isTimedOut(unsigned long nowUs) const;
 
 private:
+    float         _inBuf[3];
+    uint8_t       _inFill;
+
     float         _prev2, _prev1, _curr;
     uint8_t       _samplesSeen;
     unsigned long _prevTs;

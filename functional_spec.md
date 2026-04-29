@@ -1,8 +1,8 @@
 # Kayak Paddle Stroke Rate Monitor — Functional Specification
 
 **Project:** paddlestroke  
-**Date:** 23 April 2026  
-**Version:** 1.1
+**Date:** 29 April 2026  
+**Version:** 1.2
 
 ---
 
@@ -19,8 +19,35 @@ A device mounted at the centre of a kayak paddle shaft that measures paddle cycl
 | Processor | WEMOS LOLIN32 Lite (ESP32) |
 | IMU | Bosch BNO085 |
 | IMU Interface | SPI |
+| Storage | Micro SD card reader |
 | IDE | Arduino IDE |
 | IMU Library | Adafruit_BNO08x |
+
+### 2.1 Wiring — WEMOS LOLIN32 Lite ↔ BNO085
+
+| WEMOS LOLIN32 Lite | BNO085 |
+|--------------------|--------|
+| +3V3 | Vin |
+| +3V3 | P0 |
+| +3V3 | P1 |
+| GND | GND |
+| GPIO4 | INT |
+| GPIO5 | CS |
+| GPIO16 | RST |
+| GPIO18 | SCL |
+| GPIO19 | SDA |
+| GPIO23 | DI |
+
+### 2.2 Wiring — WEMOS LOLIN32 Lite ↔ Micro SD Card Reader
+
+| WEMOS LOLIN32 Lite | SD Card Reader |
+|--------------------|----------------|
+| +3V3 | Vcc |
+| GND | GND |
+| GPIO12 | MISO |
+| GPIO13 | MOSI |
+| GPIO14 | SCK |
+| GPIO27 | CS |
 
 ---
 
@@ -114,11 +141,15 @@ PaddleStroke v1.0 — ready
 
 ---
 
-## 6. Out of Scope
+## 6. Out of Scope (Phase 1–2)
+
+The following are excluded from the current implementation. Items marked with a target phase are planned for later work.
 
 - Display (LCD, OLED, etc.)
-- Bluetooth or Wi-Fi transmission
-- Stroke count accumulation or session logging
+- Bluetooth / BLE / ESPnow transmission *(Phase 5)*
+- Mobile app for stroke-rate display *(Phase 5)*
+- SD card logging of IMU data *(Phase 3)*
+- Low-power / sleep mode with motion wake-up *(Phase 4)*
 - Forward speed or GPS integration
 - Calibration UI
 
@@ -134,7 +165,19 @@ PaddleStroke v1.0 — ready
 
 ---
 
-## 8. Test Plan
+## 8. Development Roadmap
+
+| Phase | Description |
+|-------|-------------|
+| **1** | Develop stroke detection algorithm and test it. *(Complete)* |
+| **2** | Develop full stroke measurement unit based on hardware; test over USB serial in the laboratory using a dummy paddle. |
+| **3** | Add logging of all orientation and position data to the micro SD card; test in the laboratory. |
+| **4** | *(Field testing — outside AI scope.)* Test on a real paddle in a kayak on the water. Analyse recorded data to confirm roll is the best signal for stroke-rate detection. Implement low-power mode; wake up periodically to check for appropriate movement and switch the device into operational mode. |
+| **5** | Improve stroke detection algorithm if field data indicates it is necessary. Transmit stroke rate and battery charge to other devices via BLE and ESPnow. Develop a mobile-phone app to display stroke rate. |
+
+---
+
+## 9. Test Plan
 
 All tests are manual, performed with the ESP32 connected via USB and the Arduino Serial Monitor open at **115200 baud**. Unless stated otherwise, the BNO085 is connected and the firmware is freshly flashed.
 

@@ -37,6 +37,56 @@ static float feedSine(float ampDeg, float freqHz, int numCycles,
     return lastRate;
 }
 
+// Feed numCycles of a sine with uniform additive noise (noiseFrac = fraction of ampDeg).
+// Uses Arduino random(); call randomSeed() before this for reproducibility.
+static float feedSineNoisy(float ampDeg, float freqHz, int numCycles,
+                           unsigned long startUs, float noiseFrac,
+                           float* outRates, int* outCount) {
+    int   nSamples = (int)(numCycles / freqHz * SAMPLE_RATE_HZ);
+    float lastRate = 0.0f;
+    int   captured = 0;
+    float noiseAmp = ampDeg * noiseFrac;
+
+    for (int i = 0; i < nSamples; i++) {
+        unsigned long tUs   = startUs + (unsigned long)i * SAMPLE_INTERVAL_US;
+        float tSec          = tUs / 1000000.0f;
+        float signal        = ampDeg * sinf(2.0f * (float)M_PI * freqHz * tSec);
+        float noise         = (random(-10000, 10001) / 10000.0f) * noiseAmp;
+        if (det.update(signal + noise, tUs)) {
+            lastRate = det.getRateHz();
+            if (outRates && outCount) outRates[captured++] = lastRate;
+        }
+    }
+    if (outCount) *outCount = captured;
+    return lastRate;
+}
+
+// Feed numCycles of an asymmetric sine where the positive peak is (1+posExcessFrac)
+// times the magnitude of the negative trough.  Zero crossings are unaffected so
+// the period (and therefore the reported rate) is unchanged.
+static float feedSineAsymmetric(float baseAmpDeg, float freqHz, int numCycles,
+                                unsigned long startUs, float posExcessFrac,
+                                float* outRates, int* outCount) {
+    int   nSamples = (int)(numCycles / freqHz * SAMPLE_RATE_HZ);
+    float lastRate = 0.0f;
+    int   captured = 0;
+    float posAmp   = baseAmpDeg * (1.0f + posExcessFrac);
+    float negAmp   = baseAmpDeg;
+
+    for (int i = 0; i < nSamples; i++) {
+        unsigned long tUs = startUs + (unsigned long)i * SAMPLE_INTERVAL_US;
+        float tSec        = tUs / 1000000.0f;
+        float s           = sinf(2.0f * (float)M_PI * freqHz * tSec);
+        float roll        = s >= 0.0f ? s * posAmp : s * negAmp;
+        if (det.update(roll, tUs)) {
+            lastRate = det.getRateHz();
+            if (outRates && outCount) outRates[captured++] = lastRate;
+        }
+    }
+    if (outCount) *outCount = captured;
+    return lastRate;
+}
+
 // Pass/fail for a rate check
 static bool checkRate(const char* id, const char* desc,
                       float reportedHz, float expectedHz, float tolHz) {
@@ -208,6 +258,60 @@ static void st12() {
     if (pass) g_passed++; else g_failed++;
 }
 
+// Noise robustness: uniform additive noise at 1 / 2 / 5 / 10 % of amplitude.
+// A fixed seed makes each run deterministic and reproducible.
+
+static void st13() {
+    det.reset(); randomSeed(42);
+    float r = feedSineNoisy(60.0f, 1.0f, 8, 0, 0.01f, nullptr, nullptr);
+    checkRate("ST-13", "1% noise, 1 Hz +/-60deg", r, 1.0f, RATE_TOL_HZ);
+}
+
+static void st14() {
+    det.reset(); randomSeed(42);
+    float r = feedSineNoisy(60.0f, 1.0f, 8, 0, 0.02f, nullptr, nullptr);
+    checkRate("ST-14", "2% noise, 1 Hz +/-60deg", r, 1.0f, RATE_TOL_HZ);
+}
+
+static void st15() {
+    det.reset(); randomSeed(42);
+    float r = feedSineNoisy(60.0f, 1.0f, 8, 0, 0.05f, nullptr, nullptr);
+    checkRate("ST-15", "5% noise, 1 Hz +/-60deg", r, 1.0f, RATE_TOL_HZ);
+}
+
+static void st16() {
+    det.reset(); randomSeed(42);
+    float r = feedSineNoisy(60.0f, 1.0f, 8, 0, 0.10f, nullptr, nullptr);
+    checkRate("ST-16", "10% noise, 1 Hz +/-60deg", r, 1.0f, RATE_TOL_HZ);
+}
+
+// Asymmetry robustness: positive peak is 1 / 2 / 5 / 10 % larger than the
+// negative peak magnitude.  Period is unchanged so reported rate must match.
+
+static void st17() {
+    det.reset();
+    float r = feedSineAsymmetric(60.0f, 1.0f, 8, 0, 0.01f, nullptr, nullptr);
+    checkRate("ST-17", "1% asymmetry, 1 Hz +/-60deg", r, 1.0f, RATE_TOL_HZ);
+}
+
+static void st18() {
+    det.reset();
+    float r = feedSineAsymmetric(60.0f, 1.0f, 8, 0, 0.02f, nullptr, nullptr);
+    checkRate("ST-18", "2% asymmetry, 1 Hz +/-60deg", r, 1.0f, RATE_TOL_HZ);
+}
+
+static void st19() {
+    det.reset();
+    float r = feedSineAsymmetric(60.0f, 1.0f, 8, 0, 0.05f, nullptr, nullptr);
+    checkRate("ST-19", "5% asymmetry, 1 Hz +/-60deg", r, 1.0f, RATE_TOL_HZ);
+}
+
+static void st20() {
+    det.reset();
+    float r = feedSineAsymmetric(60.0f, 1.0f, 8, 0, 0.10f, nullptr, nullptr);
+    checkRate("ST-20", "10% asymmetry, 1 Hz +/-60deg", r, 1.0f, RATE_TOL_HZ);
+}
+
 // ---------------------------------------------------------------------------
 // Entry points
 // ---------------------------------------------------------------------------
@@ -220,6 +324,8 @@ void setup() {
 
     st01(); st02(); st03(); st04(); st05(); st06();
     st07(); st08(); st09(); st10(); st11(); st12();
+    st13(); st14(); st15(); st16();
+    st17(); st18(); st19(); st20();
 
     Serial.println();
     Serial.print("Results: "); Serial.print(g_passed);

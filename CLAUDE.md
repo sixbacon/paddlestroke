@@ -46,7 +46,7 @@ arduino-cli compile paddlestroke_sim_test/
 arduino-cli compile -u -p COM3 paddlestroke_sim_test/
 ```
 
-Expected output ends with `Results: 12 passed, 0 failed`.
+Expected output ends with `Results: 20 passed, 0 failed`.
 
 The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `paddlestroke_sim_test/` are copies of the ones in the root sketch directory. Keep them in sync when changing the algorithm.
 
