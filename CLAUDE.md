@@ -50,12 +50,25 @@ Expected output ends with `Results: 20 passed, 0 failed`.
 
 The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `paddlestroke_sim_test/` are copies of the ones in the root sketch directory. Keep them in sync when changing the algorithm.
 
+## Development Status
+
+- **Phase 1** — Algorithm + 20-test sim suite: complete
+- **Phase 2** — Live BNO085 IMU integration, serial output: complete
+- **Phase 3** — SD card logging (timestamp_ms, roll, pitch, yaw at 100 Hz): complete
+- **Phase 4** — Field testing on real paddle shaft (next step)
+
+> Note: hand-held testing produces only ~30–40° roll oscillation; the 45° amplitude gate requires the device to be properly mounted on the paddle shaft.
+
 ## Key Constraints
 
 - Cycle rate valid range: **0.25 – 2.5 Hz** (0.4 s – 4.0 s period)
 - Amplitude gate: peak-to-trough roll must be **≥ 45°**; smaller swings are ignored
 - Rate averaging: rolling window over the last **4 qualifying cycles** (event-based, not time-based)
 - IMU sample rate: minimum 50 Hz, 100 Hz preferred
+
+## SD Card Logging
+
+CSV file auto-numbered `/PadDat00.CSV` … `/PadDat99.CSV`. Columns: `timestamp_ms,roll,pitch,yaw`. Written at 100 Hz; flush deferred to stroke timeout or every 30 s. SD absence is non-fatal — device continues with serial output only.
 
 ## Serial Output Format
 
