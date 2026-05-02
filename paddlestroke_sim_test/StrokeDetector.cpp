@@ -6,10 +6,14 @@ static const float         PERIOD_MIN_S          = 0.4f;
 static const float         PERIOD_MAX_S          = 4.0f;
 static const unsigned long TIMEOUT_US            = 3000000UL;
 static const unsigned long MIN_EXTREMA_INTERVAL  = 200000UL;  // 200 ms — half of min valid period
+static const float         DC_ALPHA              = 0.002f;    // EMA coefficient: ~5 s time constant at 100 Hz
 
 void StrokeDetector::reset() {
     _inBuf[0] = _inBuf[1] = _inBuf[2] = 0.0f;
     _inFill = 0;
+
+    _dcOffset = 0.0f;
+    _dcInitialized = false;
 
     _prev2 = _prev1 = _curr = 0.0f;
     _samplesSeen = 0;
@@ -31,6 +35,11 @@ bool StrokeDetector::update(float rollDeg, unsigned long timestampUs) {
     _inBuf[2] = _inBuf[1]; _inBuf[1] = _inBuf[0]; _inBuf[0] = rollDeg;
     if (_inFill < 3) _inFill++;
     rollDeg = (_inBuf[0] + _inBuf[1] + _inBuf[2]) / (float)_inFill;
+
+    // EMA high-pass — removes slow DC wander (paddler lean, mounting drift)
+    if (!_dcInitialized) { _dcOffset = rollDeg; _dcInitialized = true; }
+    else _dcOffset += DC_ALPHA * (rollDeg - _dcOffset);
+    rollDeg -= _dcOffset;
 
     unsigned long candidateTs = _prevTs;
 

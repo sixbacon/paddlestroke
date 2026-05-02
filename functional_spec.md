@@ -58,6 +58,8 @@ A device mounted at the centre of a kayak paddle shaft that measures paddle cycl
 - The BNO085 is mounted at the centre of the paddle shaft. Roll is rotation about the shaft's long axis.
 - As the paddle rotates during alternating left and right strokes, the roll signal oscillates between **−90° and +90°**.
 - One complete oscillation (peak → trough → peak, or trough → peak → trough) corresponds to one full cycle (left stroke + right stroke).
+- Field data confirms roll is the correct sensing axis: BNO085 fusion output is clean (~1° sample-to-sample noise), high amplitude, and unambiguously rhythmic during paddling.
+- The roll signal has a **slow DC wander** of several degrees over seconds, caused by paddler lean, mounting angle, or kayak trim changes. A high-pass pre-filter is applied to compensate — see §4.2.
 
 ### 3.2 Valid Paddling Conditions
 
@@ -70,6 +72,24 @@ A device mounted at the centre of a kayak paddle shaft that measures paddle cycl
 *Note: the original individual-stroke period range of 0.2 s – 2.0 s maps to a cycle period range of 0.4 s – 4.0 s.*
 
 Results outside these bounds must be discarded and not reported.
+
+### 3.3 Field Test Observations (Phase 4, 2 May 2026)
+
+First field data recorded with the device mounted on a kayak paddle shaft, paddled on the river. File: `PadDat02-20260502.CSV`. Two steady paddling sessions identified:
+
+| Measurement | Session 1 | Session 2 |
+|-------------|-----------|-----------|
+| Duration | 388.7 s | 296.3 s |
+| Stroke rate | 1.09 Hz (65.6 CPM) | 1.29 Hz (77.6 CPM) |
+| Roll peak-to-trough | ~105° | ~101° |
+| Roll absolute range | −69° to +84° | −66° to +76° |
+
+Key findings:
+- **Roll is confirmed as the correct sensing axis.** Signal is clean, high amplitude, and unambiguously rhythmic.
+- **The 45° amplitude gate is workable.** Real strokes produce ~100° peak-to-trough, giving ample margin above the gate. The gate could be raised to 60° for stronger false-positive rejection without risk of missing genuine strokes.
+- **Both observed rates (1.09–1.29 Hz) are comfortably within the 0.25–2.5 Hz valid range.** No change to the rate gate is needed.
+- **Pitch is rhythmic (~100° range) but drifts with kayak trim**, making it a weaker signal than roll. No backup algorithm using pitch is implemented.
+- **Yaw reflects compass heading** and is not useful for stroke detection.
 
 ---
 
@@ -84,7 +104,8 @@ Results outside these bounds must be discarded and not reported.
 ### 4.2 Roll Extraction
 
 - With the BNO085 mounted at the centre of the paddle shaft, the roll axis aligns with the shaft's long axis. Extract the roll component (rotation about this axis, in degrees) from each IMU report.
-- No additional filtering is mandatory at this stage; the stroke-detection algorithm provides implicit low-pass behaviour.
+- Apply a **3-sample moving average** to suppress noise-induced false extrema.
+- Apply an **EMA high-pass filter** to remove slow DC offset caused by paddler lean or mounting drift: `dcOffset += DC_ALPHA × (roll − dcOffset); filteredRoll = roll − dcOffset`, with `DC_ALPHA = 0.002` (time constant ≈ 5 s at 100 Hz). The DC offset is initialised to the first sample to avoid startup transients.
 
 ### 4.3 Stroke Detection Algorithm
 
@@ -172,8 +193,8 @@ The following are excluded from the current implementation. Items marked with a 
 | **1** | Develop stroke detection algorithm and test it. *(Complete)* |
 | **2** | Develop full stroke measurement unit based on hardware; test over USB serial in the laboratory using a dummy paddle. |
 | **3** | Add logging of all orientation and position data to the micro SD card; test in the laboratory. |
-| **4** | *(Field testing — outside AI scope.)* Test on a real paddle in a kayak on the water. Analyse recorded data to confirm roll is the best signal for stroke-rate detection. Implement low-power mode; wake up periodically to check for appropriate movement and switch the device into operational mode. |
-| **5** | Improve stroke detection algorithm if field data indicates it is necessary. Transmit stroke rate and battery charge to other devices via BLE and ESPnow. Develop a mobile-phone app to display stroke rate. |
+| **4** | Field testing on real paddle shaft. Data collected and analysed 2 May 2026 — roll confirmed as best signal, high-pass filter added to algorithm. *(Partially complete — low-power / motion-wake mode still pending.)* |
+| **5** | Transmit stroke rate and battery charge to other devices via BLE and ESPnow. Develop a mobile-phone app to display stroke rate. |
 
 ---
 
