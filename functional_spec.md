@@ -117,6 +117,28 @@ Cycles are detected by identifying successive peaks and troughs in the roll sign
 4. **Rate validity gate** — only accept cycle periods in the range **0.4 s – 4.0 s**. Discard any cycle whose period falls outside this range.
 5. **Rate averaging** — compute a rolling average of cycle rate over the last **4 qualifying cycles** to reduce noise.
 
+### 4.5 Low-Power Doze Mode
+
+After **3 minutes** of continuous inactivity (no qualifying paddle cycles), the device enters doze mode to conserve battery.
+
+**Entering doze:**
+- Flush the SD log file.
+- Reduce the BNO085 report rate to **10 Hz** (minor reduction in SPI traffic; BNO085 has no true sleep state).
+- Print `DOZE: low-power mode — checking every 2 s` on serial.
+- Enter **ESP32 light sleep** (RAM and SPI state preserved; no re-initialisation required on wake).
+
+**While in doze:**
+- Wake every **2 seconds** via ESP32 timer.
+- Poll BNO085 for **300 ms** after each wake and record the first roll sample.
+- If any subsequent sample differs from the first by **≥ 5°**, motion is detected.
+- If no motion, re-enter light sleep.
+
+**Exiting doze:**
+- Restore BNO085 report rate to **100 Hz**.
+- Reset the stroke detector.
+- Print `WAKE: motion detected — resuming` on serial.
+- Resume normal IMU polling and SD logging.
+
 ### 4.4 Output
 
 - Report cycle rate on the Arduino serial port at **115200 baud**.
@@ -170,7 +192,6 @@ The following are excluded from the current implementation. Items marked with a 
 - Bluetooth / BLE / ESPnow transmission *(Phase 5)*
 - Mobile app for stroke-rate display *(Phase 5)*
 - SD card logging of IMU data *(Phase 3)*
-- Low-power / sleep mode with motion wake-up *(Phase 4)*
 - Forward speed or GPS integration
 - Calibration UI
 
@@ -193,7 +214,7 @@ The following are excluded from the current implementation. Items marked with a 
 | **1** | Develop stroke detection algorithm and test it. *(Complete)* |
 | **2** | Develop full stroke measurement unit based on hardware; test over USB serial in the laboratory using a dummy paddle. |
 | **3** | Add logging of all orientation and position data to the micro SD card; test in the laboratory. |
-| **4** | Field testing on real paddle shaft. Data collected and analysed 2 May 2026 — roll confirmed as best signal, high-pass filter added to algorithm. *(Partially complete — low-power / motion-wake mode still pending.)* |
+| **4** | Field testing on real paddle shaft. Data collected and analysed 2 May 2026 — roll confirmed as best signal, high-pass filter added to algorithm. Low-power doze mode implemented. *(Complete)* |
 | **5** | Transmit stroke rate and battery charge to other devices via BLE and ESPnow. Develop a mobile-phone app to display stroke rate. |
 
 ---
@@ -328,3 +349,62 @@ No trailing spaces, no extra fields, no missing fields.
 2. Observe output throughout.
 
 **Pass:** Output remains continuous and correctly formatted; no freezes, crashes, or garbled lines.
+
+---
+
+### T-13 Enter Doze After 3-Minute Inactivity
+
+**Steps:**
+1. Start the device and confirm normal operation (observe startup banner and `CYCLE_RATE` output).
+2. Hold the paddle completely still for at least 3 minutes 10 seconds.
+3. Observe serial output throughout.
+
+**Pass:**
+- Within 3 s of no strokes, `CYCLE_RATE: 0 CPM  (0.00 Hz)` appears.
+- Approximately 3 minutes after that, `DOZE: low-power mode — checking every 2 s` is printed once.
+- No further serial output for the remainder of the test.
+- No premature doze message before the 3-minute mark.
+
+---
+
+### T-14 Wake from Doze on Motion
+
+**Steps:**
+1. Allow the device to enter doze mode (as per T-13).
+2. Wait for one full 2-second sleep cycle, then rotate the paddle shaft by ≥ 10° within a 2-second window.
+3. Observe serial output.
+
+**Pass:** `WAKE: motion detected — resuming` is printed within 3 s of the motion, followed by normal `CYCLE_RATE` output once qualifying strokes resume.
+
+---
+
+### T-15 No Premature Doze
+
+**Steps:**
+1. Hold the paddle still for 2 minutes 50 seconds, observing serial output.
+
+**Pass:** Only `CYCLE_RATE: 0 CPM  (0.00 Hz)` lines are emitted; the `DOZE:` banner does not appear before 3 minutes have elapsed.
+
+---
+
+### T-16 Inactivity Timer Reset by Resumed Paddling
+
+**Steps:**
+1. Hold the paddle still until `CYCLE_RATE: 0 CPM` appears but before the 3-minute doze timeout.
+2. Resume paddling with qualifying strokes (≥45°, valid rate).
+3. Stop paddling again and hold still for at least 3 minutes.
+
+**Pass:** The `DOZE:` banner does not appear during the paddling interval; after stopping, the full 3-minute inactivity period restarts from zero and doze is entered only after another 3 minutes of inactivity.
+
+---
+
+### T-17 Multiple Sleep/Wake Cycles
+
+**Steps:**
+1. Allow device to enter doze (as per T-13).
+2. Wake with paddle motion (as per T-14); perform several qualifying strokes.
+3. Stop paddling and hold still for 3 minutes.
+4. Confirm device enters doze again.
+5. Repeat once more.
+
+**Pass:** `DOZE:` and `WAKE:` banners appear correctly on each cycle; stroke detection and SD logging operate normally between doze periods.

@@ -1,7 +1,15 @@
 #include <SPI.h>
 #include <SD.h>
 #include <Adafruit_BNO08x.h>
+#include "esp_sleep.h"
 #include "StrokeDetector.h"
+
+#define DOZE_TIMEOUT_MS  (3UL * 60UL * 1000UL)
+#define DOZE_WAKE_US     2000000ULL
+#define DOZE_REPORT_US   100000
+#define NORMAL_REPORT_US 10000
+#define MOTION_THRESHOLD 5.0f
+#define MOTION_WINDOW_MS 300
 
 #define BNO_CS   5
 #define BNO_INT  4
@@ -20,10 +28,12 @@ static SPIClass           hspi(HSPI);
 static Adafruit_BNO08x    bno(BNO_RST);
 static sh2_SensorValue_t  sensorValue;
 static StrokeDetector     detector;
-static bool               timeoutActive = false;
-static bool               SD_present    = false;
+static bool               timeoutActive   = false;
+static bool               SD_present      = false;
 static File               logFile;
-static unsigned long      lastFlushMs   = 0;
+static unsigned long      lastFlushMs     = 0;
+static unsigned long      inactiveStartMs = 0;
+static bool               inDozeMode      = false;
 
 struct Euler { float yaw, pitch, roll; };
 
@@ -35,6 +45,37 @@ static Euler extractEuler(const sh2_RotationVectorWAcc_t& rv) {
     e.pitch = asinf(-2.0f*(qi*qk - qj*qr) / (sqi + sqj + sqk + sqr)) * RAD_TO_DEG;
     e.roll  = atan2f(2.0f*(qj*qk + qi*qr), -sqi - sqj + sqk + sqr)  * RAD_TO_DEG;
     return e;
+}
+
+static void enterDozeMode() {
+    if (SD_present) logFile.flush();
+    bno.enableReport(SH2_ARVR_STABILIZED_RV, DOZE_REPORT_US);
+    Serial.println("DOZE: low-power mode — checking every 2 s");
+    Serial.flush();
+    inDozeMode = true;
+}
+
+static bool checkForMotion() {
+    float         firstRoll = NAN;
+    unsigned long deadline  = millis() + MOTION_WINDOW_MS;
+    while (millis() < deadline) {
+        if (bno.getSensorEvent(&sensorValue) &&
+            sensorValue.sensorId == SH2_ARVR_STABILIZED_RV) {
+            float r = extractEuler(sensorValue.un.arvrStabilizedRV).roll;
+            if (isnan(firstRoll)) { firstRoll = r; }
+            else if (fabsf(r - firstRoll) > MOTION_THRESHOLD) return true;
+        }
+    }
+    return false;
+}
+
+static void exitDozeMode() {
+    bno.enableReport(SH2_ARVR_STABILIZED_RV, NORMAL_REPORT_US);
+    detector.reset();
+    timeoutActive   = false;
+    inactiveStartMs = 0;
+    inDozeMode      = false;
+    Serial.println("WAKE: motion detected — resuming");
 }
 
 void setup() {
@@ -76,7 +117,7 @@ void setup() {
         while (true) delay(100);
     }
 
-    if (!bno.enableReport(SH2_ARVR_STABILIZED_RV, 10000)) {
+    if (!bno.enableReport(SH2_ARVR_STABILIZED_RV, NORMAL_REPORT_US)) {
         Serial.println("BNO085 report enable failed — halting");
         while (true) delay(100);
     }
@@ -85,8 +126,21 @@ void setup() {
 }
 
 void loop() {
+    if (!inDozeMode && timeoutActive &&
+        millis() - inactiveStartMs >= DOZE_TIMEOUT_MS) {
+        enterDozeMode();
+    }
+
+    if (inDozeMode) {
+        esp_sleep_enable_timer_wakeup(DOZE_WAKE_US);
+        esp_light_sleep_start();
+        if (bno.wasReset()) bno.enableReport(SH2_ARVR_STABILIZED_RV, DOZE_REPORT_US);
+        if (checkForMotion()) exitDozeMode();
+        return;
+    }
+
     if (bno.wasReset()) {
-        bno.enableReport(SH2_ARVR_STABILIZED_RV, 10000);
+        bno.enableReport(SH2_ARVR_STABILIZED_RV, NORMAL_REPORT_US);
     }
 
     if (!bno.getSensorEvent(&sensorValue)) return;
@@ -111,14 +165,16 @@ void loop() {
         Serial.print(" CPM  (");
         Serial.print(hz, 2);
         Serial.println(" Hz)");
-        timeoutActive = false;
+        timeoutActive   = false;
+        inactiveStartMs = 0;
         if (SD_present && nowMs - lastFlushMs >= 30000) {
             logFile.flush();
             lastFlushMs = nowMs;
         }
     } else if (detector.isTimedOut(nowUs) && !timeoutActive) {
         Serial.println("CYCLE_RATE: 0 CPM  (0.00 Hz)");
-        timeoutActive = true;
+        timeoutActive   = true;
+        inactiveStartMs = nowMs;
         if (SD_present) { logFile.flush(); lastFlushMs = nowMs; }
     }
 }
