@@ -470,3 +470,5 @@ arduino-cli upload -p COM4 paddlestroke_espnow_rx/
 3. Observe receiver output.
 
 **Pass:** The first stroke after wake produces a received packet; no ESPnow failure messages on the transmitter serial port.
+
+> **Note (2026-05-03):** T-18c initially triggered spurious wakes from room movement. `MOTION_THRESHOLD` raised from 5° to 20°. T-18c must be re-run after reflashing to confirm the fix.

@@ -15,7 +15,7 @@ struct __attribute__((packed)) EspNowPayload {
 #define DOZE_WAKE_US     2000000ULL
 #define DOZE_REPORT_US   100000
 #define NORMAL_REPORT_US 10000
-#define MOTION_THRESHOLD 5.0f
+#define MOTION_THRESHOLD 20.0f
 #define MOTION_WINDOW_MS 300
 
 #define BNO_CS   5
