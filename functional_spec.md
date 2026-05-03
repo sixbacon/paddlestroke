@@ -139,6 +139,25 @@ After **3 minutes** of continuous inactivity (no qualifying paddle cycles), the 
 - Print `WAKE: motion detected — resuming` on serial.
 - Resume normal IMU polling and SD logging.
 
+### 4.6 ESPnow Transmission
+
+After each CYCLE_RATE event the device broadcasts an 8-byte packet over ESPnow to the broadcast MAC address (`FF:FF:FF:FF:FF:FF`) on channel 1. No receiver pairing or network association is required.
+
+**Payload (packed struct, 8 bytes):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `cpm` | uint32_t | Cycles per minute (0 = no valid rate) |
+| `hz`  | float    | Cycles per second (0.00 = no valid rate) |
+
+**Behaviour:**
+- Initialised at startup (`WiFi.mode(WIFI_STA)` + `esp_now_init()`). Init failure is non-fatal; a warning is printed and the device continues with serial output only.
+- Transmitted on every qualifying stroke and on every 3 s inactivity timeout, exactly mirroring the serial output events.
+- Re-initialised on wake from doze mode (WiFi radio is powered down during ESP32 light sleep).
+- No transmission during doze.
+
+> The receiver ESP32 and display are a separate project. The payload struct above defines the interface between the two projects.
+
 ### 4.4 Output
 
 - Report cycle rate on the Arduino serial port at **115200 baud**.
@@ -189,7 +208,8 @@ PaddleStroke v1.0 — ready
 The following are excluded from the current implementation. Items marked with a target phase are planned for later work.
 
 - Display (LCD, OLED, etc.)
-- Bluetooth / BLE / ESPnow transmission *(Phase 5)*
+- Bluetooth / BLE transmission *(Phase 5)*
+- ESPnow receiver device and display *(Phase 5 — separate project)*
 - Mobile app for stroke-rate display *(Phase 5)*
 - SD card logging of IMU data *(Phase 3)*
 - Forward speed or GPS integration
@@ -215,7 +235,7 @@ The following are excluded from the current implementation. Items marked with a 
 | **2** | Develop full stroke measurement unit based on hardware; test over USB serial in the laboratory using a dummy paddle. |
 | **3** | Add logging of all orientation and position data to the micro SD card; test in the laboratory. |
 | **4** | Field testing on real paddle shaft. Data collected and analysed 2 May 2026 — roll confirmed as best signal, high-pass filter added to algorithm. Low-power doze mode implemented. *(Complete)* |
-| **5** | Transmit stroke rate and battery charge to other devices via BLE and ESPnow. Develop a mobile-phone app to display stroke rate. |
+| **5** | Transmit stroke rate via ESPnow broadcast. *(Transmit side complete — receiver/display is a separate project.)* BLE and mobile app deferred. |
 
 ---
 
@@ -408,3 +428,35 @@ No trailing spaces, no extra fields, no missing fields.
 5. Repeat once more.
 
 **Pass:** `DOZE:` and `WAKE:` banners appear correctly on each cycle; stroke detection and SD logging operate normally between doze periods.
+
+---
+
+### T-18a ESPnow Init (no receiver required)
+
+**Steps:**
+1. Flash firmware and power-cycle.
+2. Observe serial output during startup.
+
+**Pass:** No `ESPnow init failed` message appears. Normal `CYCLE_RATE` output is unaffected.
+
+---
+
+### T-18b ESPnow Packet Reception (requires second ESP32)
+
+**Steps:**
+1. Flash a minimal ESPnow broadcast-receive sketch to a second ESP32 on WiFi channel 1. The sketch should print the received `cpm` and `hz` fields over its own serial port.
+2. With both devices powered, paddle at a steady rate for several cycles.
+3. Compare the received `cpm`/`hz` values to the transmitter's serial output.
+
+**Pass:** Every `CYCLE_RATE` line on the transmitter produces a matching packet on the receiver within 100 ms; `cpm` and `hz` values agree.
+
+---
+
+### T-18c ESPnow After Doze/Wake
+
+**Steps:**
+1. With receiver running (as per T-18b), allow the transmitter to enter doze.
+2. Wake with paddle motion and resume paddling.
+3. Observe receiver output.
+
+**Pass:** The first stroke after wake produces a received packet; no ESPnow failure messages on the transmitter serial port.

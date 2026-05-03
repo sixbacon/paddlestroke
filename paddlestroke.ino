@@ -1,8 +1,15 @@
 #include <SPI.h>
 #include <SD.h>
+#include <WiFi.h>
+#include <esp_now.h>
 #include <Adafruit_BNO08x.h>
 #include "esp_sleep.h"
 #include "StrokeDetector.h"
+
+struct __attribute__((packed)) EspNowPayload {
+    uint32_t cpm;
+    float    hz;
+};
 
 #define DOZE_TIMEOUT_MS  (3UL * 60UL * 1000UL)
 #define DOZE_WAKE_US     2000000ULL
@@ -47,6 +54,27 @@ static Euler extractEuler(const sh2_RotationVectorWAcc_t& rv) {
     return e;
 }
 
+static void initESPNow() {
+    esp_now_deinit();
+    WiFi.mode(WIFI_STA);
+    if (esp_now_init() != ESP_OK) {
+        Serial.println("ESPnow init failed — wireless disabled");
+        return;
+    }
+    static const uint8_t broadcast[] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+    esp_now_peer_info_t peer = {};
+    memcpy(peer.peer_addr, broadcast, 6);
+    peer.channel = 1;
+    peer.encrypt = false;
+    esp_now_add_peer(&peer);
+}
+
+static void espNowSend(uint32_t cpm, float hz) {
+    static const uint8_t broadcast[] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+    EspNowPayload payload = {cpm, hz};
+    esp_now_send(broadcast, (uint8_t*)&payload, sizeof(payload));
+}
+
 static void enterDozeMode() {
     if (SD_present) logFile.flush();
     bno.enableReport(SH2_ARVR_STABILIZED_RV, DOZE_REPORT_US);
@@ -70,6 +98,7 @@ static bool checkForMotion() {
 }
 
 static void exitDozeMode() {
+    initESPNow();
     bno.enableReport(SH2_ARVR_STABILIZED_RV, NORMAL_REPORT_US);
     detector.reset();
     timeoutActive   = false;
@@ -123,6 +152,7 @@ void setup() {
     }
 
     detector.reset();
+    initESPNow();
 }
 
 void loop() {
@@ -165,6 +195,7 @@ void loop() {
         Serial.print(" CPM  (");
         Serial.print(hz, 2);
         Serial.println(" Hz)");
+        espNowSend((uint32_t)cpm, hz);
         timeoutActive   = false;
         inactiveStartMs = 0;
         if (SD_present && nowMs - lastFlushMs >= 30000) {
@@ -173,6 +204,7 @@ void loop() {
         }
     } else if (detector.isTimedOut(nowUs) && !timeoutActive) {
         Serial.println("CYCLE_RATE: 0 CPM  (0.00 Hz)");
+        espNowSend(0, 0.0f);
         timeoutActive   = true;
         inactiveStartMs = nowMs;
         if (SD_present) { logFile.flush(); lastFlushMs = nowMs; }
