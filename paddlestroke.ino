@@ -41,6 +41,7 @@ static File               logFile;
 static unsigned long      lastFlushMs     = 0;
 static unsigned long      inactiveStartMs = 0;
 static bool               inDozeMode      = false;
+static bool               espNowReady     = false;
 
 struct Euler { float yaw, pitch, roll; };
 
@@ -55,7 +56,8 @@ static Euler extractEuler(const sh2_RotationVectorWAcc_t& rv) {
 }
 
 static void initESPNow() {
-    esp_now_deinit();
+    if (espNowReady) esp_now_deinit();
+    espNowReady = false;
     WiFi.mode(WIFI_STA);
     if (esp_now_init() != ESP_OK) {
         Serial.println("ESPnow init failed — wireless disabled");
@@ -67,9 +69,11 @@ static void initESPNow() {
     peer.channel = 1;
     peer.encrypt = false;
     esp_now_add_peer(&peer);
+    espNowReady = true;
 }
 
 static void espNowSend(uint32_t cpm, float hz) {
+    if (!espNowReady) return;
     static const uint8_t broadcast[] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
     EspNowPayload payload = {cpm, hz};
     esp_now_send(broadcast, (uint8_t*)&payload, sizeof(payload));
