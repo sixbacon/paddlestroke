@@ -441,14 +441,24 @@ No trailing spaces, no extra fields, no missing fields.
 
 ---
 
-### T-18b ESPnow Packet Reception (requires second ESP32)
+### T-18b ESPnow Packet Reception (requires DOIT ESP32 DEVKIT V1)
+
+A dedicated receiver sketch is provided in `paddlestroke_espnow_rx/`. It targets the DOIT ESP32 DEVKIT V1, listens on ESPnow channel 1, and prints received packets to its serial port in the same `CYCLE_RATE:` format as the transmitter.
+
+**Build and flash (replace COM4 with the receiver's actual port):**
+
+```bash
+arduino-cli compile paddlestroke_espnow_rx/
+arduino-cli upload -p COM4 paddlestroke_espnow_rx/
+```
 
 **Steps:**
-1. Flash a minimal ESPnow broadcast-receive sketch to a second ESP32 on WiFi channel 1. The sketch should print the received `cpm` and `hz` fields over its own serial port.
-2. With both devices powered, paddle at a steady rate for several cycles.
-3. Compare the received `cpm`/`hz` values to the transmitter's serial output.
+1. Flash the receiver sketch to the DEVKIT V1 (it will be on a different COM port from the main device — use `arduino-cli board list` to identify both ports).
+2. Open two serial monitors simultaneously — one for each COM port — both at 115200 baud.
+3. With both devices powered, paddle at a steady rate for several cycles.
+4. Compare the `CYCLE_RATE` lines on both monitors.
 
-**Pass:** Every `CYCLE_RATE` line on the transmitter produces a matching packet on the receiver within 100 ms; `cpm` and `hz` values agree.
+**Pass:** Every `CYCLE_RATE` line on the transmitter produces a matching line on the receiver within 100 ms; `cpm` and `hz` values agree.
 
 ---
 
