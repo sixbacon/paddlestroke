@@ -480,4 +480,4 @@ arduino-cli upload -p COM4 paddlestroke_espnow_rx/
 
 **Pass:** The first stroke after wake produces a received packet; no ESPnow failure messages on the transmitter serial port.
 
-> **Note (2026-05-03):** T-18c initially triggered spurious wakes from room movement. Doze mode reworked to use GPIO4 (BNO085 INT) interrupt wakeup with ARVR report at 2 Hz, replacing the 2-second timer poll. T-18c must be re-run after reflashing.
+> **Note (2026-05-03):** T-18c initially triggered spurious wakes from room movement. Doze mode reworked to use GPIO4 (BNO085 INT) interrupt wakeup with ARVR report at 2 Hz, replacing the 2-second timer poll. Re-tested 4 May 2026 — passed.
