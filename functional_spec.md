@@ -166,26 +166,34 @@ After each CYCLE_RATE event the device broadcasts an 8-byte packet over ESPnow t
 - Format:
 
 ```
-CYCLE_RATE: <rate_cpm> CPM  (<rate_hz> Hz)
+[MM:SS] CYCLE_RATE: <rate_cpm> CPM  (<rate_hz> Hz)
 ```
 
 Where:
+- `MM:SS` = elapsed time since power-on (minutes and seconds, zero-padded).
 - `rate_cpm` = cycles per minute, integer, rounded to nearest whole number.
 - `rate_hz` = cycles per second, two decimal places.
 
 Example:
 
 ```
-CYCLE_RATE: 72 CPM  (1.20 Hz)
+[03:42] CYCLE_RATE: 72 CPM  (1.20 Hz)
 ```
 
 - If no valid cycles are detected for more than **3 seconds**, output:
 
 ```
-CYCLE_RATE: 0 CPM  (0.00 Hz)
+[MM:SS] CYCLE_RATE: 0 CPM  (0.00 Hz)
 ```
 
-- On startup, output a banner line:
+- Doze and wake events are also timestamped:
+
+```
+[MM:SS] DOZE: low-power mode — waiting for motion
+[MM:SS] WAKE: motion detected — resuming
+```
+
+- On startup, output a banner line (no timestamp):
 
 ```
 PaddleStroke v1.0 — ready
@@ -334,8 +342,8 @@ All tests are manual, performed with the ESP32 connected via USB and the Arduino
 2. Copy 3–5 consecutive `CYCLE_RATE` lines from the serial monitor.
 
 **Pass:** Every line matches one of the two valid formats exactly:
-- `CYCLE_RATE: <integer> CPM  (<two-decimal> Hz)` — two spaces between `CPM` and `(`
-- `CYCLE_RATE: 0 CPM  (0.00 Hz)`
+- `[MM:SS] CYCLE_RATE: <integer> CPM  (<two-decimal> Hz)` — two spaces between `CPM` and `(`
+- `[MM:SS] CYCLE_RATE: 0 CPM  (0.00 Hz)`
 
 No trailing spaces, no extra fields, no missing fields.
 

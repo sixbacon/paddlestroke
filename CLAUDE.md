@@ -72,9 +72,11 @@ CSV file auto-numbered `/PadDat00.CSV` … `/PadDat99.CSV`. Columns: `timestamp_
 ## Serial Output Format
 
 ```
-CYCLE_RATE: <cpm> CPM  (<hz> Hz)   // emitted after each qualifying cycle
-CYCLE_RATE: 0 CPM  (0.00 Hz)       // emitted when no valid cycle detected for > 3 s
-PaddleStroke v1.0 — ready          // banner on startup
+[MM:SS] CYCLE_RATE: <cpm> CPM  (<hz> Hz)   // emitted after each qualifying cycle
+[MM:SS] CYCLE_RATE: 0 CPM  (0.00 Hz)       // emitted when no valid cycle detected for > 3 s
+[MM:SS] DOZE: low-power mode — waiting for motion
+[MM:SS] WAKE: motion detected — resuming
+PaddleStroke v1.0 — ready                  // banner on startup (no timestamp)
 ```
 
 ## Git
