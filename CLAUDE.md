@@ -55,9 +55,8 @@ The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `paddlestroke_sim_t
 - **Phase 1** — Algorithm + 20-test sim suite: complete
 - **Phase 2** — Live BNO085 IMU integration, serial output: complete
 - **Phase 3** — SD card logging (timestamp_ms, roll, pitch, yaw at 100 Hz): complete
-- **Phase 4** — Field testing on real paddle shaft (next step)
-
-> Note: hand-held testing produces only ~30–40° roll oscillation; the 45° amplitude gate requires the device to be properly mounted on the paddle shaft.
+- **Phase 4** — Field testing complete (2 May 2026). EMA high-pass filter added. Low-power doze mode with GPIO4 (BNO085 INT) interrupt wakeup: complete
+- **Phase 5** — ESPnow broadcast of stroke rate: complete (transmit side; receiver is a separate project)
 
 ## Key Constraints
 

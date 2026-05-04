@@ -1,8 +1,8 @@
 # Kayak Paddle Stroke Rate Monitor — Functional Specification
 
 **Project:** paddlestroke  
-**Date:** 29 April 2026  
-**Version:** 1.2
+**Date:** 4 May 2026  
+**Version:** 1.3
 
 ---
 
@@ -235,8 +235,8 @@ The following are excluded from the current implementation. Items marked with a 
 | **1** | Develop stroke detection algorithm and test it. *(Complete)* |
 | **2** | Develop full stroke measurement unit based on hardware; test over USB serial in the laboratory using a dummy paddle. |
 | **3** | Add logging of all orientation and position data to the micro SD card; test in the laboratory. |
-| **4** | Field testing on real paddle shaft. Data collected and analysed 2 May 2026 — roll confirmed as best signal, high-pass filter added to algorithm. Low-power doze mode implemented. *(Complete)* |
-| **5** | Transmit stroke rate via ESPnow broadcast. *(Transmit side complete — receiver/display is a separate project.)* BLE and mobile app deferred. |
+| **4** | Field testing on real paddle shaft. Data collected and analysed 2 May 2026 — roll confirmed as best signal, high-pass filter added to algorithm. Low-power doze mode with GPIO4 interrupt wakeup implemented. *(Complete)* |
+| **5** | Transmit stroke rate via ESPnow broadcast. Transmit side complete and tested (T-18a–T-18c). Receiver/display is a separate project. BLE and mobile app deferred. *(Complete)* |
 
 ---
 
