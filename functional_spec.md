@@ -123,18 +123,20 @@ After **3 minutes** of continuous inactivity (no qualifying paddle cycles), the 
 
 **Entering doze:**
 - Flush the SD log file.
-- Reduce the BNO085 report rate to **10 Hz** (minor reduction in SPI traffic; BNO085 has no true sleep state).
-- Print `DOZE: low-power mode — checking every 2 s` on serial.
-- Enter **ESP32 light sleep** (RAM and SPI state preserved; no re-initialisation required on wake).
+- Disable the `SH2_ARVR_STABILIZED_RV` report entirely.
+- Enable the BNO085 **Significant Motion** detector (`SH2_SIGNIFICANT_MOTION`), which uses the BNO085's internal accelerometer to detect meaningful movement with minimal power draw.
+- Configure **GPIO4** (wired to BNO085 INT, active-low) as the ESP32 light-sleep wakeup source.
+- Print `DOZE: low-power mode — waiting for motion` on serial.
+- Enter **ESP32 light sleep** (RAM and SPI state preserved).
 
 **While in doze:**
-- Wake every **2 seconds** via ESP32 timer.
-- Poll BNO085 for **300 ms** after each wake and record the first roll sample.
-- If any subsequent sample differs from the first by **≥ 5°**, motion is detected.
-- If no motion, re-enter light sleep.
+- Sleep indefinitely until the BNO085 asserts INT (GPIO4 goes low) on detection of significant motion.
+- On wake: re-enable `SH2_ARVR_STABILIZED_RV` at 100 Hz and poll for **300 ms**, checking whether roll changes by ≥ **20°** (`MOTION_THRESHOLD`).
+- If the roll-delta check fails (e.g., vibration rather than a stroke), re-arm `SH2_SIGNIFICANT_MOTION`, reconfigure GPIO4 wakeup, and re-enter light sleep.
 
 **Exiting doze:**
-- Restore BNO085 report rate to **100 Hz**.
+- Re-initialise ESPnow (WiFi radio is powered down during light sleep).
+- Re-enable `SH2_ARVR_STABILIZED_RV` at 100 Hz (already done by wake check).
 - Reset the stroke detector.
 - Print `WAKE: motion detected — resuming` on serial.
 - Resume normal IMU polling and SD logging.
@@ -381,7 +383,7 @@ No trailing spaces, no extra fields, no missing fields.
 
 **Pass:**
 - Within 3 s of no strokes, `CYCLE_RATE: 0 CPM  (0.00 Hz)` appears.
-- Approximately 3 minutes after that, `DOZE: low-power mode — checking every 2 s` is printed once.
+- Approximately 3 minutes after that, `DOZE: low-power mode — waiting for motion` is printed once.
 - No further serial output for the remainder of the test.
 - No premature doze message before the 3-minute mark.
 
@@ -391,10 +393,10 @@ No trailing spaces, no extra fields, no missing fields.
 
 **Steps:**
 1. Allow the device to enter doze mode (as per T-13).
-2. Wait for one full 2-second sleep cycle, then rotate the paddle shaft by ≥ 10° within a 2-second window.
+2. Rotate the paddle shaft by ≥ 20° to trigger the BNO085 significant motion detector.
 3. Observe serial output.
 
-**Pass:** `WAKE: motion detected — resuming` is printed within 3 s of the motion, followed by normal `CYCLE_RATE` output once qualifying strokes resume.
+**Pass:** `WAKE: motion detected — resuming` is printed within a few seconds of the motion, followed by normal `CYCLE_RATE` output once qualifying strokes resume.
 
 ---
 
@@ -471,4 +473,4 @@ arduino-cli upload -p COM4 paddlestroke_espnow_rx/
 
 **Pass:** The first stroke after wake produces a received packet; no ESPnow failure messages on the transmitter serial port.
 
-> **Note (2026-05-03):** T-18c initially triggered spurious wakes from room movement. `MOTION_THRESHOLD` raised from 5° to 20°. T-18c must be re-run after reflashing to confirm the fix.
+> **Note (2026-05-03):** T-18c initially triggered spurious wakes from room movement. Doze mode reworked to use BNO085 significant motion detector (`SH2_SIGNIFICANT_MOTION`) with GPIO4 interrupt wakeup, replacing the 2-second timer poll. T-18c must be re-run after reflashing.

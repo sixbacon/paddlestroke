@@ -4,6 +4,7 @@
 #include <esp_now.h>
 #include <Adafruit_BNO08x.h>
 #include "esp_sleep.h"
+#include "driver/gpio.h"
 #include "StrokeDetector.h"
 
 struct __attribute__((packed)) EspNowPayload {
@@ -12,8 +13,6 @@ struct __attribute__((packed)) EspNowPayload {
 };
 
 #define DOZE_TIMEOUT_MS  (3UL * 60UL * 1000UL)
-#define DOZE_WAKE_US     2000000ULL
-#define DOZE_REPORT_US   100000
 #define NORMAL_REPORT_US 10000
 #define MOTION_THRESHOLD 20.0f
 #define MOTION_WINDOW_MS 300
@@ -79,10 +78,21 @@ static void espNowSend(uint32_t cpm, float hz) {
     esp_now_send(broadcast, (uint8_t*)&payload, sizeof(payload));
 }
 
+static void armDozeWakeup() {
+    bno.enableReport(SH2_ARVR_STABILIZED_RV, 0);
+    // Drain pending SHTP packets so INT goes high before sleep
+    sh2_SensorValue_t dummy;
+    unsigned long drainEnd = millis() + 50;
+    while (millis() < drainEnd) bno.getSensorEvent(&dummy);
+    bno.enableReport(SH2_SIGNIFICANT_MOTION, 0);
+    gpio_wakeup_enable((gpio_num_t)BNO_INT, GPIO_INTR_LOW_LEVEL);
+    esp_sleep_enable_gpio_wakeup();
+}
+
 static void enterDozeMode() {
     if (SD_present) logFile.flush();
-    bno.enableReport(SH2_ARVR_STABILIZED_RV, DOZE_REPORT_US);
-    Serial.println("DOZE: low-power mode — checking every 2 s");
+    armDozeWakeup();
+    Serial.println("DOZE: low-power mode — waiting for motion");
     Serial.flush();
     inDozeMode = true;
 }
@@ -166,10 +176,14 @@ void loop() {
     }
 
     if (inDozeMode) {
-        esp_sleep_enable_timer_wakeup(DOZE_WAKE_US);
         esp_light_sleep_start();
-        if (bno.wasReset()) bno.enableReport(SH2_ARVR_STABILIZED_RV, DOZE_REPORT_US);
-        if (checkForMotion()) exitDozeMode();
+        // Wake = BNO085 significant motion asserted INT (GPIO4)
+        bno.enableReport(SH2_ARVR_STABILIZED_RV, NORMAL_REPORT_US);
+        if (checkForMotion()) {
+            exitDozeMode();
+        } else {
+            armDozeWakeup();
+        }
         return;
     }
 
