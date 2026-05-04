@@ -157,7 +157,7 @@ After each CYCLE_RATE event the device broadcasts an 8-byte packet over ESPnow t
 - Re-initialised on wake from doze mode (WiFi radio is powered down during ESP32 light sleep).
 - No transmission during doze.
 
-> The receiver ESP32 and display are a separate project. The payload struct above defines the interface between the two projects.
+> The receiver hardware and display are specified in **§10**. The payload struct above defines the interface between the two projects.
 
 ### 4.4 Output
 
@@ -481,3 +481,166 @@ arduino-cli upload -p COM4 paddlestroke_espnow_rx/
 **Pass:** The first stroke after wake produces a received packet; no ESPnow failure messages on the transmitter serial port.
 
 > **Note (2026-05-03):** T-18c initially triggered spurious wakes from room movement. Doze mode reworked to use GPIO4 (BNO085 INT) interrupt wakeup with ARVR report at 2 Hz, replacing the 2-second timer poll. Re-tested 4 May 2026 — passed.
+
+---
+
+## 10. ESPnow Receiver — CYD Display Unit
+
+This section specifies the separate receiver project (`paddlestroke_espnow_rx/`). It receives ESPnow packets from the transmitter and displays the stroke rate on the CYD's built-in TFT screen.
+
+---
+
+### 10.1 Hardware
+
+| Component | Part |
+|-----------|------|
+| Board | ESP32-2432S028 (CYD — Cheap Yellow Display) |
+| Variant | CYD2USB (two USB ports: micro USB + USB-C) |
+| Display | 2.8" ILI9341 TFT, 320×240 pixels (landscape) |
+| Interface | Arduino CLI, same toolchain as transmitter |
+| FQBN | `esp32:esp32:esp32dev` |
+
+#### 10.1.1 Display Pin Assignments (HSPI)
+
+| GPIO | Function |
+|------|----------|
+| IO2  | TFT_DC (RS) |
+| IO12 | TFT_MISO |
+| IO13 | TFT_MOSI |
+| IO14 | TFT_SCK |
+| IO15 | TFT_CS |
+| IO21 | TFT_BL (backlight) |
+
+#### 10.1.2 CYD2USB Notes
+
+The dual-USB variant has an inverted display. The firmware must call the LVGL/driver invert function at startup. The USB-C port requires a USB-C to USB-A adaptor when connecting to a USB-C-only computer.
+
+---
+
+### 10.2 Libraries
+
+| Library | Purpose |
+|---------|---------|
+| `LVGL` | UI widgets and display management |
+| `TFT_eSPI` | Hardware display driver (LVGL back-end) |
+| `WiFi` / `esp_now` | ESPnow reception |
+
+---
+
+### 10.3 Display Behaviour
+
+#### 10.3.1 Startup Splash (0–20 s)
+
+On power-up, display the sketch name centred on screen for 20 seconds before switching to the main rate screen:
+
+```
+paddlestroke_espnow_rx
+```
+
+Text should be legible but need not fill the screen.
+
+#### 10.3.2 Main Rate Screen
+
+After the splash, show the stroke rate. The rate value must occupy most of the screen — use the largest LVGL label font available.
+
+**Layout (landscape 320×240):**
+
+```
+┌─────────────────────────────┐
+│                          [●] │  ← signal icon (top-right)
+│                              │
+│          72 CPM              │  ← large label, centre screen
+│                              │
+└─────────────────────────────┘
+```
+
+- The CPM value is an integer. The unit label `CPM` is displayed alongside or below the number, smaller.
+- On startup (before any packet received) display `-- CPM`.
+
+#### 10.3.3 Signal Indicator Icon
+
+A small icon in the top-right corner indicates reception state:
+
+| State | Icon appearance |
+|-------|----------------|
+| Receiving (packet within last 3 s) | Filled circle, flashing at ~1 Hz |
+| Signal lost (no packet for > 3 s) | Hollow circle, static |
+
+#### 10.3.4 Rate Value Colour
+
+| State | Colour |
+|-------|--------|
+| Receiving (packet within last 3 s) | White |
+| Signal lost (no packet for > 3 s) | Grey |
+
+When signal is lost the last received rate remains on screen in grey. The display does not reset to `--` until the device is power-cycled.
+
+---
+
+### 10.4 ESPnow Reception
+
+- Initialise WiFi in station mode and set channel 1 at startup.
+- Register a receive callback; on each valid 8-byte packet, update the displayed rate and timestamp the last-received time.
+- Payload struct (must match transmitter exactly):
+
+```cpp
+struct __attribute__((packed)) EspNowPayload {
+    uint32_t cpm;
+    float    hz;
+};
+```
+
+- A packet with `cpm == 0` represents a transmitter inactivity timeout; display `0 CPM` in the active colour (the transmitter is still alive).
+- ESPnow init failure is fatal for this device — display an error message and halt.
+
+---
+
+### 10.5 Build and Flash
+
+```bash
+# Compile
+arduino-cli compile paddlestroke_espnow_rx/
+
+# Upload (replace COM4 with the CYD port)
+arduino-cli upload -p COM4 paddlestroke_espnow_rx/
+```
+
+---
+
+### T-19 Startup Splash
+
+**Steps:**
+1. Power-cycle the CYD receiver.
+2. Observe the display for 20 seconds.
+
+**Pass:** The sketch name is displayed for approximately 20 seconds, then the main rate screen appears.
+
+---
+
+### T-20 Rate Display — Active
+
+**Steps:**
+1. With the transmitter paddling at a steady rate, power up the receiver.
+2. Observe the display.
+
+**Pass:** The current CPM value is shown in white in large text; the signal icon is filled and flashing at ~1 Hz.
+
+---
+
+### T-21 Rate Display — Signal Lost
+
+**Steps:**
+1. With the receiver showing an active rate, stop transmitting (power off transmitter or let it enter doze).
+2. Wait 5 seconds and observe the display.
+
+**Pass:** After 3 seconds with no packet, the last rate value remains on screen but changes to grey; the signal icon becomes a static hollow circle.
+
+---
+
+### T-22 Rate Resumes After Loss
+
+**Steps:**
+1. Allow the display to enter signal-lost state (T-21).
+2. Resume transmitting.
+
+**Pass:** Within one packet period the value updates, returns to white, and the signal icon resumes flashing.
