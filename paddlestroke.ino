@@ -13,6 +13,7 @@ struct __attribute__((packed)) EspNowPayload {
 };
 
 #define DOZE_TIMEOUT_MS  (3UL * 60UL * 1000UL)
+#define DOZE_REPORT_US   500000
 #define NORMAL_REPORT_US 10000
 #define MOTION_THRESHOLD 20.0f
 #define MOTION_WINDOW_MS 300
@@ -79,12 +80,11 @@ static void espNowSend(uint32_t cpm, float hz) {
 }
 
 static void armDozeWakeup() {
-    bno.enableReport(SH2_ARVR_STABILIZED_RV, 0);
+    bno.enableReport(SH2_ARVR_STABILIZED_RV, DOZE_REPORT_US);
     // Drain pending SHTP packets so INT goes high before sleep
     sh2_SensorValue_t dummy;
     unsigned long drainEnd = millis() + 50;
     while (millis() < drainEnd) bno.getSensorEvent(&dummy);
-    bno.enableReport(SH2_SIGNIFICANT_MOTION, 0);
     gpio_wakeup_enable((gpio_num_t)BNO_INT, GPIO_INTR_LOW_LEVEL);
     esp_sleep_enable_gpio_wakeup();
 }
@@ -177,7 +177,7 @@ void loop() {
 
     if (inDozeMode) {
         esp_light_sleep_start();
-        // Wake = BNO085 significant motion asserted INT (GPIO4)
+        // Wake = BNO085 data-ready INT (GPIO4) at 2 Hz
         bno.enableReport(SH2_ARVR_STABILIZED_RV, NORMAL_REPORT_US);
         if (checkForMotion()) {
             exitDozeMode();

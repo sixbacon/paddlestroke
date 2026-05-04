@@ -123,16 +123,15 @@ After **3 minutes** of continuous inactivity (no qualifying paddle cycles), the 
 
 **Entering doze:**
 - Flush the SD log file.
-- Disable the `SH2_ARVR_STABILIZED_RV` report entirely.
-- Enable the BNO085 **Significant Motion** detector (`SH2_SIGNIFICANT_MOTION`), which uses the BNO085's internal accelerometer to detect meaningful movement with minimal power draw.
-- Configure **GPIO4** (wired to BNO085 INT, active-low) as the ESP32 light-sleep wakeup source.
+- Reduce the `SH2_ARVR_STABILIZED_RV` report rate to **2 Hz** (`DOZE_REPORT_US = 500 ms`).
+- Configure **GPIO4** (wired to BNO085 INT, active-low) as the ESP32 light-sleep wakeup source. The BNO085 asserts INT on each data-ready event, waking the ESP32 at 2 Hz.
 - Print `DOZE: low-power mode — waiting for motion` on serial.
 - Enter **ESP32 light sleep** (RAM and SPI state preserved).
 
 **While in doze:**
-- Sleep indefinitely until the BNO085 asserts INT (GPIO4 goes low) on detection of significant motion.
-- On wake: re-enable `SH2_ARVR_STABILIZED_RV` at 100 Hz and poll for **300 ms**, checking whether roll changes by ≥ **20°** (`MOTION_THRESHOLD`).
-- If the roll-delta check fails (e.g., vibration rather than a stroke), re-arm `SH2_SIGNIFICANT_MOTION`, reconfigure GPIO4 wakeup, and re-enter light sleep.
+- Sleep until the BNO085 asserts INT (GPIO4 goes low) at the 2 Hz report rate.
+- On wake: restore `SH2_ARVR_STABILIZED_RV` to 100 Hz and poll for **300 ms**, checking whether roll changes by ≥ **20°** (`MOTION_THRESHOLD`).
+- If the roll-delta check fails (no real stroke), re-arm GPIO4 wakeup at 2 Hz and re-enter light sleep.
 
 **Exiting doze:**
 - Re-initialise ESPnow (WiFi radio is powered down during light sleep).
@@ -473,4 +472,4 @@ arduino-cli upload -p COM4 paddlestroke_espnow_rx/
 
 **Pass:** The first stroke after wake produces a received packet; no ESPnow failure messages on the transmitter serial port.
 
-> **Note (2026-05-03):** T-18c initially triggered spurious wakes from room movement. Doze mode reworked to use BNO085 significant motion detector (`SH2_SIGNIFICANT_MOTION`) with GPIO4 interrupt wakeup, replacing the 2-second timer poll. T-18c must be re-run after reflashing.
+> **Note (2026-05-03):** T-18c initially triggered spurious wakes from room movement. Doze mode reworked to use GPIO4 (BNO085 INT) interrupt wakeup with ARVR report at 2 Hz, replacing the 2-second timer poll. T-18c must be re-run after reflashing.
