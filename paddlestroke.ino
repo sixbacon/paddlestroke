@@ -16,7 +16,6 @@ struct __attribute__((packed)) EspNowPayload {
 #define DOZE_REPORT_US   500000
 #define NORMAL_REPORT_US 10000
 #define MOTION_THRESHOLD 20.0f
-#define MOTION_WINDOW_MS 300
 
 #define BNO_CS   5
 #define BNO_INT  4
@@ -42,6 +41,7 @@ static unsigned long      lastFlushMs     = 0;
 static unsigned long      inactiveStartMs = 0;
 static bool               inDozeMode      = false;
 static bool               espNowReady     = false;
+static float              dozeFirstRoll   = NAN;
 
 struct Euler { float yaw, pitch, roll; };
 
@@ -53,6 +53,13 @@ static Euler extractEuler(const sh2_RotationVectorWAcc_t& rv) {
     e.pitch = asinf(-2.0f*(qi*qk - qj*qr) / (sqi + sqj + sqk + sqr)) * RAD_TO_DEG;
     e.roll  = atan2f(2.0f*(qj*qk + qi*qr), -sqi - sqj + sqk + sqr)  * RAD_TO_DEG;
     return e;
+}
+
+static void printTimestamp() {
+    unsigned long s = millis() / 1000;
+    char buf[12];
+    snprintf(buf, sizeof(buf), "[%02lu:%02lu] ", s / 60, s % 60);
+    Serial.print(buf);
 }
 
 static void initESPNow() {
@@ -91,34 +98,26 @@ static void armDozeWakeup() {
 
 static void enterDozeMode() {
     if (SD_present) logFile.flush();
+    dozeFirstRoll = NAN;
     armDozeWakeup();
-    Serial.println("DOZE: low-power mode — waiting for motion");
+    printTimestamp(); Serial.println("DOZE: low-power mode — waiting for motion");
     Serial.flush();
     inDozeMode = true;
-}
-
-static bool checkForMotion() {
-    float         firstRoll = NAN;
-    unsigned long deadline  = millis() + MOTION_WINDOW_MS;
-    while (millis() < deadline) {
-        if (bno.getSensorEvent(&sensorValue) &&
-            sensorValue.sensorId == SH2_ARVR_STABILIZED_RV) {
-            float r = extractEuler(sensorValue.un.arvrStabilizedRV).roll;
-            if (isnan(firstRoll)) { firstRoll = r; }
-            else if (fabsf(r - firstRoll) > MOTION_THRESHOLD) return true;
-        }
-    }
-    return false;
 }
 
 static void exitDozeMode() {
     initESPNow();
     bno.enableReport(SH2_ARVR_STABILIZED_RV, NORMAL_REPORT_US);
+    // Drain samples for 500 ms so the ARVR filter settles at 100 Hz
+    // before the stroke detector sees any data
+    sh2_SensorValue_t dummy;
+    unsigned long settleEnd = millis() + 500;
+    while (millis() < settleEnd) bno.getSensorEvent(&dummy);
     detector.reset();
     timeoutActive   = false;
     inactiveStartMs = 0;
     inDozeMode      = false;
-    Serial.println("WAKE: motion detected — resuming");
+    printTimestamp(); Serial.println("WAKE: motion detected — resuming");
 }
 
 void setup() {
@@ -177,13 +176,18 @@ void loop() {
 
     if (inDozeMode) {
         esp_light_sleep_start();
-        // Wake = BNO085 data-ready INT (GPIO4) at 2 Hz
-        bno.enableReport(SH2_ARVR_STABILIZED_RV, NORMAL_REPORT_US);
-        if (checkForMotion()) {
-            exitDozeMode();
-        } else {
-            armDozeWakeup();
+        // Wake = BNO085 data-ready INT (GPIO4) at 2 Hz; no rate switch here
+        if (bno.getSensorEvent(&sensorValue) &&
+            sensorValue.sensorId == SH2_ARVR_STABILIZED_RV) {
+            float roll = extractEuler(sensorValue.un.arvrStabilizedRV).roll;
+            if (!isnan(dozeFirstRoll) && fabsf(roll - dozeFirstRoll) > MOTION_THRESHOLD) {
+                dozeFirstRoll = NAN;
+                exitDozeMode();
+                return;
+            }
+            dozeFirstRoll = roll;
         }
+        armDozeWakeup();
         return;
     }
 
@@ -208,6 +212,7 @@ void loop() {
     if (detector.update(angles.roll, nowUs)) {
         float hz  = detector.getRateHz();
         int   cpm = (int)roundf(hz * 60.0f);
+        printTimestamp();
         Serial.print("CYCLE_RATE: ");
         Serial.print(cpm);
         Serial.print(" CPM  (");
@@ -221,7 +226,7 @@ void loop() {
             lastFlushMs = nowMs;
         }
     } else if (detector.isTimedOut(nowUs) && !timeoutActive) {
-        Serial.println("CYCLE_RATE: 0 CPM  (0.00 Hz)");
+        printTimestamp(); Serial.println("CYCLE_RATE: 0 CPM  (0.00 Hz)");
         espNowSend(0, 0.0f);
         timeoutActive   = true;
         inactiveStartMs = nowMs;
