@@ -180,12 +180,18 @@ void loop() {
         if (bno.getSensorEvent(&sensorValue) &&
             sensorValue.sensorId == SH2_ARVR_STABILIZED_RV) {
             float roll = extractEuler(sensorValue.un.arvrStabilizedRV).roll;
-            if (!isnan(dozeFirstRoll) && fabsf(roll - dozeFirstRoll) > MOTION_THRESHOLD) {
-                dozeFirstRoll = NAN;
-                exitDozeMode();
-                return;
+            if (!isnan(roll)) {
+                if (!isnan(dozeFirstRoll) && fabsf(roll - dozeFirstRoll) > MOTION_THRESHOLD) {
+                    dozeFirstRoll = NAN;
+                    exitDozeMode();
+                    return;
+                }
+                dozeFirstRoll = roll;
+            } else {
+                dozeFirstRoll = NAN;  // bad quaternion — start fresh
             }
-            dozeFirstRoll = roll;
+        } else {
+            dozeFirstRoll = NAN;  // decode error or wrong event — start fresh
         }
         armDozeWakeup();
         return;
