@@ -498,7 +498,7 @@ This section specifies the separate receiver project (`paddlestroke_espnow_rx/`)
 | Variant | CYD2USB (two USB ports: micro USB + USB-C) |
 | Display | 2.8" ILI9341 TFT, 320×240 pixels (landscape) |
 | Interface | Arduino CLI, same toolchain as transmitter |
-| FQBN | `esp32:esp32:esp32dev` |
+| FQBN | `esp32:esp32:esp32` |
 
 #### 10.1.1 Display Pin Assignments (HSPI)
 
@@ -513,7 +513,13 @@ This section specifies the separate receiver project (`paddlestroke_espnow_rx/`)
 
 #### 10.1.2 CYD2USB Notes
 
-The dual-USB variant has an inverted display. The firmware must call the LVGL/driver invert function at startup. The USB-C port requires a USB-C to USB-A adaptor when connecting to a USB-C-only computer.
+The USB-C port requires a USB-C to USB-A adaptor when connecting to a USB-C-only computer.
+
+**Display inversion:** Some CYD2USB units ship with a hardware-inverted display and require `tft.invertDisplay(true)` in firmware to correct it. The unit used in this project does **not** require software inversion — calling `invertDisplay(true)` causes all colours to be inverted (white background appears black). Do not enable software inversion unless testing shows colours are wrong without it.
+
+**Rotation:** `tft.setRotation(2)` gives correct landscape orientation on this unit. Rotations 1 and 3 produce portrait, rotation 0 produces landscape mirrored.
+
+**Startup display clear:** The display has noise pixels in areas outside the active window that persist across reboots. At startup, call `tft.fillScreen(TFT_WHITE)` in all four rotations before settling on rotation 2. This writes white to every addressable pixel regardless of which rotation maps to which physical area, eliminating the noise strip.
 
 ---
 
@@ -521,9 +527,10 @@ The dual-USB variant has an inverted display. The firmware must call the LVGL/dr
 
 | Library | Purpose |
 |---------|---------|
-| `LVGL` | UI widgets and display management |
-| `TFT_eSPI` | Hardware display driver (LVGL back-end) |
+| `TFT_eSPI` 2.5.43 | Hardware display driver |
 | `WiFi` / `esp_now` | ESPnow reception |
+
+LVGL is **not used**. TFT_eSPI is driven directly. Font 8 (built-in 75 px 7-segment style) is used for the large rate number; Font 4 for the CPM sub-label. A `User_Setup.h` with `#define USER_SETUP_LOADED` must be present in the sketch directory.
 
 ---
 
@@ -541,9 +548,9 @@ Text should be legible but need not fill the screen.
 
 #### 10.3.2 Main Rate Screen
 
-After the splash, show the stroke rate. The rate value must occupy most of the screen — use the largest LVGL label font available.
+After the splash, show the stroke rate. The rate value must occupy most of the screen — use TFT_eSPI Font 8 (75 px 7-segment style), centred.
 
-**Layout (landscape 320×240):**
+**Layout (landscape, rotation 2):**
 
 ```
 ┌─────────────────────────────┐
@@ -570,8 +577,8 @@ A small icon in the top-right corner indicates reception state:
 
 | State | Colour |
 |-------|--------|
-| Receiving (packet within last 3 s) | White |
-| Signal lost (no packet for > 3 s) | Grey |
+| Receiving (packet within last 3 s) | Black `#000000` (white background) |
+| Signal lost (no packet for > 3 s) | Grey `#909090` |
 
 When signal is lost the last received rate remains on screen in grey. The display does not reset to `--` until the device is power-cycled.
 
@@ -601,8 +608,8 @@ struct __attribute__((packed)) EspNowPayload {
 # Compile
 arduino-cli compile paddlestroke_espnow_rx/
 
-# Upload (replace COM4 with the CYD port)
-arduino-cli upload -p COM4 paddlestroke_espnow_rx/
+# Upload
+arduino-cli upload -p COM7 paddlestroke_espnow_rx/
 ```
 
 ---

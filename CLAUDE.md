@@ -57,6 +57,27 @@ The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `paddlestroke_sim_t
 - **Phase 3** — SD card logging (timestamp_ms, roll, pitch, yaw at 100 Hz): complete
 - **Phase 4** — Field testing complete (2 May 2026). EMA high-pass filter added. Low-power doze mode with GPIO4 (BNO085 INT) interrupt wakeup: complete
 - **Phase 5** — ESPnow broadcast of stroke rate: complete (transmit side; receiver is a separate project)
+- **Phase 6** — CYD ESPnow receiver: display hardware characterised (5 May 2026). LVGL dropped in favour of TFT_eSPI direct. Correct rotation is `setRotation(2)` for landscape on this unit. Startup must fill white in all four rotations to clear display noise outside the active area. `cyd_test/` counter sketch confirmed working. Main receiver rewrite in progress.
+
+## CYD Receiver (`paddlestroke_espnow_rx/`)
+
+- **MCU:** ESP32-2432S028 CYD2USB (`esp32:esp32:esp32`)
+- **Display:** ILI9341 2.8" TFT via TFT_eSPI 2.5.43 — **no LVGL**
+- **Port:** COM7
+
+```bash
+# Compile
+arduino-cli compile paddlestroke_espnow_rx/
+
+# Upload
+arduino-cli upload -p COM7 paddlestroke_espnow_rx/
+```
+
+**Key display findings (5 May 2026):**
+- `setRotation(2)` gives correct landscape orientation on this unit (not rotation 1)
+- At startup, call `fillScreen(TFT_WHITE)` in all four rotations before settling on rotation 2 — this clears noise pixels in the display area outside the active window
+- TFT_eSPI Font 8 (75 px 7-segment style) is readable and sufficient — no custom font needed
+- `User_Setup.h` must be in the sketch directory with `#define USER_SETUP_LOADED`
 
 ## Key Constraints
 
