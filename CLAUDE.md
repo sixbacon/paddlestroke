@@ -57,7 +57,7 @@ The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `paddlestroke_sim_t
 - **Phase 3** — SD card logging (timestamp_ms, roll, pitch, yaw at 100 Hz): complete
 - **Phase 4** — Field testing complete (2 May 2026). EMA high-pass filter added. Low-power doze mode with GPIO4 (BNO085 INT) interrupt wakeup: complete
 - **Phase 5** — ESPnow broadcast of stroke rate: complete (transmit side; receiver is a separate project)
-- **Phase 6** — CYD ESPnow receiver: display hardware characterised (5 May 2026). LVGL dropped in favour of TFT_eSPI direct. Correct rotation is `setRotation(2)` for landscape on this unit. Startup must fill white in all four rotations to clear display noise outside the active area. `cyd_test/` counter sketch confirmed working. Main receiver rewrite in progress.
+- **Phase 6** — CYD ESPnow receiver: display hardware characterised, main receiver sketch written and flashed (5 May 2026). LVGL dropped in favour of TFT_eSPI direct. T-19 passed. T-20–T-22 pending (require transmitter).
 
 ## CYD Receiver (`paddlestroke_espnow_rx/`)
 

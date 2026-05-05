@@ -622,6 +622,8 @@ arduino-cli upload -p COM7 paddlestroke_espnow_rx/
 
 **Pass:** The sketch name is displayed for approximately 20 seconds, then the main rate screen appears.
 
+**Result: PASSED (5 May 2026)**
+
 ---
 
 ### T-20 Rate Display — Active

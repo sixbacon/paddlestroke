@@ -24,6 +24,9 @@
 #define LOAD_GLCD
 #define LOAD_FONT2
 #define LOAD_FONT4
+#define LOAD_FONT6
+#define LOAD_FONT7
+#define LOAD_FONT8
 #define LOAD_GFXFF
 #define SMOOTH_FONT
 
