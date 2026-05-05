@@ -634,6 +634,8 @@ arduino-cli upload -p COM7 paddlestroke_espnow_rx/
 
 **Pass:** The current CPM value is shown in white in large text; the signal icon is filled and flashing at ~1 Hz.
 
+**Result: PASSED (5 May 2026)**
+
 ---
 
 ### T-21 Rate Display — Signal Lost
@@ -644,6 +646,8 @@ arduino-cli upload -p COM7 paddlestroke_espnow_rx/
 
 **Pass:** After 3 seconds with no packet, the last rate value remains on screen but changes to grey; the signal icon becomes a static hollow circle.
 
+**Result: PASSED (5 May 2026)**
+
 ---
 
 ### T-22 Rate Resumes After Loss
@@ -653,3 +657,5 @@ arduino-cli upload -p COM7 paddlestroke_espnow_rx/
 2. Resume transmitting.
 
 **Pass:** Within one packet period the value updates, returns to white, and the signal icon resumes flashing.
+
+**Result: PASSED (5 May 2026)**
