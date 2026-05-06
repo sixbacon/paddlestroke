@@ -2,7 +2,7 @@
 
 **Project:** paddlestroke  
 **Date:** 6 May 2026  
-**Version:** 1.4
+**Version:** 1.5
 
 ---
 
@@ -248,7 +248,7 @@ The following are excluded from the current implementation. Items marked with a 
 | **4** | Field testing on real paddle shaft. Data collected and analysed 2 May 2026 — roll confirmed as best signal, high-pass filter added to algorithm. Low-power doze mode with GPIO4 interrupt wakeup implemented. *(Complete)* |
 | **5** | Transmit stroke rate via ESPnow broadcast. Transmit side complete and tested (T-18a–T-18c). Receiver/display is a separate project. BLE and mobile app deferred. *(Complete)* |
 | **6** | CYD ESPnow receiver with TFT display. LVGL dropped in favour of TFT_eSPI direct. Tests T-19–T-22 passed. *(Complete — 5 May 2026)* |
-| **7** | ESPnow full-IMU data link — transmit raw IMU data from paddle device to CYD at 100 Hz; log to CYD SD card. Enables sealed paddle device. Test sketches written; awaiting hardware validation (T-23–T-31). |
+| **7** | ESPnow full-IMU data link — transmit raw IMU data from paddle device to CYD at 100 Hz; log to CYD SD card. Enables sealed paddle device. All tests T-23–T-31 passed (6 May 2026). *(Complete)* |
 | **8** | *(Planned)* Move SD logging from paddle device to CYD in production firmware, once Phase 7 tests pass. Seal paddle housing. |
 
 ---
@@ -871,6 +871,8 @@ Any row where `seq` jumps by more than 1 from the previous row indicates a lost 
 
 **Pass:** Packet loss < 1 % over the 60-second window (~6 000 packets expected).
 
+**Result: PASSED (6 May 2026)** — loss 0.27 % over 60 s.
+
 ---
 
 ### T-25 Maximum Inter-Packet Gap
@@ -882,6 +884,8 @@ Any row where `seq` jumps by more than 1 from the previous row indicates a lost 
 2. Read `MaxGap` from the serial PASS/FAIL report.
 
 **Pass:** Maximum gap between consecutive received packets < 50 ms. (Normal gap at 100 Hz is ~10 ms; criterion allows up to 4 consecutive lost packets before failing.)
+
+**Result: PASSED (6 May 2026)** — MaxGap 20 ms.
 
 ---
 
@@ -897,6 +901,8 @@ Any row where `seq` jumps by more than 1 from the previous row indicates a lost 
 
 **Pass:** Maximum absolute error < 0.0001° across all received packets for all three Euler angles.
 
+**Result: PASSED (6 May 2026)** — EulerErr 0.0000000° throughout. Bug found and fixed during testing: simple `fabs(d_yaw − pkt.yaw)` returned 360° at the ±180° yaw wrap boundary. Fixed with wrap-aware subtraction: `if (yErr > 180.0) yErr = 360.0 - yErr` in `paddlestroke_espnow_rx_sdlog.ino`.
+
 ---
 
 ### T-27 Known Constant Accuracy (accel_z Cross-Check)
@@ -910,6 +916,8 @@ Any row where `seq` jumps by more than 1 from the previous row indicates a lost 
 **Method:** The TX always sends `accel_z = 9.80665`. The RX checks `|received accel_z − 9.80665|` for every packet.
 
 **Pass:** Maximum error < 0.0001 m/s² across all received packets.
+
+**Result: PASSED (6 May 2026)** — AzErr 0.0000000 throughout.
 
 ---
 
@@ -930,6 +938,8 @@ Any row where `seq` jumps by more than 1 from the previous row indicates a lost 
 - Row count equals reported received packet count.
 - No truncated rows.
 
+**Result: PASSED (6 May 2026)** — ImuLog00.CSV and ImuLog01.CSV created; headers correct; all error columns 0.00000000 throughout; row counts consistent with reported received packet counts.
+
 ---
 
 ### T-29 No Ring Buffer Overflow
@@ -941,6 +951,8 @@ Any row where `seq` jumps by more than 1 from the previous row indicates a lost 
 2. Read `Overflow` from the serial PASS/FAIL report.
 
 **Pass:** Overflow count = 0. (A non-zero value indicates that loop() fell behind the ESPnow callback — e.g., due to an SD or display operation blocking for too long.)
+
+**Result: PASSED (6 May 2026)** — Overflow 0 throughout the 60 s automated window.
 
 ---
 
@@ -955,6 +967,8 @@ Any row where `seq` jumps by more than 1 from the previous row indicates a lost 
 **Pass:**
 - While TX is absent: RX displays `Signal: ---`, serial shows no packet counts incrementing. No crash or hang.
 - Within 5 seconds of TX power-on: RX begins receiving packets, `Signal: OK` appears, packet count starts incrementing. No manual intervention on either device.
+
+**Result: PASSED (6 May 2026)**
 
 ---
 
@@ -971,5 +985,7 @@ Any row where `seq` jumps by more than 1 from the previous row indicates a lost 
 **Pass:**
 - Within 3 seconds of TX power-off: RX shows `Signal: ---` (signal timeout).
 - Within 5 seconds of TX restart: RX shows `Signal: OK` and resumes packet accumulation. No manual intervention required.
+
+**Result: PASSED (6 May 2026)** — RX recovered automatically within one 5 s reporting interval after TX restart. Known limitation: `MaxGap` metric shows a spurious ~4.3×10⁹ ms value on TX restart due to `uint32_t` underflow when TX `millis()` resets to near zero. This does not affect normal operation and is a test-harness display artefact only. Up to 32 ring-buffer overflows may occur in the burst immediately after TX restart (one `fillScreen()` call can block loop() for >320 ms); this also does not affect normal operation.
 
 > **Note:** ESP-NOW is connectionless broadcast — there is no handshake or pairing. T-30 and T-31 confirm that automatic recovery is a property of the protocol, not firmware logic.

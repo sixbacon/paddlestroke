@@ -58,7 +58,7 @@ The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `paddlestroke_sim_t
 - **Phase 4** — Field testing complete (2 May 2026). EMA high-pass filter added. Low-power doze mode with GPIO4 (BNO085 INT) interrupt wakeup: complete
 - **Phase 5** — ESPnow broadcast of stroke rate: complete (transmit side; receiver is a separate project)
 - **Phase 6** — CYD ESPnow receiver: complete (5 May 2026). LVGL dropped in favour of TFT_eSPI direct. All tests T-19–T-22 passed.
-- **Phase 7** — ESPnow full-IMU data link + CYD SD logging: in progress. Test sketches written; pending hardware test.
+- **Phase 7** — ESPnow full-IMU data link + CYD SD logging: complete (6 May 2026). All tests T-23–T-31 passed. Bug fixed: yaw wrap at ±180° caused EulerErr=360° (corrected with wrap-aware subtraction in RX sketch).
 
 ## CYD Receiver (`paddlestroke_espnow_rx/`)
 
@@ -105,7 +105,7 @@ PaddleStroke v1.0 — ready                  // banner on startup (no timestamp)
 
 Goal: move SD logging from the paddle device to the CYD so the paddle unit can be sealed.
 
-**Do not modify `paddlestroke.ino` or `paddlestroke_espnow_rx.ino` until tests pass.**
+**All tests T-23–T-31 passed (6 May 2026). Production integration (Phase 8) can proceed.**
 
 ### TX test (`paddlestroke_espnow_tx_test/`) — LOLIN32 Lite, COM3
 
@@ -129,7 +129,7 @@ arduino-cli upload -p COM3 paddlestroke_espnow_tx_test/
 arduino-cli monitor -p COM3 -c baudrate=115200
 ```
 
-### RX test (`paddlestroke_espnow_rx_sdlog/`) — CYD, COM7
+### RX test (`paddlestroke_espnow_rx_sdlog/`) — CYD, COM6
 
 Receives packets, logs to SD, shows stroke count and signal status on TFT.
 
@@ -141,8 +141,8 @@ CSV columns: `seq, timestamp_ms, accel_x/y/z, q_w/x/y/z, roll/pitch/yaw, stroke_
 
 ```bash
 arduino-cli compile paddlestroke_espnow_rx_sdlog/
-arduino-cli upload -p COM7 paddlestroke_espnow_rx_sdlog/
-arduino-cli monitor -p COM7 -c baudrate=115200
+arduino-cli upload -p COM6 paddlestroke_espnow_rx_sdlog/
+arduino-cli monitor -p COM6 -c baudrate=115200
 ```
 
 ### Automated tests (60 s window on RX)

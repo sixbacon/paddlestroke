@@ -284,6 +284,7 @@ void loop() {
         double rErr     = fabs(d_roll  - pkt.roll);
         double pErr     = fabs(d_pitch - pkt.pitch);
         double yErr     = fabs(d_yaw   - pkt.yaw);
+        if (yErr > 180.0) yErr = 360.0 - yErr;   // handle ±180° wrap discontinuity
         double eulerErr = fmax(fmax(rErr, pErr), yErr);
         if (eulerErr > maxEulerErr) maxEulerErr = eulerErr;
 
