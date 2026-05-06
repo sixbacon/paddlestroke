@@ -1,14 +1,16 @@
 # Kayak Paddle Stroke Rate Monitor — Functional Specification
 
 **Project:** paddlestroke  
-**Date:** 4 May 2026  
-**Version:** 1.3
+**Date:** 6 May 2026  
+**Version:** 1.4
 
 ---
 
 ## 1. Overview
 
 A device mounted at the centre of a kayak paddle shaft that measures paddle cycle rate in real time using an inertial measurement unit (IMU). The primary sensing axis is roll of the paddle shaft. Cycle rate (one left stroke + one right stroke = one cycle) is computed from the oscillating roll signal and reported over a serial interface.
+
+The long-term goal is a fully **sealed, waterproof paddle device**. To achieve this, SD card logging is being moved from the paddle device to the CYD display unit via an ESPnow full-IMU data link (Phase 7). Once that link is validated, the paddle device need only transmit data — no external connectors are required and the housing can be sealed.
 
 ---
 
@@ -241,10 +243,13 @@ The following are excluded from the current implementation. Items marked with a 
 | Phase | Description |
 |-------|-------------|
 | **1** | Develop stroke detection algorithm and test it. *(Complete)* |
-| **2** | Develop full stroke measurement unit based on hardware; test over USB serial in the laboratory using a dummy paddle. |
-| **3** | Add logging of all orientation and position data to the micro SD card; test in the laboratory. |
+| **2** | Develop full stroke measurement unit based on hardware; test over USB serial in the laboratory using a dummy paddle. *(Complete)* |
+| **3** | Add logging of all orientation and position data to the micro SD card; test in the laboratory. *(Complete)* |
 | **4** | Field testing on real paddle shaft. Data collected and analysed 2 May 2026 — roll confirmed as best signal, high-pass filter added to algorithm. Low-power doze mode with GPIO4 interrupt wakeup implemented. *(Complete)* |
 | **5** | Transmit stroke rate via ESPnow broadcast. Transmit side complete and tested (T-18a–T-18c). Receiver/display is a separate project. BLE and mobile app deferred. *(Complete)* |
+| **6** | CYD ESPnow receiver with TFT display. LVGL dropped in favour of TFT_eSPI direct. Tests T-19–T-22 passed. *(Complete — 5 May 2026)* |
+| **7** | ESPnow full-IMU data link — transmit raw IMU data from paddle device to CYD at 100 Hz; log to CYD SD card. Enables sealed paddle device. Test sketches written; awaiting hardware validation (T-23–T-31). |
+| **8** | *(Planned)* Move SD logging from paddle device to CYD in production firmware, once Phase 7 tests pass. Seal paddle housing. |
 
 ---
 
@@ -659,3 +664,312 @@ arduino-cli upload -p COM7 paddlestroke_espnow_rx/
 **Pass:** Within one packet period the value updates, returns to white, and the signal icon resumes flashing.
 
 **Result: PASSED (5 May 2026)**
+
+---
+
+## 11. ESPnow Full-IMU Data Link — CYD SD Logging (Phase 7)
+
+This section specifies the Phase 7 ESPnow data link that transmits raw IMU data from the paddle device to the CYD at 100 Hz, where it is logged to SD card. The goal is to eliminate the need for an SD card or USB connector on the paddle device, enabling a fully sealed waterproof enclosure.
+
+**Do not modify `paddlestroke.ino` or `paddlestroke_espnow_rx.ino` until tests T-23–T-31 pass.**
+
+---
+
+### 11.1 Motivation
+
+The current paddle device has an SD card slot and USB connector that prevent waterproofing. If all data recording is offloaded to the CYD (which is in the kayak cockpit, not submerged), the paddle device needs only a power connection and a radio — both of which can be made waterproof. The ESPnow link already exists for stroke rate; this phase extends it to carry the full 100 Hz IMU stream.
+
+---
+
+### 11.2 ESPnow Payload
+
+A single packed struct is broadcast at every IMU sample (100 Hz). The struct is shared between the TX and RX sketches and must be kept identical in both.
+
+**Payload struct (92 bytes, well within the 250-byte ESP-NOW limit):**
+
+```cpp
+struct __attribute__((packed)) ImuDataPayload {
+    uint32_t seq;           // monotonic counter — gap means lost packet(s)
+    uint32_t timestamp_ms;  // TX millis()
+    double   accel_x;       // m/s²
+    double   accel_y;       // m/s²
+    double   accel_z;       // m/s²
+    double   q_w;           // quaternion (w, x, y, z)
+    double   q_x;
+    double   q_y;
+    double   q_z;
+    double   roll;          // degrees, derived from quaternion on TX
+    double   pitch;         // degrees
+    double   yaw;           // degrees
+    uint32_t stroke_count;  // increments on each qualifying stroke
+};
+// static_assert(sizeof(ImuDataPayload) == 92, "Payload size mismatch");
+```
+
+All floating-point fields use `double` (64-bit IEEE 754 on ESP32). The `seq` field allows the receiver to detect and count any dropped packets. `stroke_count` is sent in every packet but incremented only on qualifying strokes, so it is redundant with the stroke-rate ESPnow packets but available in the raw log for alignment.
+
+**No application checksum is required.** ESP-NOW embeds a hardware CRC-32 in every 802.11 frame. Corrupted packets are discarded by the radio before reaching the receive callback — anything that arrives is already bit-validated. The sequence number detects losses; T-26 detects any struct packing error.
+
+---
+
+### 11.3 Data Rate Analysis
+
+| Parameter | Value |
+|-----------|-------|
+| Packet rate | 100 Hz |
+| Payload size | 92 bytes |
+| Raw data rate | 9.2 KB/s |
+| ESP-NOW min PHY rate | 1 Mbps (125 KB/s usable) |
+| SD write rate | ~18 KB/s (CSV ~180 chars/row) |
+| SD SPI clock | 4 MHz → 500 KB/s capacity |
+
+The data rate is comfortably within ESP-NOW capacity. SD write throughput at 4 MHz SPI is ~27× the required rate. No rate limiting or backpressure is needed.
+
+---
+
+### 11.4 CYD Hardware — SD Card
+
+The CYD micro SD slot is on the **VSPI** bus. The display is on **HSPI**. These are independent hardware SPI controllers on the ESP32 and can operate simultaneously without conflict.
+
+#### 11.4.1 SD Card Pin Assignments (VSPI)
+
+| GPIO | Function |
+|------|----------|
+| IO5  | SD_CS |
+| IO18 | SD_SCK |
+| IO23 | SD_MOSI |
+| IO19 | SD_MISO |
+
+#### 11.4.2 SPI Bus Allocation on CYD
+
+| Bus | Peripheral | Pins |
+|-----|-----------|------|
+| HSPI | ILI9341 display | SCK=14, MOSI=13, MISO=12, CS=15 |
+| VSPI | Micro SD card | SCK=18, MOSI=23, MISO=19, CS=5 |
+| (separate) | XPT2046 touch | SCK=25, MOSI=32, MISO=39, CS=33 |
+
+The touch controller (XPT2046) is on its own pins and is **not used** in Phase 7. No SPI conflicts exist between display and SD in this phase.
+
+---
+
+### 11.5 CSV Log Format
+
+File auto-numbered `/ImuLog00.CSV` … `/ImuLog99.CSV` on the CYD SD card.
+
+**Columns:**
+
+| Column | Description |
+|--------|-------------|
+| `seq` | TX sequence number |
+| `timestamp_ms` | TX millis() at sample time |
+| `accel_x`, `accel_y`, `accel_z` | Acceleration, m/s² (5 decimal places) |
+| `q_w`, `q_x`, `q_y`, `q_z` | Quaternion components (8 decimal places) |
+| `roll`, `pitch`, `yaw` | Euler angles, degrees (5 decimal places) |
+| `stroke_count` | Cumulative stroke count from TX |
+| `d_roll`, `d_pitch`, `d_yaw` | Euler angles re-derived from received quaternion on RX |
+| `roll_err`, `pitch_err`, `yaw_err` | \|received − re-derived\| (8 decimal places) |
+| `az_err` | \|accel_z − 9.80665\| for test data; use as data-integrity column in production |
+
+SD writes are batched (no flush per row). The log file is flushed every 5 s and on test completion.
+
+---
+
+### 11.6 Test Sketches
+
+Two dedicated test sketches validate the link before any changes to production firmware.
+
+#### 11.6.1 TX Test Sketch — `paddlestroke_espnow_tx_test/`
+
+**Target:** LOLIN32 Lite (`esp32:esp32:lolin32-lite`), COM3.
+
+Generates synthetic IMU data at 100 Hz — **no BNO085 hardware required**. Data follows a known formula so the receiver can verify integrity independently:
+
+| Field | Formula | Verifiable property |
+|-------|---------|-------------------|
+| `angle` | `seq × 2π / 200` | One full rotation per 2 s |
+| `accel_x` | `2.0 × sin(angle)` | Sinusoidal, amplitude 2 m/s² |
+| `accel_y` | `2.0 × cos(angle)` | 90° phase-shifted from accel_x |
+| `accel_z` | `9.80665` | **Constant** — easy cross-check |
+| `q_w/x/y/z` | Pure Z-axis rotation at `angle` | Roll=0, pitch=0 always |
+| `roll` | 0° | Exact for pure Z rotation |
+| `pitch` | 0° | Exact for pure Z rotation |
+| `yaw` | `angle` in degrees, wrapped to (−180, 180] | Predictable from seq |
+| `stroke_count` | Increments every 100 packets | Simulates ~60 CPM |
+
+Varied data (angle changes every packet) means any missing or reordered packet is immediately detectable from both the sequence gap and the value discontinuity.
+
+The sketch retries ESPnow initialisation every 10 s if it fails at startup. It broadcasts unconditionally — no receiver needs to be present.
+
+```bash
+arduino-cli compile paddlestroke_espnow_tx_test/
+arduino-cli upload -p COM3 paddlestroke_espnow_tx_test/
+arduino-cli monitor -p COM3 -c baudrate=115200
+```
+
+Serial output: MAC address at startup, TX stats every 5 s (`seq`, `sent`, `fail`, `stroke_count`).
+
+#### 11.6.2 RX Test Sketch — `paddlestroke_espnow_rx_sdlog/`
+
+**Target:** CYD (`esp32:esp32:esp32`), COM7.
+
+Receives ESPnow packets, logs to SD, and shows live stats on TFT. Runs a 60-second automated test (T-24–T-29) then prints PASS/FAIL to serial and updates the display.
+
+The sketch uses a 32-entry ring buffer (FIFO, protected by a critical section) between the WiFi task (Core 0) and the main loop (Core 1). The display (HSPI) and SD card (VSPI) operate on independent SPI buses concurrently.
+
+```bash
+arduino-cli compile paddlestroke_espnow_rx_sdlog/
+arduino-cli upload -p COM7 paddlestroke_espnow_rx_sdlog/
+arduino-cli monitor -p COM7 -c baudrate=115200
+```
+
+Serial output: pass criteria at startup, stats every 5 s, full PASS/FAIL report at 60 s.
+
+---
+
+### 11.7 Post-Processing Verification (CSV)
+
+After a test run, the CSV can be analysed in Excel or Python to verify formula accuracy:
+
+| Column | Expected value |
+|--------|---------------|
+| `accel_x[i]` | `2 × sin(seq[i] × 2π / 200)` |
+| `accel_y[i]` | `2 × cos(seq[i] × 2π / 200)` |
+| `accel_z[i]` | 9.80665 (exactly) |
+| `roll[i]` | 0° (exactly) |
+| `pitch[i]` | 0° (exactly) |
+| `yaw[i]` | `(seq[i] mod 200) × 1.8°` |
+| `roll_err`, `pitch_err`, `yaw_err` | < 1 × 10⁻⁴ ° throughout |
+| `stroke_count` | Monotonically non-decreasing, increments by exactly 1 |
+
+Any row where `seq` jumps by more than 1 from the previous row indicates a lost packet. The gap in the formula values confirms which packet number was dropped.
+
+---
+
+### T-23 Data Rate — ESPnow Bandwidth
+
+**Precondition:** Analysis only (no hardware needed).
+
+**Verification:**
+- Payload: 92 bytes × 100 Hz = 9.2 KB/s
+- ESP-NOW minimum PHY rate: 1 Mbps = 125 KB/s usable throughput
+- Margin: > 13×
+
+**Pass:** Data rate is below 10% of minimum ESP-NOW throughput. No hardware throttling or buffering strategy is required.
+
+**Result: PASS by analysis (6 May 2026)**
+
+---
+
+### T-24 Packet Loss Rate
+
+**Setup:** TX test sketch running on LOLIN32 Lite; RX test sketch running on CYD with SD card inserted. Devices within normal operating range (< 5 m for lab test).
+
+**Steps:**
+1. Flash both sketches and power on TX first.
+2. Power on RX and allow the 60-second test to complete.
+3. Read the serial output from the RX.
+
+**Pass:** Packet loss < 1 % over the 60-second window (~6 000 packets expected).
+
+---
+
+### T-25 Maximum Inter-Packet Gap
+
+**Setup:** As T-24.
+
+**Steps:**
+1. Run the 60-second test.
+2. Read `MaxGap` from the serial PASS/FAIL report.
+
+**Pass:** Maximum gap between consecutive received packets < 50 ms. (Normal gap at 100 Hz is ~10 ms; criterion allows up to 4 consecutive lost packets before failing.)
+
+---
+
+### T-26 Euler Re-Derivation Accuracy (Double Transmission Integrity)
+
+**Setup:** As T-24.
+
+**Steps:**
+1. Run the 60-second test.
+2. Read `EulerErr` from the serial PASS/FAIL report.
+
+**Method:** The RX re-derives roll/pitch/yaw from the received quaternion using the same formula as the TX. If the doubles are transmitted correctly, the re-derived values must match the received Euler fields to within floating-point rounding error.
+
+**Pass:** Maximum absolute error < 0.0001° across all received packets for all three Euler angles.
+
+---
+
+### T-27 Known Constant Accuracy (accel_z Cross-Check)
+
+**Setup:** As T-24.
+
+**Steps:**
+1. Run the 60-second test.
+2. Read `AzErr` from the serial PASS/FAIL report.
+
+**Method:** The TX always sends `accel_z = 9.80665`. The RX checks `|received accel_z − 9.80665|` for every packet.
+
+**Pass:** Maximum error < 0.0001 m/s² across all received packets.
+
+---
+
+### T-28 SD Card Logging
+
+**Setup:** As T-24, SD card inserted in CYD.
+
+**Steps:**
+1. Run the 60-second test.
+2. Remove the SD card and inspect the file on a PC.
+3. Check that `/ImuLog00.CSV` (or the next auto-numbered file) was created.
+4. Verify the row count matches `totalReceived` reported by the RX serial output.
+5. Check headers and data format.
+
+**Pass:**
+- File exists and is non-empty.
+- Header row matches the specification (§11.5).
+- Row count equals reported received packet count.
+- No truncated rows.
+
+---
+
+### T-29 No Ring Buffer Overflow
+
+**Setup:** As T-24.
+
+**Steps:**
+1. Run the 60-second test.
+2. Read `Overflow` from the serial PASS/FAIL report.
+
+**Pass:** Overflow count = 0. (A non-zero value indicates that loop() fell behind the ESPnow callback — e.g., due to an SD or display operation blocking for too long.)
+
+---
+
+### T-30 Cold Start — RX Waits for TX (Manual)
+
+**Steps:**
+1. Flash both sketches but power on the **RX only**.
+2. Observe the RX display and serial output for 30 seconds.
+3. Power on the TX.
+4. Observe the RX display and serial output.
+
+**Pass:**
+- While TX is absent: RX displays `Signal: ---`, serial shows no packet counts incrementing. No crash or hang.
+- Within 5 seconds of TX power-on: RX begins receiving packets, `Signal: OK` appears, packet count starts incrementing. No manual intervention on either device.
+
+---
+
+### T-31 TX Restart Recovery (Manual)
+
+**Setup:** Both devices running, RX showing `Signal: OK` and accumulating packets.
+
+**Steps:**
+1. Power off the TX while the RX is running.
+2. Wait 10 seconds and confirm the RX shows `Signal: ---`.
+3. Power the TX back on.
+4. Observe the RX.
+
+**Pass:**
+- Within 3 seconds of TX power-off: RX shows `Signal: ---` (signal timeout).
+- Within 5 seconds of TX restart: RX shows `Signal: OK` and resumes packet accumulation. No manual intervention required.
+
+> **Note:** ESP-NOW is connectionless broadcast — there is no handshake or pairing. T-30 and T-31 confirm that automatic recovery is a property of the protocol, not firmware logic.
