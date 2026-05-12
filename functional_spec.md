@@ -249,7 +249,7 @@ The following are excluded from the current implementation. Items marked with a 
 | **5** | Transmit stroke rate via ESPnow broadcast. Transmit side complete and tested (T-18a–T-18c). Receiver/display is a separate project. BLE and mobile app deferred. *(Complete)* |
 | **6** | CYD ESPnow receiver with TFT display. LVGL dropped in favour of TFT_eSPI direct. Tests T-19–T-22 passed. *(Complete — 5 May 2026)* |
 | **7** | ESPnow full-IMU data link — transmit raw IMU data from paddle device to CYD at 100 Hz; log to CYD SD card. Enables sealed paddle device. All tests T-23–T-31 passed (6 May 2026). *(Complete)* |
-| **8** | Production integration — full-IMU ESPnow payload in PadMon; SD logging in PadDis; SD card removed from paddle device. Sketches renamed PadMon / PadDis with version scheme phase.iteration (currently v8.1). *(In progress — 12 May 2026)* |
+| **8** | Production integration — full-IMU ESPnow payload in PadLog; SD logging in PadDis; SD card removed from paddle device. Sketches renamed PadLog / PadDis with version scheme phase.iteration (currently v8.1). *(In progress — 12 May 2026)* |
 
 ---
 
@@ -265,7 +265,7 @@ All tests are manual, performed with the ESP32 connected via USB and the Arduino
 1. Flash firmware and power-cycle the ESP32.
 2. Observe serial output within 2 s.
 
-**Pass:** The first line received is exactly `PadMon v8.1 — ready` (version number reflects current release).
+**Pass:** The first line received is exactly `PadLog v8.1 — ready` (version number reflects current release).
 
 ---
 
@@ -1000,27 +1000,27 @@ This section specifies the production firmware that replaces the Phase 7 test sk
 
 ### 12.1 Sketch Naming and Version Convention
 
-| Sketch | File | Target | Port |
-|--------|------|--------|------|
-| **PadMon** | `paddlestroke.ino` | LOLIN32 Lite | COM3 |
-| **PadDis** | `paddlestroke_espnow_rx.ino` | CYD ESP32-2432S028 | COM6 |
+| Sketch | Directory | File | Target | Port |
+|--------|-----------|------|--------|------|
+| **PadLog** | `PadLog/` | `PadLog.ino` | LOLIN32 Lite | COM3 |
+| **PadDis** | `PadDis/` | `PadDis.ino` | CYD ESP32-2432S028 | COM6 |
 
 **Version numbering:** `<phase>.<iteration>` — e.g., v8.1 is Phase 8, first iteration. The major number increments with each new development phase; the minor number increments for each firmware release within that phase.
 
 Both sketches define:
 ```cpp
-#define SKETCH_NAME    "PadMon"   // or "PadDis"
+#define SKETCH_NAME    "PadLog"   // or "PadDis"
 #define SKETCH_VERSION "8.1"
 ```
 
 The version string appears in:
-- Serial startup banner: `PadMon v8.1 — ready`
+- Serial startup banner: `PadLog v8.1 — ready`
 - CYD splash screen (PadDis only)
 - First line of every CSV log file: `# PadDis v8.1`
 
 ---
 
-### 12.2 PadMon — Changes from Phase 7
+### 12.2 PadLog — Changes from Phase 7
 
 #### 12.2.1 ESPnow Payload
 
@@ -1046,14 +1046,14 @@ The `cpm` and `hz` fields carry the most recently computed stroke rate (updated 
 
 #### 12.2.2 SD Card Removed
 
-All SD card code, the HSPI bus, and SD pin definitions are removed from PadMon. The paddle device now requires only: BNO085 (VSPI), WiFi/ESPnow, and USB power.
+All SD card code, the HSPI bus, and SD pin definitions are removed from PadLog. The paddle device now requires only: BNO085 (VSPI), WiFi/ESPnow, and USB power.
 
 #### 12.2.3 Startup USB Window
 
 A 20-second delay before `WiFi.mode()` / `esp_now_init()` is inserted in `setup()`. During this window the CH340 USB chip is stable and the device can be reprogrammed. After 20 s, 100 Hz ESPnow begins and the USB port becomes inaccessible. The serial banner announces the window:
 
 ```
-PadMon v8.1 — ready
+PadLog v8.1 — ready
 Payload: 60 bytes  |  USB window: 20 s — upload firmware now if needed
 ```
 
@@ -1098,11 +1098,11 @@ Signal lost
 ### 12.4 Build and Flash
 
 ```bash
-# PadMon
-arduino-cli compile paddlestroke/
-arduino-cli upload -p COM3 paddlestroke/
+# PadLog
+arduino-cli compile PadLog/
+arduino-cli upload -p COM3 PadLog/
 
 # PadDis
-arduino-cli compile paddlestroke_espnow_rx/
-arduino-cli upload -p COM6 paddlestroke_espnow_rx/
+arduino-cli compile PadDis/
+arduino-cli upload -p COM6 PadDis/
 ```

@@ -15,24 +15,28 @@ Kayak paddle cycle-rate monitor. An ESP32 reads roll from a BNO085 IMU mounted a
 
 ## Build Commands
 
+### PadLog (TX — LOLIN32 Lite, COM3)
+
 ```bash
-# Compile
-arduino-cli compile paddlestroke/
-
-# Upload (replace COM3 with the actual port)
-arduino-cli upload -p COM3 paddlestroke/
-
-# Compile and upload in one step
-arduino-cli compile -u -p COM3 paddlestroke/
-
-# Serial monitor
+arduino-cli compile PadLog/
+arduino-cli upload -p COM3 PadLog/
 arduino-cli monitor -p COM3 -c baudrate=115200
+```
 
+### PadDis (RX — CYD, COM6)
+
+```bash
+arduino-cli compile PadDis/
+arduino-cli upload -p COM6 PadDis/
+arduino-cli monitor -p COM6 -c baudrate=115200
+```
+
+```bash
 # List connected boards to find the port
 arduino-cli board list
 ```
 
-The FQBN for the main sketch (`esp32:esp32:lolin32-lite`) is set in `sketch.yaml`. The sim test sketch has its own `paddlestroke_sim_test/sketch.yaml` with `esp32:esp32:esp32doit-devkit-v1`.
+The FQBN for PadLog (`esp32:esp32:lolin32-lite`) is set in `PadLog/sketch.yaml`. The FQBN for PadDis (`esp32:esp32:esp32`) is set in `PadDis/sketch.yaml`. The sim test sketch has its own `paddlestroke_sim_test/sketch.yaml` with `esp32:esp32:esp32doit-devkit-v1`.
 
 ## Simulation Test
 
@@ -48,7 +52,7 @@ arduino-cli compile -u -p COM3 paddlestroke_sim_test/
 
 Expected output ends with `Results: 20 passed, 0 failed`.
 
-The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `paddlestroke_sim_test/` are copies of the ones in the root sketch directory. Keep them in sync when changing the algorithm.
+The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `paddlestroke_sim_test/` are copies of those in `PadLog/`. Keep them in sync when changing the algorithm.
 
 ## Development Status
 
@@ -59,19 +63,20 @@ The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `paddlestroke_sim_t
 - **Phase 5** — ESPnow broadcast of stroke rate: complete (transmit side; receiver is a separate project)
 - **Phase 6** — CYD ESPnow receiver: complete (5 May 2026). LVGL dropped in favour of TFT_eSPI direct. All tests T-19–T-22 passed.
 - **Phase 7** — ESPnow full-IMU data link + CYD SD logging: complete (6 May 2026). All tests T-23–T-31 passed. Bug fixed: yaw wrap at ±180° caused EulerErr=360° (corrected with wrap-aware subtraction in RX sketch).
+- **Phase 8** — Production integration: in progress (12 May 2026). PadLog v8.1 (TX) + PadDis v8.1 (RX).
 
-## CYD Receiver (`paddlestroke_espnow_rx/`)
+## Production Sketches
 
-- **MCU:** ESP32-2432S028 CYD2USB (`esp32:esp32:esp32`)
-- **Display:** ILI9341 2.8" TFT via TFT_eSPI 2.5.43 — **no LVGL**
-- **Port:** COM7
+| Sketch | Directory | MCU | Port | FQBN |
+|---|---|---|---|---|
+| PadLog | `PadLog/` | LOLIN32 Lite | COM3 | `esp32:esp32:lolin32-lite` |
+| PadDis | `PadDis/` | CYD ESP32-2432S028 | COM6 | `esp32:esp32:esp32` |
 
-```bash
-# Compile
-arduino-cli compile paddlestroke_espnow_rx/
+**Version scheme:** `<phase>.<iteration>` — currently **v8.1**. Version shown in serial banner, CYD splash screen, and CSV first line (`# PadDis v8.1`).
 
-# Upload
-arduino-cli upload -p COM7 paddlestroke_espnow_rx/
+**Payload struct** (60 bytes, float — must be identical in both sketches):
+```
+seq, timestamp_ms, accel_x/y/z, q_w/x/y/z, roll/pitch/yaw, stroke_count, cpm, hz
 ```
 
 **Key display findings (5 May 2026):**
