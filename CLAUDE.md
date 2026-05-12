@@ -63,7 +63,7 @@ The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `paddlestroke_sim_t
 - **Phase 5** — ESPnow broadcast of stroke rate: complete (transmit side; receiver is a separate project)
 - **Phase 6** — CYD ESPnow receiver: complete (5 May 2026). LVGL dropped in favour of TFT_eSPI direct. All tests T-19–T-22 passed.
 - **Phase 7** — ESPnow full-IMU data link + CYD SD logging: complete (6 May 2026). All tests T-23–T-31 passed. Bug fixed: yaw wrap at ±180° caused EulerErr=360° (corrected with wrap-aware subtraction in RX sketch).
-- **Phase 8** — Production integration: in progress (12 May 2026). PadLog v8.1 (TX) + PadDis v8.1 (RX).
+- **Phase 8** — Production integration: complete (12 May 2026). PadLog v8.1 (TX) + PadDis v8.1 (RX). Hardware validated: live paddle session logged correctly.
 
 ## Production Sketches
 
