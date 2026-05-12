@@ -1,5 +1,6 @@
 // paddlestroke_espnow_tx_test.ino
-// Synthetic 100 Hz ESPnow transmitter — no IMU hardware required.
+// Synthetic 1 Hz ESPnow transmitter — no IMU hardware required.
+// (Reduced from 100 Hz to test whether lower TX rate resolves USB/CH340 instability.)
 // Flash to LOLIN32 Lite (esp32:esp32:lolin32-lite, COM3).
 // Pair with paddlestroke_espnow_rx_sdlog on the CYD.
 //
@@ -44,9 +45,9 @@ struct __attribute__((packed)) ImuDataPayload {
 // Size: 4+4 + 10×8 + 4 = 92 bytes (limit 250)
 static_assert(sizeof(ImuDataPayload) == 92, "Payload size mismatch — check struct");
 
-#define REPORT_HZ      100
-#define REPORT_MS      (1000 / REPORT_HZ)    // 10 ms between packets
-#define STROKE_EVERY   100                   // packets per simulated stroke (= 60 CPM)
+#define REPORT_HZ      1
+#define REPORT_MS      (1000 / REPORT_HZ)    // 1000 ms between packets
+#define STROKE_EVERY   1                     // packets per simulated stroke (= 60 CPM)
 #define STATS_INTERVAL 5000                  // ms between serial stats
 
 static const uint8_t BROADCAST[] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
