@@ -1,5 +1,4 @@
 #include <SPI.h>
-#include <SD.h>
 #include <WiFi.h>
 #include <esp_now.h>
 #include <Adafruit_BNO08x.h>
@@ -7,16 +6,32 @@
 #include "driver/gpio.h"
 #include "StrokeDetector.h"
 
-struct __attribute__((packed)) EspNowPayload {
-    uint32_t cpm;
-    float    hz;
-};
+#define SKETCH_NAME    "PadMon"
+#define SKETCH_VERSION "8.1"
 
+// ── Payload struct — must match PadDis (paddlestroke_espnow_rx.ino) exactly ───
+struct __attribute__((packed)) ImuDataPayload {
+    uint32_t seq;
+    uint32_t timestamp_ms;
+    float    accel_x, accel_y, accel_z;   // m/s², raw (includes gravity)
+    float    q_w, q_x, q_y, q_z;          // rotation vector quaternion
+    float    roll, pitch, yaw;             // degrees, derived on TX
+    uint32_t stroke_count;                 // cumulative qualifying strokes
+    uint32_t cpm;                          // current stroke rate CPM
+    float    hz;                           // current stroke rate Hz
+};
+static_assert(sizeof(ImuDataPayload) == 60, "Payload size mismatch — check struct");
+
+// ── Timing constants ──────────────────────────────────────────────────────────
 #define DOZE_TIMEOUT_MS  (3UL * 60UL * 1000UL)
 #define DOZE_REPORT_US   500000
 #define NORMAL_REPORT_US 10000
 #define MOTION_THRESHOLD 20.0f
+// 20-second pause before WiFi init — keeps CH340 USB stable for reprogramming
+// at 100 Hz ESPnow. Upload firmware during this window after each power cycle.
+#define STARTUP_PAUSE_MS 20000UL
 
+// ── BNO085 pins (VSPI) ────────────────────────────────────────────────────────
 #define BNO_CS   5
 #define BNO_INT  4
 #define BNO_RST  16
@@ -24,25 +39,26 @@ struct __attribute__((packed)) EspNowPayload {
 #define BNO_MOSI 23
 #define BNO_MISO 19
 
-#define SD_CS   27
-#define SD_SCK  14
-#define SD_MOSI 13
-#define SD_MISO 12
-
 static SPIClass           vspi(VSPI);
-static SPIClass           hspi(HSPI);
 static Adafruit_BNO08x    bno(BNO_RST);
 static sh2_SensorValue_t  sensorValue;
 static StrokeDetector     detector;
+
 static bool               timeoutActive   = false;
-static bool               SD_present      = false;
-static File               logFile;
-static unsigned long      lastFlushMs     = 0;
-static unsigned long      inactiveStartMs = 0;
 static bool               inDozeMode      = false;
 static bool               espNowReady     = false;
 static float              dozeFirstRoll   = NAN;
+static unsigned long      inactiveStartMs = 0;
 
+static uint32_t           g_seq           = 0;
+static uint32_t           g_strokeCount   = 0;
+static uint32_t           g_cpm           = 0;
+static float              g_hz            = 0.0f;
+static float              g_accel_x       = 0.0f;
+static float              g_accel_y       = 0.0f;
+static float              g_accel_z       = 0.0f;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 struct Euler { float yaw, pitch, roll; };
 
 static Euler extractEuler(const sh2_RotationVectorWAcc_t& rv) {
@@ -62,6 +78,11 @@ static void printTimestamp() {
     Serial.print(buf);
 }
 
+static void enableNormalReports() {
+    bno.enableReport(SH2_ARVR_STABILIZED_RV, NORMAL_REPORT_US);
+    bno.enableReport(SH2_ACCELEROMETER,       NORMAL_REPORT_US);
+}
+
 static void initESPNow() {
     if (espNowReady) esp_now_deinit();
     espNowReady = false;
@@ -79,16 +100,31 @@ static void initESPNow() {
     espNowReady = true;
 }
 
-static void espNowSend(uint32_t cpm, float hz) {
+static void sendImuPayload(const sh2_RotationVectorWAcc_t& rv, const Euler& e) {
     if (!espNowReady) return;
     static const uint8_t broadcast[] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
-    EspNowPayload payload = {cpm, hz};
-    esp_now_send(broadcast, (uint8_t*)&payload, sizeof(payload));
+    ImuDataPayload p;
+    p.seq          = g_seq++;
+    p.timestamp_ms = (uint32_t)millis();
+    p.accel_x      = g_accel_x;
+    p.accel_y      = g_accel_y;
+    p.accel_z      = g_accel_z;
+    p.q_w          = rv.real;
+    p.q_x          = rv.i;
+    p.q_y          = rv.j;
+    p.q_z          = rv.k;
+    p.roll         = e.roll;
+    p.pitch        = e.pitch;
+    p.yaw          = e.yaw;
+    p.stroke_count = g_strokeCount;
+    p.cpm          = g_cpm;
+    p.hz           = g_hz;
+    esp_now_send(broadcast, (uint8_t*)&p, sizeof(p));
 }
 
+// ── Doze mode ─────────────────────────────────────────────────────────────────
 static void armDozeWakeup() {
     bno.enableReport(SH2_ARVR_STABILIZED_RV, DOZE_REPORT_US);
-    // Drain pending SHTP packets so INT goes high before sleep
     sh2_SensorValue_t dummy;
     unsigned long drainEnd = millis() + 50;
     while (millis() < drainEnd) bno.getSensorEvent(&dummy);
@@ -97,7 +133,6 @@ static void armDozeWakeup() {
 }
 
 static void enterDozeMode() {
-    if (SD_present) logFile.flush();
     dozeFirstRoll = NAN;
     armDozeWakeup();
     printTimestamp(); Serial.println("DOZE: low-power mode — waiting for motion");
@@ -107,9 +142,7 @@ static void enterDozeMode() {
 
 static void exitDozeMode() {
     initESPNow();
-    bno.enableReport(SH2_ARVR_STABILIZED_RV, NORMAL_REPORT_US);
-    // Drain samples for 500 ms so the ARVR filter settles at 100 Hz
-    // before the stroke detector sees any data
+    enableNormalReports();
     sh2_SensorValue_t dummy;
     unsigned long settleEnd = millis() + 500;
     while (millis() < settleEnd) bno.getSensorEvent(&dummy);
@@ -120,35 +153,15 @@ static void exitDozeMode() {
     printTimestamp(); Serial.println("WAKE: motion detected — resuming");
 }
 
+// ── Setup ─────────────────────────────────────────────────────────────────────
 void setup() {
     Serial.begin(115200);
-    Serial.println("PaddleStroke v1.0 — ready");
+    Serial.println(SKETCH_NAME " v" SKETCH_VERSION " — ready");
+    Serial.printf("Payload: %u bytes  |  USB window: %lu s — upload firmware now if needed\n",
+                  (unsigned)sizeof(ImuDataPayload), STARTUP_PAUSE_MS / 1000UL);
+    delay(STARTUP_PAUSE_MS);
 
-    // SD on HSPI
-    hspi.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
-    if (!SD.begin(SD_CS, hspi, 1000000)) {
-        Serial.println("SD init failed — logging disabled");
-    } else {
-        char fileName[] = "/PadDat00.CSV";
-        for (int i = 0; i < 100; i++) {
-            fileName[7] = '0' + i / 10;
-            fileName[8] = '0' + i % 10;
-            if (!SD.exists(fileName)) break;
-        }
-        logFile = SD.open(fileName, FILE_WRITE);
-        if (!logFile) {
-            Serial.println("SD file open failed — logging disabled");
-        } else {
-            logFile.println("timestamp_ms,roll,pitch,yaw");
-            Serial.print("Logging to ");
-            Serial.println(fileName);
-            SD_present = true;
-        }
-    }
-
-    // BNO085 on VSPI
     vspi.begin(BNO_SCK, BNO_MISO, BNO_MOSI, BNO_CS);
-
     pinMode(BNO_INT, INPUT);
     pinMode(BNO_RST, OUTPUT);
     digitalWrite(BNO_RST, LOW);  delay(10);
@@ -159,15 +172,12 @@ void setup() {
         while (true) delay(100);
     }
 
-    if (!bno.enableReport(SH2_ARVR_STABILIZED_RV, NORMAL_REPORT_US)) {
-        Serial.println("BNO085 report enable failed — halting");
-        while (true) delay(100);
-    }
-
+    enableNormalReports();
     detector.reset();
     initESPNow();
 }
 
+// ── Loop ──────────────────────────────────────────────────────────────────────
 void loop() {
     if (!inDozeMode && timeoutActive &&
         millis() - inactiveStartMs >= DOZE_TIMEOUT_MS) {
@@ -176,7 +186,6 @@ void loop() {
 
     if (inDozeMode) {
         esp_light_sleep_start();
-        // Wake = BNO085 data-ready INT (GPIO4) at 2 Hz; no rate switch here
         if (bno.getSensorEvent(&sensorValue) &&
             sensorValue.sensorId == SH2_ARVR_STABILIZED_RV) {
             float roll = extractEuler(sensorValue.un.arvrStabilizedRV).roll;
@@ -188,54 +197,49 @@ void loop() {
                 }
                 dozeFirstRoll = roll;
             } else {
-                dozeFirstRoll = NAN;  // bad quaternion — start fresh
+                dozeFirstRoll = NAN;
             }
         } else {
-            dozeFirstRoll = NAN;  // decode error or wrong event — start fresh
+            dozeFirstRoll = NAN;
         }
         armDozeWakeup();
         return;
     }
 
-    if (bno.wasReset()) {
-        bno.enableReport(SH2_ARVR_STABILIZED_RV, NORMAL_REPORT_US);
-    }
+    if (bno.wasReset()) enableNormalReports();
 
     if (!bno.getSensorEvent(&sensorValue)) return;
+
+    // Store latest accelerometer sample; used in next RV packet
+    if (sensorValue.sensorId == SH2_ACCELEROMETER) {
+        g_accel_x = sensorValue.un.accelerometer.x;
+        g_accel_y = sensorValue.un.accelerometer.y;
+        g_accel_z = sensorValue.un.accelerometer.z;
+        return;
+    }
+
     if (sensorValue.sensorId != SH2_ARVR_STABILIZED_RV) return;
 
-    Euler         angles = extractEuler(sensorValue.un.arvrStabilizedRV);
+    const sh2_RotationVectorWAcc_t& rv = sensorValue.un.arvrStabilizedRV;
+    Euler         angles = extractEuler(rv);
     unsigned long nowUs  = micros();
     unsigned long nowMs  = millis();
 
-    if (SD_present) {
-        char row[64];
-        int  len = snprintf(row, sizeof(row), "%lu,%.4f,%.4f,%.4f\n",
-                            nowMs, angles.roll, angles.pitch, angles.yaw);
-        logFile.write((const uint8_t*)row, len);
-    }
-
     if (detector.update(angles.roll, nowUs)) {
-        float hz  = detector.getRateHz();
-        int   cpm = (int)roundf(hz * 60.0f);
+        g_hz          = detector.getRateHz();
+        g_cpm         = (uint32_t)roundf(g_hz * 60.0f);
+        g_strokeCount++;
         printTimestamp();
-        Serial.print("CYCLE_RATE: ");
-        Serial.print(cpm);
-        Serial.print(" CPM  (");
-        Serial.print(hz, 2);
-        Serial.println(" Hz)");
-        espNowSend((uint32_t)cpm, hz);
+        Serial.printf("CYCLE_RATE: %u CPM  (%.2f Hz)\n", g_cpm, g_hz);
         timeoutActive   = false;
         inactiveStartMs = 0;
-        if (SD_present && nowMs - lastFlushMs >= 30000) {
-            logFile.flush();
-            lastFlushMs = nowMs;
-        }
     } else if (detector.isTimedOut(nowUs) && !timeoutActive) {
+        g_cpm         = 0;
+        g_hz          = 0.0f;
         printTimestamp(); Serial.println("CYCLE_RATE: 0 CPM  (0.00 Hz)");
-        espNowSend(0, 0.0f);
         timeoutActive   = true;
         inactiveStartMs = nowMs;
-        if (SD_present) { logFile.flush(); lastFlushMs = nowMs; }
     }
+
+    sendImuPayload(rv, angles);
 }

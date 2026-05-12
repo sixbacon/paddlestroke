@@ -1,8 +1,8 @@
 # Kayak Paddle Stroke Rate Monitor — Functional Specification
 
 **Project:** paddlestroke  
-**Date:** 6 May 2026  
-**Version:** 1.5
+**Date:** 12 May 2026  
+**Version:** 1.6
 
 ---
 
@@ -249,7 +249,7 @@ The following are excluded from the current implementation. Items marked with a 
 | **5** | Transmit stroke rate via ESPnow broadcast. Transmit side complete and tested (T-18a–T-18c). Receiver/display is a separate project. BLE and mobile app deferred. *(Complete)* |
 | **6** | CYD ESPnow receiver with TFT display. LVGL dropped in favour of TFT_eSPI direct. Tests T-19–T-22 passed. *(Complete — 5 May 2026)* |
 | **7** | ESPnow full-IMU data link — transmit raw IMU data from paddle device to CYD at 100 Hz; log to CYD SD card. Enables sealed paddle device. All tests T-23–T-31 passed (6 May 2026). *(Complete)* |
-| **8** | *(Planned)* Move SD logging from paddle device to CYD in production firmware, once Phase 7 tests pass. Seal paddle housing. |
+| **8** | Production integration — full-IMU ESPnow payload in PadMon; SD logging in PadDis; SD card removed from paddle device. Sketches renamed PadMon / PadDis with version scheme phase.iteration (currently v8.1). *(In progress — 12 May 2026)* |
 
 ---
 
@@ -265,7 +265,7 @@ All tests are manual, performed with the ESP32 connected via USB and the Arduino
 1. Flash firmware and power-cycle the ESP32.
 2. Observe serial output within 2 s.
 
-**Pass:** The first line received is exactly `PaddleStroke v1.0 — ready`.
+**Pass:** The first line received is exactly `PadMon v8.1 — ready` (version number reflects current release).
 
 ---
 
@@ -614,7 +614,7 @@ struct __attribute__((packed)) EspNowPayload {
 arduino-cli compile paddlestroke_espnow_rx/
 
 # Upload
-arduino-cli upload -p COM7 paddlestroke_espnow_rx/
+arduino-cli upload -p COM6 paddlestroke_espnow_rx/
 ```
 
 ---
@@ -819,7 +819,7 @@ The sketch uses a 32-entry ring buffer (FIFO, protected by a critical section) b
 ```bash
 arduino-cli compile paddlestroke_espnow_rx_sdlog/
 arduino-cli upload -p COM7 paddlestroke_espnow_rx_sdlog/
-arduino-cli monitor -p COM7 -c baudrate=115200
+arduino-cli monitor -p COM6 -c baudrate=115200
 ```
 
 Serial output: pass criteria at startup, stats every 5 s, full PASS/FAIL report at 60 s.
@@ -989,3 +989,120 @@ Any row where `seq` jumps by more than 1 from the previous row indicates a lost 
 **Result: PASSED (6 May 2026)** — RX recovered automatically within one 5 s reporting interval after TX restart. Known limitation: `MaxGap` metric shows a spurious ~4.3×10⁹ ms value on TX restart due to `uint32_t` underflow when TX `millis()` resets to near zero. This does not affect normal operation and is a test-harness display artefact only. Up to 32 ring-buffer overflows may occur in the burst immediately after TX restart (one `fillScreen()` call can block loop() for >320 ms); this also does not affect normal operation.
 
 > **Note:** ESP-NOW is connectionless broadcast — there is no handshake or pairing. T-30 and T-31 confirm that automatic recovery is a property of the protocol, not firmware logic.
+
+---
+
+## 12. Phase 8 — Production Integration
+
+This section specifies the production firmware that replaces the Phase 7 test sketches. The paddle device SD card is removed; all IMU data is logged by the CYD display unit via the ESPnow link validated in Phase 7.
+
+---
+
+### 12.1 Sketch Naming and Version Convention
+
+| Sketch | File | Target | Port |
+|--------|------|--------|------|
+| **PadMon** | `paddlestroke.ino` | LOLIN32 Lite | COM3 |
+| **PadDis** | `paddlestroke_espnow_rx.ino` | CYD ESP32-2432S028 | COM6 |
+
+**Version numbering:** `<phase>.<iteration>` — e.g., v8.1 is Phase 8, first iteration. The major number increments with each new development phase; the minor number increments for each firmware release within that phase.
+
+Both sketches define:
+```cpp
+#define SKETCH_NAME    "PadMon"   // or "PadDis"
+#define SKETCH_VERSION "8.1"
+```
+
+The version string appears in:
+- Serial startup banner: `PadMon v8.1 — ready`
+- CYD splash screen (PadDis only)
+- First line of every CSV log file: `# PadDis v8.1`
+
+---
+
+### 12.2 PadMon — Changes from Phase 7
+
+#### 12.2.1 ESPnow Payload
+
+The 8-byte stroke-rate payload is replaced by a 60-byte full-IMU payload transmitted at every IMU sample (100 Hz). The payload carries CPM and Hz so the display has all information it needs without recomputing stroke rate.
+
+```cpp
+struct __attribute__((packed)) ImuDataPayload {
+    uint32_t seq;           // monotonic counter
+    uint32_t timestamp_ms;  // TX millis()
+    float    accel_x, accel_y, accel_z;  // m/s², raw accelerometer (includes gravity)
+    float    q_w, q_x, q_y, q_z;         // ARVR stabilised rotation vector
+    float    roll, pitch, yaw;            // degrees, derived on TX
+    uint32_t stroke_count;               // cumulative qualifying strokes
+    uint32_t cpm;                        // current stroke rate CPM (0 if none)
+    float    hz;                         // current stroke rate Hz (0.0 if none)
+};
+// sizeof == 60 bytes (static_assert enforced)
+```
+
+The `accel_x/y/z` fields come from the BNO085 `SH2_ACCELEROMETER` report (raw, includes gravity). Both `SH2_ARVR_STABILIZED_RV` and `SH2_ACCELEROMETER` are enabled at 100 Hz. Accelerometer samples are stored when received and included in the next rotation-vector packet.
+
+The `cpm` and `hz` fields carry the most recently computed stroke rate (updated when `StrokeDetector` fires; unchanged between strokes). The `stroke_count` increments by 1 on each qualifying stroke.
+
+#### 12.2.2 SD Card Removed
+
+All SD card code, the HSPI bus, and SD pin definitions are removed from PadMon. The paddle device now requires only: BNO085 (VSPI), WiFi/ESPnow, and USB power.
+
+#### 12.2.3 Startup USB Window
+
+A 20-second delay before `WiFi.mode()` / `esp_now_init()` is inserted in `setup()`. During this window the CH340 USB chip is stable and the device can be reprogrammed. After 20 s, 100 Hz ESPnow begins and the USB port becomes inaccessible. The serial banner announces the window:
+
+```
+PadMon v8.1 — ready
+Payload: 60 bytes  |  USB window: 20 s — upload firmware now if needed
+```
+
+#### 12.2.4 Doze Mode
+
+Doze mode is unchanged in behaviour. On entering doze, ESPnow is inactive and the USB port becomes accessible again (WiFi radio off). On wake, both BNO085 reports and ESPnow are re-initialised.
+
+---
+
+### 12.3 PadDis — Changes from Phase 7
+
+#### 12.3.1 Payload and Ring Buffer
+
+Receives the 60-byte `ImuDataPayload`. Ring buffer stores `ImuDataPayload` entries (32 slots = 320 ms at 100 Hz).
+
+#### 12.3.2 SD Logging
+
+Auto-numbered `/ImuLog00.CSV` … `/ImuLog99.CSV`. The first line is a version comment; the second is the column header:
+
+```
+# PadDis v8.1
+seq,timestamp_ms,accel_x,accel_y,accel_z,q_w,q_x,q_y,q_z,roll,pitch,yaw,stroke_count,cpm,hz
+```
+
+Every received packet is written as one CSV row. The file is flushed every 5 s and on signal loss. SD absence is non-fatal.
+
+#### 12.3.3 Display
+
+The splash screen shows `PadDis v8.1` (Font 4) for 20 seconds. The main screen is unchanged: large CPM number (Font 8), signal icon. The display is refreshed only when `cpm` changes — not on every 100 Hz packet — to avoid blocking the loop.
+
+#### 12.3.4 Serial Output
+
+CPM is logged to serial only when the value changes, avoiding 100 lines/second of output:
+
+```
+CPM: 72  (1.20 Hz)  stroke=14
+Signal lost
+```
+
+---
+
+### 12.4 Build and Flash
+
+```bash
+# PadMon
+arduino-cli compile paddlestroke/
+arduino-cli upload -p COM3 paddlestroke/
+
+# PadDis
+arduino-cli compile paddlestroke_espnow_rx/
+arduino-cli upload -p COM6 paddlestroke_espnow_rx/
+```
