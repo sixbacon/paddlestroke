@@ -5,7 +5,7 @@
 #include <SD.h>
 
 #define SKETCH_NAME    "PadDis"
-#define SKETCH_VERSION "8.2"
+#define SKETCH_VERSION "8.3"
 
 // ── Payload struct — must match PadLog (PadLog.ino) exactly ──────────────────
 struct __attribute__((packed)) ImuDataPayload {

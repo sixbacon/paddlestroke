@@ -7,7 +7,7 @@
 #include "StrokeDetector.h"
 
 #define SKETCH_NAME    "PadLog"
-#define SKETCH_VERSION "8.2"
+#define SKETCH_VERSION "8.3"
 
 // ── Payload struct — must match PadDis (PadDis.ino) exactly ──────────────────
 struct __attribute__((packed)) ImuDataPayload {
@@ -125,9 +125,10 @@ static void sendImuPayload(const sh2_RotationVectorWAcc_t& rv, const Euler& e) {
 
 // ── Doze mode ─────────────────────────────────────────────────────────────────
 static void armDozeWakeup() {
+    bno.enableReport(SH2_ACCELEROMETER,       0);            // stop accel — was blocking RV events
     bno.enableReport(SH2_ARVR_STABILIZED_RV, DOZE_REPORT_US);
     sh2_SensorValue_t dummy;
-    unsigned long drainEnd = millis() + 50;
+    unsigned long drainEnd = millis() + 100;
     while (millis() < drainEnd) bno.getSensorEvent(&dummy);
     gpio_wakeup_enable((gpio_num_t)BNO_INT, GPIO_INTR_LOW_LEVEL);
     esp_sleep_enable_gpio_wakeup();
@@ -188,9 +189,15 @@ void loop() {
 
     if (inDozeMode) {
         esp_light_sleep_start();
-        if (bno.getSensorEvent(&sensorValue) &&
-            sensorValue.sensorId == SH2_ARVR_STABILIZED_RV) {
-            float roll = extractEuler(sensorValue.un.arvrStabilizedRV).roll;
+        // Drain events looking for an RV packet — accelerometer disabled in doze
+        // so this should find the RV within the first 1–2 events.
+        bool gotRv = false;
+        sh2_SensorValue_t ev;
+        for (int i = 0; i < 20 && bno.getSensorEvent(&ev); i++) {
+            if (ev.sensorId == SH2_ARVR_STABILIZED_RV) { gotRv = true; break; }
+        }
+        if (gotRv) {
+            float roll = extractEuler(ev.un.arvrStabilizedRV).roll;
             if (!isnan(roll)) {
                 if (!isnan(dozeFirstRoll) && fabsf(roll - dozeFirstRoll) > MOTION_THRESHOLD) {
                     dozeFirstRoll = NAN;

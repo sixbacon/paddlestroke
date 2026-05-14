@@ -1,0 +1,53 @@
+[00:35] DOZE: low-power mode ??? waiting for motion
+[00:36] DOZE: woke ??? roll=-10.9  (first sample)
+[00:37] DOZE: woke ??? roll=-4.2  prev=-10.9  delta=6.7  thr=20.0
+[00:39] DOZE: woke ??? roll=-3.0  prev=-4.2  delta=1.2  thr=20.0
+[00:40] DOZE: woke ??? roll=-2.7  prev=-3.0  delta=0.3  thr=20.0
+[00:42] DOZE: woke ??? roll=-2.7  prev=-2.7  delta=0.0  thr=20.0
+[00:43] DOZE: woke ??? roll=-2.7  prev=-2.7  delta=0.0  thr=20.0
+[00:45] DOZE: woke ??? roll=-2.7  prev=-2.7  delta=0.0  thr=20.0
+[00:46] DOZE: woke ??? roll=-2.7  prev=-2.7  delta=0.0  thr=20.0
+[00:48] DOZE: woke ??? roll=-1.2  prev=-2.7  delta=1.5  thr=20.0
+[00:49] DOZE: woke ??? roll=-8.4  prev=-1.2  delta=7.2  thr=20.0
+[00:51] DOZE: woke ??? roll=-63.7  prev=-8.4  delta=55.3  thr=20.0
+[00:52] WAKE: motion detected ??? resuming
+[00:52] CYCLE_RATE: 0 CPM  (0.00 Hz)
+[00:57] CYCLE_RATE: 44 CPM  (0.73 Hz)
+[00:58] CYCLE_RATE: 60 CPM  (0.99 Hz)
+[00:58] CYCLE_RATE: 67 CPM  (1.12 Hz)
+[00:59] CYCLE_RATE: 64 CPM  (1.07 Hz)
+[01:01] CYCLE_RATE: 59 CPM  (0.98 Hz)
+[01:02] CYCLE_RATE: 53 CPM  (0.89 Hz)
+[01:02] CYCLE_RATE: 64 CPM  (1.07 Hz)
+[01:03] CYCLE_RATE: 62 CPM  (1.04 Hz)
+[01:04] CYCLE_RATE: 55 CPM  (0.92 Hz)
+[01:04] CYCLE_RATE: 55 CPM  (0.91 Hz)
+[01:04] CYCLE_RATE: 56 CPM  (0.94 Hz)
+[01:05] CYCLE_RATE: 67 CPM  (1.11 Hz)
+[01:05] CYCLE_RATE: 69 CPM  (1.15 Hz)
+[01:06] CYCLE_RATE: 67 CPM  (1.11 Hz)
+[01:06] CYCLE_RATE: 73 CPM  (1.21 Hz)
+[01:06] CYCLE_RATE: 72 CPM  (1.20 Hz)
+[01:07] CYCLE_RATE: 72 CPM  (1.20 Hz)
+[01:10] CYCLE_RATE: 0 CPM  (0.00 Hz)
+[01:40] DOZE: low-power mode ??? waiting for motion
+[01:41] DOZE: woke ??? roll=-1.7  (first sample)
+[01:42] DOZE: woke ??? roll=-1.7  prev=-1.7  delta=0.0  thr=20.0
+[01:44] DOZE: woke ??? roll=-1.7  prev=-1.7  delta=0.0  thr=20.0
+[01:45] DOZE: woke ??? roll=-1.7  prev=-1.7  delta=0.0  thr=20.0
+[01:47] DOZE: woke ??? roll=-1.7  prev=-1.7  delta=0.0  thr=20.0
+[01:48] DOZE: woke ??? roll=-1.7  prev=-1.7  delta=0.0  thr=20.0
+[01:50] DOZE: woke ??? roll=-1.2  prev=-1.7  delta=0.5  thr=20.0
+[01:51] DOZE: woke ??? roll=-9.3  prev=-1.2  delta=8.1  thr=20.0
+[01:53] DOZE: woke ??? roll=-31.8  prev=-9.3  delta=22.5  thr=20.0
+[01:54] WAKE: motion detected ??? resuming
+[01:54] CYCLE_RATE: 0 CPM  (0.00 Hz)
+[01:58] CYCLE_RATE: 62 CPM  (1.04 Hz)
+[01:58] CYCLE_RATE: 66 CPM  (1.10 Hz)
+[01:59] CYCLE_RATE: 65 CPM  (1.08 Hz)
+[01:59] CYCLE_RATE: 63 CPM  (1.06 Hz)
+[02:00] CYCLE_RATE: 63 CPM  (1.04 Hz)
+[02:00] CYCLE_RATE: 64 CPM  (1.06 Hz)
+[02:01] CYCLE_RATE: 64 CPM  (1.07 Hz)
+[02:01] CYCLE_RATE: 60 CPM  (1.01 Hz)
+[02:04] CYCLE_RATE: 0 CPM  (0.00 Hz)

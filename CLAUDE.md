@@ -63,7 +63,7 @@ The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `paddlestroke_sim_t
 - **Phase 5** — ESPnow broadcast of stroke rate: complete (transmit side; receiver is a separate project)
 - **Phase 6** — CYD ESPnow receiver: complete (5 May 2026). LVGL dropped in favour of TFT_eSPI direct. All tests T-19–T-22 passed.
 - **Phase 7** — ESPnow full-IMU data link + CYD SD logging: complete (6 May 2026). All tests T-23–T-31 passed. Bug fixed: yaw wrap at ±180° caused EulerErr=360° (corrected with wrap-aware subtraction in RX sketch).
-- **Phase 8** — Production integration: complete (14 May 2026). PadLog v8.2 (TX) + PadDis v8.2 (RX). v8.1 hardware validated 12 May 2026 (63 min session, 100 Hz, <0.03% loss). v8.2: streak gate (N=3 strokes before CPM updates), separate peak/trough rate buffers in StrokeDetector, real-time asymmetry bar on PadDis (red = left shorter, green = right shorter).
+- **Phase 8** — Production integration: complete (14 May 2026). PadLog v8.3 (TX) + PadDis v8.3 (RX). v8.1: hardware validated 12 May 2026. v8.2: streak gate, separate rate buffers, asymmetry bar. v8.3: doze/wake bug fixed (accelerometer left active in doze blocked RV wakeup events); full system validated 14 May 2026.
 
 ## Production Sketches
 
@@ -72,7 +72,7 @@ The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `paddlestroke_sim_t
 | PadLog | `PadLog/` | LOLIN32 Lite | COM3 | `esp32:esp32:lolin32-lite` |
 | PadDis | `PadDis/` | CYD ESP32-2432S028 | COM6 | `esp32:esp32:esp32` |
 
-**Version scheme:** `<phase>.<iteration>` — currently **v8.2**. Version shown in serial banner, CYD splash screen, and CSV first line (`# PadDis v8.2`).
+**Version scheme:** `<phase>.<iteration>` — currently **v8.3**. Version shown in serial banner, CYD splash screen, and CSV first line (`# PadDis v8.3`).
 
 **Payload struct** (60 bytes, float — must be identical in both sketches):
 ```
@@ -179,6 +179,15 @@ arduino-cli monitor -p COM6 -c baudrate=115200
 ### No application checksum needed
 
 ESP-NOW hardware CRC-32 validates every 802.11 frame. Corrupted packets are dropped before the receive callback. The sequence number detects losses; T-3 and T-4 detect any double-transmission corruption.
+
+## Test Protocol
+
+After every firmware change, run this minimum check before committing:
+1. PadDis shows CPM within 5 s of PadLog power-on (ESPnow link)
+2. Paddle at steady rate — CPM updates and stabilises on PadDis
+3. Hold still for doze timeout — `DOZE:` banner appears on PadLog serial
+4. Paddle briskly — `WAKE:` banner appears and CPM resumes
+5. Confirm SD CSV created on PadDis with correct headers
 
 ## Git
 

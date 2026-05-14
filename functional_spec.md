@@ -2,7 +2,7 @@
 
 **Project:** paddlestroke  
 **Date:** 14 May 2026  
-**Version:** 1.7
+**Version:** 1.8
 
 ---
 
@@ -250,7 +250,7 @@ The following are excluded from the current implementation. Items marked with a 
 | **5** | Transmit stroke rate via ESPnow broadcast. Transmit side complete and tested (T-18a–T-18c). Receiver/display is a separate project. BLE and mobile app deferred. *(Complete)* |
 | **6** | CYD ESPnow receiver with TFT display. LVGL dropped in favour of TFT_eSPI direct. Tests T-19–T-22 passed. *(Complete — 5 May 2026)* |
 | **7** | ESPnow full-IMU data link — transmit raw IMU data from paddle device to CYD at 100 Hz; log to CYD SD card. Enables sealed paddle device. All tests T-23–T-31 passed (6 May 2026). *(Complete)* |
-| **8** | Production integration — full-IMU ESPnow payload in PadLog; SD logging in PadDis; SD card removed from paddle device. Sketches renamed PadLog / PadDis with version scheme phase.iteration. v8.1: hardware validated 12 May 2026 (63 min session, 100 Hz, <0.03% loss, 51–76 CPM). v8.2: streak gate (N=3 consecutive strokes before CPM updates), separate peak/trough rate buffers in StrokeDetector, real-time stroke asymmetry bar on PadDis display. *(Complete — 14 May 2026)* |
+| **8** | Production integration — full-IMU ESPnow payload in PadLog; SD logging in PadDis; SD card removed from paddle device. Sketches renamed PadLog / PadDis with version scheme phase.iteration. v8.1: hardware validated 12 May 2026 (63 min session, 100 Hz, <0.03% loss, 51–76 CPM). v8.2: streak gate, separate rate buffers, asymmetry bar. v8.3: doze/wake bug fixed — accelerometer left active in doze mode was consuming all wakeup events, blocking RV data; fix disables accelerometer on doze entry. Full cycle validated 14 May 2026: ESPnow, CPM display, 3-min doze, and wake on paddle motion all confirmed. *(Complete — 14 May 2026)* |
 
 ---
 
@@ -999,6 +999,22 @@ This section specifies the production firmware that replaces the Phase 7 test sk
 
 ---
 
+### 12.0 Test Protocol
+
+**After every firmware change, the following minimum checks must be performed before committing:**
+
+| Check | Method |
+|-------|--------|
+| ESPnow link active | PadDis shows CPM within 5 s of PadLog power-on |
+| CPM displayed correctly | Paddle at steady rate — PadDis updates and stabilises |
+| Doze entered after inactivity | Hold still for timeout period — `DOZE:` banner appears |
+| Wake on paddle motion | Paddle briskly after doze — `WAKE:` banner and CPM resume |
+| SD logging | CSV file created on PadDis SD card with correct headers and rows |
+
+If any check fails, the change must be investigated and fixed before the version is incremented or the commit is pushed. The v8.2→v8.3 doze/wake regression (accelerometer not disabled on doze entry) was caught because the full test cycle was run after the v8.2 release.
+
+---
+
 ### 12.1 Sketch Naming and Version Convention
 
 | Sketch | Directory | File | Target | Port |
@@ -1011,13 +1027,13 @@ This section specifies the production firmware that replaces the Phase 7 test sk
 Both sketches define:
 ```cpp
 #define SKETCH_NAME    "PadLog"   // or "PadDis"
-#define SKETCH_VERSION "8.2"
+#define SKETCH_VERSION "8.3"
 ```
 
 The version string appears in:
-- Serial startup banner: `PadLog v8.2 — ready`
+- Serial startup banner: `PadLog v8.3 — ready`
 - CYD splash screen (PadDis only)
-- First line of every CSV log file: `# PadDis v8.2`
+- First line of every CSV log file: `# PadDis v8.3`
 
 ---
 
@@ -1062,13 +1078,24 @@ Payload: 60 bytes  |  USB window: 20 s — upload firmware now if needed
 
 Doze mode is unchanged in behaviour. On entering doze, ESPnow is inactive and the USB port becomes accessible again (WiFi radio off). On wake, both BNO085 reports and ESPnow are re-initialised.
 
-#### 12.2.5 Streak Gate (v8.2)
+#### 12.2.5 Doze/Wake Fix — Disable Accelerometer on Doze Entry (v8.3)
+
+**Bug (present through v8.2):** `armDozeWakeup()` reduced the RV report rate to 2 Hz but did not disable the accelerometer. The accelerometer continued running at 100 Hz, keeping the BNO085 INT pin (GPIO4) asserted at 100 Hz. After each light-sleep wakeup, `getSensorEvent` returned the accelerometer packet (sensor ID 1) instead of the RV packet — the motion check always saw no RV data and set `dozeFirstRoll = NAN`, so the device never woke from paddle motion.
+
+**Fix:**
+- `armDozeWakeup()` now calls `bno.enableReport(SH2_ACCELEROMETER, 0)` before setting the RV report to 2 Hz, stopping accelerometer output for the duration of doze.
+- The doze wake check loops through up to 20 queued events to find the RV packet, rather than reading only one event. This is defensive but harmless — with the accelerometer disabled only one event will be present.
+- `exitDozeMode()` calls `enableNormalReports()` which re-enables both the RV and accelerometer reports at 100 Hz.
+
+**Validated 14 May 2026:** full cycle confirmed — ESPnow active, CPM displayed correctly, doze entered after 3 minutes inactivity, device woke on paddle motion.
+
+#### 12.2.6 Streak Gate (v8.2)
 
 CPM and Hz are updated only after **3 consecutive qualifying strokes** (`g_strokeStreak >= 3`). Each qualifying stroke increments `g_strokeCount` immediately (so `stroke_count` in the payload reflects all detected strokes). The inactivity timer (`inactiveStartMs`) is also reset only after the 3-stroke threshold is met. This eliminates CPM spikes from device handling, transport, and isolated noise peaks seen in Phase 8 v8.1 field data.
 
 The streak counter resets to zero when the stroke detector times out (3 s no qualifying cycles) and also when doze mode is exited.
 
-#### 12.2.6 StrokeDetector — Separate Rate Buffers (v8.2)
+#### 12.2.7 StrokeDetector — Separate Rate Buffers (v8.2)
 
 The stroke rate averaging buffer is split into two independent 4-entry ring buffers: one for peak-to-peak intervals and one for trough-to-trough intervals. The reported rate is the average over all entries across both buffers (up to 8 values).
 
