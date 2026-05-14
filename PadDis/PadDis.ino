@@ -5,7 +5,7 @@
 #include <SD.h>
 
 #define SKETCH_NAME    "PadDis"
-#define SKETCH_VERSION "8.1"
+#define SKETCH_VERSION "8.2"
 
 // ── Payload struct — must match PadLog (PadLog.ino) exactly ──────────────────
 struct __attribute__((packed)) ImuDataPayload {
@@ -35,6 +35,16 @@ static_assert(sizeof(ImuDataPayload) == 60, "Payload size mismatch — check str
 #define ICON_R              10
 #define GREY  ((uint16_t)0x9492)   // #909090 in RGB565
 
+// ── Asymmetry bar ─────────────────────────────────────────────────────────────
+#define BAR_Y       40            // top of bar — below the signal dot (dot bottom ≈ y=32)
+#define BAR_H       18            // bar height in pixels
+#define BAR_W      220            // total bar width in pixels
+#define BAR_MAX_MS 500            // asymmetry (ms) at which bar reaches full deflection
+// Positive asymMs = left stroke shorter = RED bar extends left of centre
+// Negative asymMs = right stroke shorter = GREEN bar extends right of centre
+// Bar is invisible (white) until asymValid=true; no grey background to avoid colour artifacts.
+#define BAR_RED   ((uint16_t)0x001F)   // display is BGR: send blue value to get red appearance
+
 // ── SD logging ────────────────────────────────────────────────────────────────
 #define FLUSH_INTERVAL_MS 5000UL
 
@@ -55,6 +65,13 @@ static uint32_t      displayedCpm = UINT32_MAX;   // force first draw
 static unsigned long lastRxMs     = 0;
 static int           iconCx, iconCy;
 
+// ── Asymmetry state ───────────────────────────────────────────────────────────
+static int32_t  asymMs    = 0;
+static bool     asymValid = false;
+static uint32_t tLastR    = 0;   // TX timestamp_ms of last right-labelled stroke
+static uint32_t tLastL    = 0;   // TX timestamp_ms of last left-labelled stroke
+static uint32_t prevSc    = 0;   // previous stroke_count (to detect increments)
+
 // ── ESPnow callback (Core 0) ──────────────────────────────────────────────────
 void onReceive(const esp_now_recv_info *info, const uint8_t *data, int len) {
     if (len != (int)sizeof(ImuDataPayload)) return;
@@ -73,6 +90,34 @@ void onReceive(const esp_now_recv_info *info, const uint8_t *data, int len) {
 static void clearAllPixels() {
     for (int r = 0; r < 4; r++) { tft.setRotation(r); tft.fillScreen(TFT_WHITE); }
     tft.setRotation(2);
+}
+
+// Draws (or redraws) the asymmetry bar from current asymMs / asymValid state.
+// Must be called after any drawRate() call since drawRate wipes the usable area.
+// Background is always white (invisible) to avoid colour rendering artefacts.
+static void drawAsymmetryBar() {
+    int usableW = tft.width() - (ICON_R * 2 + 16);
+    int cx      = usableW / 2;
+    int barX    = cx - BAR_W / 2;
+
+    // Clear bar area to white — invisible until asymmetry data is available
+    tft.fillRect(barX, BAR_Y, BAR_W, BAR_H, TFT_WHITE);
+
+    if (!asymValid) return;
+
+    // Coloured fill
+    int half = BAR_W / 2;
+    int fill = min(half, (int)((long)abs(asymMs) * half / BAR_MAX_MS));
+    if (fill > 1) {
+        if (asymMs > 0)   // left shorter → RED extends left of centre
+            tft.fillRect(cx - fill, BAR_Y, fill, BAR_H, BAR_RED);
+        else              // right shorter → GREEN extends right of centre
+            tft.fillRect(cx, BAR_Y, fill, BAR_H, TFT_GREEN);
+    }
+
+    // Outline and centre tick so scale is visible
+    tft.drawRect(barX, BAR_Y, BAR_W, BAR_H, GREY);
+    tft.drawLine(cx, BAR_Y, cx, BAR_Y + BAR_H - 1, GREY);
 }
 
 static void drawRate(uint32_t cpm, bool active) {
@@ -95,6 +140,8 @@ static void drawRate(uint32_t cpm, bool active) {
     String label = "CPM";
     tft.setCursor((usableW - tft.textWidth(label)) / 2, y + th + 4);
     tft.print(label);
+    // Restore bar (drawRate wipes the whole usable area)
+    drawAsymmetryBar();
 }
 
 static void drawIcon(bool receiving, bool filled) {
@@ -169,7 +216,7 @@ void setup() {
     delay(SPLASH_MS);
 
     tft.fillScreen(TFT_WHITE);
-    drawRate(0, false);
+    drawRate(0, false);   // also draws the (initially grey) bar
     drawIcon(false, false);
 }
 
@@ -203,12 +250,56 @@ void loop() {
             logFile.write((const uint8_t*)row, n);
         }
 
-        // Update display only when CPM changes (avoids 100 Hz screen redraws)
+        // ── Stroke asymmetry tracking ─────────────────────────────────────────
+        // Label each stroke R (pitch ≥ 0) or L (pitch < 0) and measure the
+        // two half-intervals of each cycle to compute the asymmetry in ms.
+        if (pkt.stroke_count != prevSc) {
+            prevSc = pkt.stroke_count;
+            uint32_t ts      = pkt.timestamp_ms;
+            bool     isRight = (pkt.pitch >= 0.0f);
+
+            if (isRight) {
+                if (tLastL > tLastR && tLastR > 0) {
+                    // Complete R → L → R sequence: both halves available
+                    int32_t r2l = (int32_t)(tLastL - tLastR);
+                    int32_t l2r = (int32_t)(ts     - tLastL);
+                    if (r2l > 150 && r2l < 4000 && l2r > 150 && l2r < 4000) {
+                        asymMs    = r2l - l2r;  // +ve = left shorter = RED
+                        asymValid = true;
+                    }
+                }
+                tLastR = ts;
+            } else {
+                if (tLastR > tLastL && tLastL > 0) {
+                    // Complete L → R → L sequence: both halves available
+                    int32_t l2r = (int32_t)(tLastR - tLastL);
+                    int32_t r2l = (int32_t)(ts     - tLastR);
+                    if (l2r > 150 && l2r < 4000 && r2l > 150 && r2l < 4000) {
+                        asymMs    = r2l - l2r;  // same sign convention
+                        asymValid = true;
+                    }
+                }
+                tLastL = ts;
+            }
+        }
+
+        // Update CPM display only when value changes
         if (pkt.cpm != displayedCpm) {
             displayedCpm = pkt.cpm;
-            drawRate(pkt.cpm, true);
-            Serial.printf("CPM: %u  (%.2f Hz)  stroke=%u\n",
-                          pkt.cpm, pkt.hz, pkt.stroke_count);
+            drawRate(pkt.cpm, true);   // drawRate also redraws the bar
+            Serial.printf("CPM: %u  (%.2f Hz)  stroke=%u  asymMs=%d\n",
+                          pkt.cpm, pkt.hz, pkt.stroke_count, asymMs);
+        } else {
+            // Redraw bar independently when asymmetry updates between CPM changes
+            static int32_t prevAsymMs    = INT32_MIN;
+            static bool    prevAsymValid = false;
+            if (asymMs != prevAsymMs || asymValid != prevAsymValid) {
+                prevAsymMs    = asymMs;
+                prevAsymValid = asymValid;
+                drawAsymmetryBar();
+                Serial.printf("Asym: %+d ms  (%s shorter)\n",
+                              asymMs, asymMs > 0 ? "LEFT" : "RIGHT");
+            }
         }
     }
 
@@ -229,7 +320,12 @@ void loop() {
 
     if (receiving != prevReceiving) {
         if (!receiving) {
-            drawRate(displayedCpm, false);
+            // Reset asymmetry state on signal loss
+            asymValid = false;
+            tLastR    = 0;
+            tLastL    = 0;
+            prevSc    = 0;
+            drawRate(displayedCpm, false);   // also redraws bar (now grey)
             drawIcon(false, false);
             Serial.println("Signal lost");
             if (sdReady) logFile.flush();

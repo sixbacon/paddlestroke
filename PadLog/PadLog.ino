@@ -7,7 +7,7 @@
 #include "StrokeDetector.h"
 
 #define SKETCH_NAME    "PadLog"
-#define SKETCH_VERSION "8.1"
+#define SKETCH_VERSION "8.2"
 
 // ── Payload struct — must match PadDis (PadDis.ino) exactly ──────────────────
 struct __attribute__((packed)) ImuDataPayload {
@@ -54,6 +54,7 @@ static uint32_t           g_seq           = 0;
 static uint32_t           g_strokeCount   = 0;
 static uint32_t           g_cpm           = 0;
 static float              g_hz            = 0.0f;
+static uint8_t            g_strokeStreak  = 0;    // consecutive qualifying strokes
 static float              g_accel_x       = 0.0f;
 static float              g_accel_y       = 0.0f;
 static float              g_accel_z       = 0.0f;
@@ -147,6 +148,7 @@ static void exitDozeMode() {
     unsigned long settleEnd = millis() + 500;
     while (millis() < settleEnd) bno.getSensorEvent(&dummy);
     detector.reset();
+    g_strokeStreak  = 0;
     timeoutActive   = false;
     inactiveStartMs = 0;
     inDozeMode      = false;
@@ -226,16 +228,22 @@ void loop() {
     unsigned long nowMs  = millis();
 
     if (detector.update(angles.roll, nowUs)) {
-        g_hz          = detector.getRateHz();
-        g_cpm         = (uint32_t)roundf(g_hz * 60.0f);
         g_strokeCount++;
-        printTimestamp();
-        Serial.printf("CYCLE_RATE: %u CPM  (%.2f Hz)\n", g_cpm, g_hz);
-        timeoutActive   = false;
-        inactiveStartMs = 0;
+        g_strokeStreak++;
+        // Only report and reset inactivity after 3 consecutive qualifying strokes —
+        // suppresses CPM spikes from handling, transport, and isolated noise peaks.
+        if (g_strokeStreak >= 3) {
+            g_hz  = detector.getRateHz();
+            g_cpm = (uint32_t)roundf(g_hz * 60.0f);
+            timeoutActive   = false;
+            inactiveStartMs = 0;
+            printTimestamp();
+            Serial.printf("CYCLE_RATE: %u CPM  (%.2f Hz)\n", g_cpm, g_hz);
+        }
     } else if (detector.isTimedOut(nowUs) && !timeoutActive) {
-        g_cpm         = 0;
-        g_hz          = 0.0f;
+        g_strokeStreak  = 0;
+        g_cpm           = 0;
+        g_hz            = 0.0f;
         printTimestamp(); Serial.println("CYCLE_RATE: 0 CPM  (0.00 Hz)");
         timeoutActive   = true;
         inactiveStartMs = nowMs;

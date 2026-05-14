@@ -27,14 +27,19 @@ private:
     unsigned long _lastTroughTs;
     bool          _hasTrough;
 
-    float _rateBuf[4];
-    int   _rateBufCount;
-    int   _rateBufHead;
+    // Separate buffers prevent peak-to-peak and trough-to-trough intervals
+    // from mixing, which was the root cause of erratic CPM output.
+    float _rateBufPeak[4];
+    int   _rateBufPeakCount;
+    int   _rateBufPeakHead;
+    float _rateBufTrough[4];
+    int   _rateBufTroughCount;
+    int   _rateBufTroughHead;
 
     unsigned long _lastQualifyingTs;
     float         _currentRateHz;
 
     bool _onExtrema(bool isPeak, float val, unsigned long tsUs);
-    void _pushRate(float rateHz);
+    void _pushRate(float rateHz, bool isPeak);
     void _computeAverage();
 };

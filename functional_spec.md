@@ -1,8 +1,8 @@
 # Kayak Paddle Stroke Rate Monitor — Functional Specification
 
 **Project:** paddlestroke  
-**Date:** 12 May 2026  
-**Version:** 1.6
+**Date:** 14 May 2026  
+**Version:** 1.7
 
 ---
 
@@ -117,7 +117,8 @@ Cycles are detected by identifying successive peaks and troughs in the roll sign
 2. **Amplitude gate** — the absolute difference between a detected peak and the adjacent trough must be **≥ 45°**. Pairs that do not meet this threshold are ignored.
 3. **Period measurement** — record the timestamp of each qualifying peak and trough. The time from one peak (or trough) to the next same-polarity extreme is one full cycle period.
 4. **Rate validity gate** — only accept cycle periods in the range **0.4 s – 4.0 s**. Discard any cycle whose period falls outside this range.
-5. **Rate averaging** — compute a rolling average of cycle rate over the last **4 qualifying cycles** to reduce noise.
+5. **Rate averaging** — compute a rolling average of cycle rate over the last **4 qualifying cycles** to reduce noise. Peak-to-peak intervals and trough-to-trough intervals are tracked in **separate ring buffers** (4 entries each); the average is taken over all entries in both buffers. This prevents alternating half-cycle durations from mixing in a single buffer, which would produce erratic CPM when stroke timing varies.
+6. **Streak gate** — CPM and Hz are updated only after **3 consecutive qualifying strokes** without interruption. A single qualifying stroke increments the internal stroke count but does not update the displayed rate. This suppresses CPM spikes from device handling, transport jolts, and isolated noise peaks.
 
 ### 4.5 Low-Power Doze Mode
 
@@ -249,7 +250,7 @@ The following are excluded from the current implementation. Items marked with a 
 | **5** | Transmit stroke rate via ESPnow broadcast. Transmit side complete and tested (T-18a–T-18c). Receiver/display is a separate project. BLE and mobile app deferred. *(Complete)* |
 | **6** | CYD ESPnow receiver with TFT display. LVGL dropped in favour of TFT_eSPI direct. Tests T-19–T-22 passed. *(Complete — 5 May 2026)* |
 | **7** | ESPnow full-IMU data link — transmit raw IMU data from paddle device to CYD at 100 Hz; log to CYD SD card. Enables sealed paddle device. All tests T-23–T-31 passed (6 May 2026). *(Complete)* |
-| **8** | Production integration — full-IMU ESPnow payload in PadLog; SD logging in PadDis; SD card removed from paddle device. Sketches renamed PadLog / PadDis with version scheme phase.iteration (currently v8.1). Hardware validated: 2 min live session, 12166 packets at 100 Hz, <0.03% loss, 33 strokes, 51–76 CPM. *(Complete — 12 May 2026)* |
+| **8** | Production integration — full-IMU ESPnow payload in PadLog; SD logging in PadDis; SD card removed from paddle device. Sketches renamed PadLog / PadDis with version scheme phase.iteration. v8.1: hardware validated 12 May 2026 (63 min session, 100 Hz, <0.03% loss, 51–76 CPM). v8.2: streak gate (N=3 consecutive strokes before CPM updates), separate peak/trough rate buffers in StrokeDetector, real-time stroke asymmetry bar on PadDis display. *(Complete — 14 May 2026)* |
 
 ---
 
@@ -1010,13 +1011,13 @@ This section specifies the production firmware that replaces the Phase 7 test sk
 Both sketches define:
 ```cpp
 #define SKETCH_NAME    "PadLog"   // or "PadDis"
-#define SKETCH_VERSION "8.1"
+#define SKETCH_VERSION "8.2"
 ```
 
 The version string appears in:
-- Serial startup banner: `PadLog v8.1 — ready`
+- Serial startup banner: `PadLog v8.2 — ready`
 - CYD splash screen (PadDis only)
-- First line of every CSV log file: `# PadDis v8.1`
+- First line of every CSV log file: `# PadDis v8.2`
 
 ---
 
@@ -1061,6 +1062,20 @@ Payload: 60 bytes  |  USB window: 20 s — upload firmware now if needed
 
 Doze mode is unchanged in behaviour. On entering doze, ESPnow is inactive and the USB port becomes accessible again (WiFi radio off). On wake, both BNO085 reports and ESPnow are re-initialised.
 
+#### 12.2.5 Streak Gate (v8.2)
+
+CPM and Hz are updated only after **3 consecutive qualifying strokes** (`g_strokeStreak >= 3`). Each qualifying stroke increments `g_strokeCount` immediately (so `stroke_count` in the payload reflects all detected strokes). The inactivity timer (`inactiveStartMs`) is also reset only after the 3-stroke threshold is met. This eliminates CPM spikes from device handling, transport, and isolated noise peaks seen in Phase 8 v8.1 field data.
+
+The streak counter resets to zero when the stroke detector times out (3 s no qualifying cycles) and also when doze mode is exited.
+
+#### 12.2.6 StrokeDetector — Separate Rate Buffers (v8.2)
+
+The stroke rate averaging buffer is split into two independent 4-entry ring buffers: one for peak-to-peak intervals and one for trough-to-trough intervals. The reported rate is the average over all entries across both buffers (up to 8 values).
+
+**Motivation:** A single shared buffer alternates peak intervals and trough intervals. If the left and right half-strokes differ in duration (asymmetric paddling), the alternating values produce erratic CPM output — each new qualifying event replaces an interval of the opposite type, causing the average to oscillate. Separate buffers ensure each buffer type converges independently.
+
+**StrokeDetector API change:** The internal `_pushRate(float, bool isPeak)` method routes to the appropriate buffer. The public interface (`update`, `getRateHz`, `isTimedOut`, `reset`) is unchanged.
+
 ---
 
 ### 12.3 PadDis — Changes from Phase 7
@@ -1082,16 +1097,65 @@ Every received packet is written as one CSV row. The file is flushed every 5 s a
 
 #### 12.3.3 Display
 
-The splash screen shows `PadDis v8.1` (Font 4) for 20 seconds. The main screen is unchanged: large CPM number (Font 8), signal icon. The display is refreshed only when `cpm` changes — not on every 100 Hz packet — to avoid blocking the loop.
+The splash screen shows `PadDis v8.2` (Font 4) for 20 seconds. The main screen shows: large CPM number (Font 8), signal icon, and asymmetry bar (see §12.3.5). The CPM number is refreshed only when `cpm` changes — not on every 100 Hz packet — to avoid blocking the loop.
 
 #### 12.3.4 Serial Output
 
-CPM is logged to serial only when the value changes, avoiding 100 lines/second of output:
+CPM is logged to serial only when the value changes, avoiding 100 lines/second of output. Asymmetry is also logged when it changes:
 
 ```
-CPM: 72  (1.20 Hz)  stroke=14
+CPM: 72  (1.20 Hz)  stroke=14  asymMs=0
+Asym: +45 ms  (LEFT shorter)
 Signal lost
 ```
+
+#### 12.3.5 Asymmetry Bar (v8.2)
+
+A horizontal bar displayed on the CYD below the signal icon (top of bar at y=40) visualises left/right stroke asymmetry in real time.
+
+**Layout:**
+
+```
+┌─────────────────────────────────┐
+│                            [●]  │  ← signal icon
+│    ████████|                    │  ← asymmetry bar (red = left shorter)
+│                                 │
+│             72                  │  ← CPM number (Font 8)
+│            CPM                  │
+└─────────────────────────────────┘
+```
+
+**Bar specification:**
+
+| Parameter | Value |
+|-----------|-------|
+| Width | 220 px |
+| Height | 18 px |
+| Full-deflection asymmetry | 500 ms |
+| Centre tick | Grey line at bar midpoint |
+| Outline | Grey rectangle (only when `asymValid`) |
+| Background | White (invisible) when no data available |
+
+**Colour convention:**
+
+| Bar direction | Colour | Meaning |
+|---------------|--------|---------|
+| Extends left of centre | Red | Left stroke shorter |
+| Extends right of centre | Green | Right stroke shorter |
+| Not shown | (white) | Asymmetry not yet computed |
+
+**Colour note (CYD hardware):** The ILI9341 display on this CYD unit uses **BGR** pixel order. To render red, the firmware sends `0x001F` (the RGB565 blue value); the BGR hardware interprets it as full red. Green (0x07E0) is symmetric and unaffected. TFT_WHITE (0xFFFF) is also symmetric.
+
+**Asymmetry computation:**
+
+- Each stroke is labelled **Right** if `pkt.pitch >= 0`, **Left** if `pkt.pitch < 0`. Pitch is rhythmic and crosses zero at each half-stroke transition.
+- The firmware tracks the TX `timestamp_ms` of the last Right stroke (`tLastR`) and last Left stroke (`tLastL`).
+- On each new Right stroke: if a complete R → L → R sequence exists, compute `r2l = tLastL − tLastR`, `l2r = ts − tLastL`, and `asymMs = r2l − l2r`. Positive `asymMs` = left interval shorter = left blade entered water for less time.
+- On each new Left stroke: mirror logic — L → R → L sequence → `asymMs = r2l − l2r` (same sign convention).
+- Both half-intervals must be in the range 150 ms – 4000 ms; if either is outside this range the measurement is discarded.
+- `asymValid` is set `true` once a valid measurement exists and reset to `false` on signal loss.
+
+**Redraw discipline:** `drawRate()` wipes the entire usable display area and calls `drawAsymmetryBar()` at its end. When asymmetry changes between CPM updates, `drawAsymmetryBar()` is called independently.
 
 ---
 
@@ -1106,3 +1170,70 @@ arduino-cli upload -p COM3 PadLog/
 arduino-cli compile PadDis/
 arduino-cli upload -p COM6 PadDis/
 ```
+
+---
+
+### T-32 Streak Gate — CPM Not Reported on First Two Strokes
+
+**Steps:**
+1. Start PadLog with the paddle completely still (CYCLE_RATE: 0 CPM visible on PadDis).
+2. Perform exactly **two** qualifying strokes (≥45°, valid period), then stop.
+3. Observe the PadDis display and PadLog serial output.
+
+**Pass:**
+- The CPM display on PadDis does **not** update after the first or second stroke.
+- PadDis serial shows no `CPM:` line after fewer than 3 strokes.
+- CYCLE_RATE: 0 CPM line was emitted by PadLog when it timed out, and PadDis continues to show 0 or the previous value.
+
+---
+
+### T-33 Streak Gate — CPM Updates After Third Stroke
+
+**Steps:**
+1. From rest, perform three consecutive qualifying strokes at approximately 1 Hz.
+2. Observe PadDis display and PadLog serial after each stroke.
+
+**Pass:**
+- After the third stroke: a non-zero CPM value appears on PadDis and `CPM:` is printed on serial.
+- The value is within ±10 CPM of the actual stroke rate.
+
+---
+
+### T-34 Asymmetry Bar — No Bar Before First Measurement
+
+**Steps:**
+1. Power on both units.
+2. Observe PadDis after the splash screen, before any paddle motion.
+
+**Pass:** The asymmetry bar area is white (invisible) — no coloured fill, no outline. Only the CPM number and signal icon are visible.
+
+---
+
+### T-35 Asymmetry Bar — Red on Left Shorter
+
+**Steps:**
+1. Paddle for at least 3 cycles to establish asymmetry data.
+2. Deliberately shorten the left paddle stroke (faster left entry, slower right).
+3. Observe PadDis asymmetry bar.
+
+**Pass:** The bar shows a **red fill extending left of centre**, proportional in length to the asymmetry. Grey outline and centre tick are visible.
+
+---
+
+### T-36 Asymmetry Bar — Green on Right Shorter
+
+**Steps:**
+1. As T-35, but deliberately shorten the **right** stroke.
+
+**Pass:** The bar shows a **green fill extending right of centre**.
+
+---
+
+### T-37 Asymmetry Bar — Resets on Signal Loss
+
+**Steps:**
+1. With asymmetry bar showing, power off PadLog.
+2. Wait 5 seconds for PadDis to detect signal loss.
+3. Observe the asymmetry bar.
+
+**Pass:** The bar area returns to white (invisible) when signal is lost. It does not reappear until PadLog is restored and a valid asymmetry measurement is computed.

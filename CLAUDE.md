@@ -63,7 +63,7 @@ The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `paddlestroke_sim_t
 - **Phase 5** — ESPnow broadcast of stroke rate: complete (transmit side; receiver is a separate project)
 - **Phase 6** — CYD ESPnow receiver: complete (5 May 2026). LVGL dropped in favour of TFT_eSPI direct. All tests T-19–T-22 passed.
 - **Phase 7** — ESPnow full-IMU data link + CYD SD logging: complete (6 May 2026). All tests T-23–T-31 passed. Bug fixed: yaw wrap at ±180° caused EulerErr=360° (corrected with wrap-aware subtraction in RX sketch).
-- **Phase 8** — Production integration: complete (12 May 2026). PadLog v8.1 (TX) + PadDis v8.1 (RX). Hardware validated: live paddle session logged correctly.
+- **Phase 8** — Production integration: complete (14 May 2026). PadLog v8.2 (TX) + PadDis v8.2 (RX). v8.1 hardware validated 12 May 2026 (63 min session, 100 Hz, <0.03% loss). v8.2: streak gate (N=3 strokes before CPM updates), separate peak/trough rate buffers in StrokeDetector, real-time asymmetry bar on PadDis (red = left shorter, green = right shorter).
 
 ## Production Sketches
 
@@ -72,7 +72,7 @@ The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `paddlestroke_sim_t
 | PadLog | `PadLog/` | LOLIN32 Lite | COM3 | `esp32:esp32:lolin32-lite` |
 | PadDis | `PadDis/` | CYD ESP32-2432S028 | COM6 | `esp32:esp32:esp32` |
 
-**Version scheme:** `<phase>.<iteration>` — currently **v8.1**. Version shown in serial banner, CYD splash screen, and CSV first line (`# PadDis v8.1`).
+**Version scheme:** `<phase>.<iteration>` — currently **v8.2**. Version shown in serial banner, CYD splash screen, and CSV first line (`# PadDis v8.2`).
 
 **Payload struct** (60 bytes, float — must be identical in both sketches):
 ```
@@ -89,8 +89,10 @@ seq, timestamp_ms, accel_x/y/z, q_w/x/y/z, roll/pitch/yaw, stroke_count, cpm, hz
 
 - Cycle rate valid range: **0.25 – 2.5 Hz** (0.4 s – 4.0 s period)
 - Amplitude gate: peak-to-trough roll must be **≥ 45°**; smaller swings are ignored
-- Rate averaging: rolling window over the last **4 qualifying cycles** (event-based, not time-based)
+- Rate averaging: rolling window over the last **4 qualifying cycles** per buffer (separate peak/trough buffers, up to 8 values total)
+- Streak gate: CPM not reported until **3 consecutive qualifying strokes** detected
 - IMU sample rate: minimum 50 Hz, 100 Hz preferred
+- CYD display is **BGR** pixel order: send `0x001F` to display red (not `TFT_RED = 0xF800`)
 
 ## SD Card Logging
 

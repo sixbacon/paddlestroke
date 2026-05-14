@@ -1,0 +1,28 @@
+File ImuLog0020260514.CSV contains a record of a paddling session recoded on the display unit running the current sketch. I am interested in your analysis of this file.
+
+Record of paddling
+Switched on            row 0
+Started paddling   row 46500
+Up river  until row 82000
+Down river until row 108700
+Up river  until row 138000
+Down river until 167000
+Right paddle only  from ow 167000
+Left paddle only     row 170000
+Reverse briefly  row 174000
+Got out of boat  row 183000
+Drove home row 187000
+Stationary for about five minutes 218000
+Removed battery
+
+Observations
+The stroke detection algorithm was being triggered by noise and giving unrealistic readings when I was not paddling.
+I paddled at a fairly constant rate on each leg, but the stroke rate varied by 40 cpm within a few seconds. The readings were of the correct order of about 50 to 60 cpm.
+
+Questions - do not change anything yet, just answer these.
+1 Can you see a way to remove the random triggering and only waken up when paddling is detected?
+2 Can you see why the stroke rate while paddling was so erratic?
+3 The pitch angle should change about 60 degrees just before I put the left paddle in. Can you determine which stroke is right and left from any of the signals?
+4 Can you discern any difference in time between the left and right stroke from any signal that could be used to determine the asymmetry in the paddling?
+4 The paddle blade should decelerate slightly when it enters the water. Can you detect anything from any of the signals?
+5 Similarly can you determine when each blade leaves the water?
