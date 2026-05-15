@@ -7,6 +7,7 @@ public:
     bool update(float rollDeg, unsigned long timestampUs);
     float getRateHz() const;
     bool isTimedOut(unsigned long nowUs) const;
+    bool isRateMature() const;   // true once both peak and trough buffers have ≥ 2 entries
 
 private:
     float         _inBuf[3];

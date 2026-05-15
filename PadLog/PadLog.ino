@@ -7,7 +7,7 @@
 #include "StrokeDetector.h"
 
 #define SKETCH_NAME    "PadLog"
-#define SKETCH_VERSION "8.3"
+#define SKETCH_VERSION "8.4"
 
 // ── Payload struct — must match PadDis (PadDis.ino) exactly ──────────────────
 struct __attribute__((packed)) ImuDataPayload {
@@ -150,6 +150,8 @@ static void exitDozeMode() {
     while (millis() < settleEnd) bno.getSensorEvent(&dummy);
     detector.reset();
     g_strokeStreak  = 0;
+    g_cpm           = 0;
+    g_hz            = 0.0f;
     timeoutActive   = false;
     inactiveStartMs = 0;
     inDozeMode      = false;
@@ -237,9 +239,9 @@ void loop() {
     if (detector.update(angles.roll, nowUs)) {
         g_strokeCount++;
         g_strokeStreak++;
-        // Only report and reset inactivity after 3 consecutive qualifying strokes —
-        // suppresses CPM spikes from handling, transport, and isolated noise peaks.
-        if (g_strokeStreak >= 3) {
+        // Report only after 3 consecutive qualifying strokes AND both rate buffers
+        // have ≥ 2 entries — prevents spuriously high CPM from the first 1–2 intervals.
+        if (g_strokeStreak >= 3 && detector.isRateMature()) {
             g_hz  = detector.getRateHz();
             g_cpm = (uint32_t)roundf(g_hz * 60.0f);
             timeoutActive   = false;

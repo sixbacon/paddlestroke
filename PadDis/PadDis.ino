@@ -5,7 +5,7 @@
 #include <SD.h>
 
 #define SKETCH_NAME    "PadDis"
-#define SKETCH_VERSION "8.3"
+#define SKETCH_VERSION "8.4"
 
 // ── Payload struct — must match PadLog (PadLog.ino) exactly ──────────────────
 struct __attribute__((packed)) ImuDataPayload {
@@ -68,9 +68,18 @@ static int           iconCx, iconCy;
 // ── Asymmetry state ───────────────────────────────────────────────────────────
 static int32_t  asymMs    = 0;
 static bool     asymValid = false;
-static uint32_t tLastR    = 0;   // TX timestamp_ms of last right-labelled stroke
-static uint32_t tLastL    = 0;   // TX timestamp_ms of last left-labelled stroke
-static uint32_t prevSc    = 0;   // previous stroke_count (to detect increments)
+static uint32_t tLastR    = 0;     // TX timestamp_ms of last right-labelled stroke
+static uint32_t tLastL    = 0;     // TX timestamp_ms of last left-labelled stroke
+static uint32_t prevSc    = 0;     // previous stroke_count (to detect increments)
+
+// Option A — rolling midpoint for L/R classification
+// Instead of pitch >= 0 (unreliable with offset mounting), track the midpoint
+// between consecutive peak and trough roll values.  midRoll self-calibrates to
+// the mounting offset and drifts slowly with it during the session.
+static float asymPrevRoll   = NAN; // roll at the previous stroke event
+static float asymPeakRoll   = NAN; // roll at most recent positive-side extremum
+static float asymTroughRoll = NAN; // roll at most recent negative-side extremum
+static float asymMidRoll    = NAN; // EMA of (peakRoll + troughRoll) / 2
 
 // ── ESPnow callback (Core 0) ──────────────────────────────────────────────────
 void onReceive(const esp_now_recv_info *info, const uint8_t *data, int len) {
@@ -251,12 +260,32 @@ void loop() {
         }
 
         // ── Stroke asymmetry tracking ─────────────────────────────────────────
-        // Label each stroke R (pitch ≥ 0) or L (pitch < 0) and measure the
-        // two half-intervals of each cycle to compute the asymmetry in ms.
+        // Label each stroke R or L using the rolling midpoint of peak/trough roll
+        // values (Option A).  This self-calibrates to the mounting offset so the
+        // bar reflects true stroke asymmetry rather than mounting angle.
         if (pkt.stroke_count != prevSc) {
             prevSc = pkt.stroke_count;
-            uint32_t ts      = pkt.timestamp_ms;
-            bool     isRight = (pkt.pitch >= 0.0f);
+            uint32_t ts   = pkt.timestamp_ms;
+            float    roll = pkt.roll;
+
+            // Update peak / trough tracking from consecutive stroke roll values.
+            // Consecutive strokes alternate extrema, so comparing to the previous
+            // stroke roll reliably identifies peaks (higher) and troughs (lower).
+            if (!isnan(asymPrevRoll)) {
+                if (roll > asymPrevRoll) asymPeakRoll   = roll;
+                else                     asymTroughRoll = roll;
+            }
+            asymPrevRoll = roll;
+
+            // Recompute midpoint EMA whenever both sides are known.
+            if (!isnan(asymPeakRoll) && !isnan(asymTroughRoll)) {
+                float newMid = (asymPeakRoll + asymTroughRoll) * 0.5f;
+                asymMidRoll  = isnan(asymMidRoll) ? newMid : (0.9f * asymMidRoll + 0.1f * newMid);
+            }
+
+            // Classify stroke: above midpoint = positive-side (right), below = left.
+            // Fall back to roll >= 0 until the midpoint is established.
+            bool isRight = isnan(asymMidRoll) ? (roll >= 0.0f) : (roll > asymMidRoll);
 
             if (isRight) {
                 if (tLastL > tLastR && tLastR > 0) {
@@ -321,10 +350,14 @@ void loop() {
     if (receiving != prevReceiving) {
         if (!receiving) {
             // Reset asymmetry state on signal loss
-            asymValid = false;
-            tLastR    = 0;
-            tLastL    = 0;
-            prevSc    = 0;
+            asymValid     = false;
+            tLastR        = 0;
+            tLastL        = 0;
+            prevSc        = 0;
+            asymPrevRoll   = NAN;
+            asymPeakRoll   = NAN;
+            asymTroughRoll = NAN;
+            asymMidRoll    = NAN;
             drawRate(displayedCpm, false);   // also redraws bar (now grey)
             drawIcon(false, false);
             Serial.println("Signal lost");

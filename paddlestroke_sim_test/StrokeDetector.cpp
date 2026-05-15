@@ -112,6 +112,10 @@ bool StrokeDetector::_onExtrema(bool isPeak, float val, unsigned long tsUs) {
 
 float StrokeDetector::getRateHz() const { return _currentRateHz; }
 
+bool StrokeDetector::isRateMature() const {
+    return _rateBufPeakCount >= 2 && _rateBufTroughCount >= 2;
+}
+
 bool StrokeDetector::isTimedOut(unsigned long nowUs) const {
     return (nowUs - _lastQualifyingTs) > TIMEOUT_US;
 }
