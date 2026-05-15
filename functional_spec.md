@@ -1,8 +1,8 @@
 # Kayak Paddle Stroke Rate Monitor — Functional Specification
 
 **Project:** paddlestroke  
-**Date:** 14 May 2026  
-**Version:** 1.8
+**Date:** 15 May 2026  
+**Version:** 1.9
 
 ---
 
@@ -250,7 +250,7 @@ The following are excluded from the current implementation. Items marked with a 
 | **5** | Transmit stroke rate via ESPnow broadcast. Transmit side complete and tested (T-18a–T-18c). Receiver/display is a separate project. BLE and mobile app deferred. *(Complete)* |
 | **6** | CYD ESPnow receiver with TFT display. LVGL dropped in favour of TFT_eSPI direct. Tests T-19–T-22 passed. *(Complete — 5 May 2026)* |
 | **7** | ESPnow full-IMU data link — transmit raw IMU data from paddle device to CYD at 100 Hz; log to CYD SD card. Enables sealed paddle device. All tests T-23–T-31 passed (6 May 2026). *(Complete)* |
-| **8** | Production integration — full-IMU ESPnow payload in PadLog; SD logging in PadDis; SD card removed from paddle device. Sketches renamed PadLog / PadDis with version scheme phase.iteration. v8.1: hardware validated 12 May 2026 (63 min session, 100 Hz, <0.03% loss, 51–76 CPM). v8.2: streak gate, separate rate buffers, asymmetry bar. v8.3: doze/wake bug fixed — accelerometer left active in doze mode was consuming all wakeup events, blocking RV data; fix disables accelerometer on doze entry. Full cycle validated 14 May 2026: ESPnow, CPM display, 3-min doze, and wake on paddle motion all confirmed. *(Complete — 14 May 2026)* |
+| **8** | Production integration — full-IMU ESPnow payload in PadLog; SD logging in PadDis; SD card removed from paddle device. Sketches renamed PadLog / PadDis with version scheme phase.iteration. v8.1: hardware validated 12 May 2026 (63 min session, 100 Hz, <0.03% loss, 51–76 CPM). v8.2: streak gate, separate rate buffers, asymmetry bar. v8.3: doze/wake bug fixed — accelerometer left active in doze mode was consuming all wakeup events, blocking RV data; fix disables accelerometer on doze entry. Full cycle validated 14 May 2026. v8.4: two fixes from 59-min field test (15 May 2026) — `isRateMature()` gate prevents post-wake CPM spike caused by first CPM report with only 1–2 buffer entries; rolling-midpoint asymmetry replaces `pitch >= 0` classifier (unreliable with offset mounting). *(Complete — 15 May 2026)* |
 
 ---
 
@@ -266,7 +266,7 @@ All tests are manual, performed with the ESP32 connected via USB and the Arduino
 1. Flash firmware and power-cycle the ESP32.
 2. Observe serial output within 2 s.
 
-**Pass:** The first line received is exactly `PadLog v8.1 — ready` (version number reflects current release).
+**Pass:** The first line received is exactly `PadLog v8.4 — ready` (version number reflects current release).
 
 ---
 
@@ -1027,13 +1027,13 @@ If any check fails, the change must be investigated and fixed before the version
 Both sketches define:
 ```cpp
 #define SKETCH_NAME    "PadLog"   // or "PadDis"
-#define SKETCH_VERSION "8.3"
+#define SKETCH_VERSION "8.4"
 ```
 
 The version string appears in:
-- Serial startup banner: `PadLog v8.3 — ready`
+- Serial startup banner: `PadLog v8.4 — ready`
 - CYD splash screen (PadDis only)
-- First line of every CSV log file: `# PadDis v8.3`
+- First line of every CSV log file: `# PadDis v8.4`
 
 ---
 
@@ -1103,6 +1103,26 @@ The stroke rate averaging buffer is split into two independent 4-entry ring buff
 
 **StrokeDetector API change:** The internal `_pushRate(float, bool isPeak)` method routes to the appropriate buffer. The public interface (`update`, `getRateHz`, `isTimedOut`, `reset`) is unchanged.
 
+#### 12.2.8 Rate Maturity Gate — `isRateMature()` (v8.4)
+
+CPM and Hz are reported only when **both** rate buffers contain at least **2 entries** (`isRateMature()` returns `true`), in addition to the streak gate (§12.2.6).
+
+**Bug (present through v8.3):** `_computeAverage()` divides by `n` (the total count across both buffers) for any `n > 0`. After the third qualifying stroke, `n` may be as low as 2 (one peak interval + one trough interval). With only two data points the reported CPM is highly sensitive to timing jitter and can read 89–116 CPM at the start of a session or after a doze wake, when the true rate is ~54 CPM.
+
+**Fix:** `PadLog.ino` adds a second guard to the CPM update condition:
+
+```cpp
+if (g_strokeStreak >= 3 && detector.isRateMature()) {
+    g_hz  = detector.getRateHz();
+    g_cpm = (uint32_t)roundf(g_hz * 60.0f);
+    ...
+}
+```
+
+`isRateMature()` returns `true` only when `_rateBufPeakCount >= 2 && _rateBufTroughCount >= 2` — i.e., at least 4 individual half-cycle intervals (two peak-to-peak, two trough-to-trough) have been accumulated. This ensures the rolling average has meaningful data before the first CPM is displayed.
+
+**Field validation:** 59-min session 15 May 2026 showed 89–116 CPM spike in the first few strokes with v8.3. With v8.4 the start-of-session CPM is withheld until both buffers reach 2 entries, eliminating the spike.
+
 ---
 
 ### 12.3 PadDis — Changes from Phase 7
@@ -1116,7 +1136,7 @@ Receives the 60-byte `ImuDataPayload`. Ring buffer stores `ImuDataPayload` entri
 Auto-numbered `/ImuLog00.CSV` … `/ImuLog99.CSV`. The first line is a version comment; the second is the column header:
 
 ```
-# PadDis v8.1
+# PadDis v8.4
 seq,timestamp_ms,accel_x,accel_y,accel_z,q_w,q_x,q_y,q_z,roll,pitch,yaw,stroke_count,cpm,hz
 ```
 
@@ -1124,7 +1144,7 @@ Every received packet is written as one CSV row. The file is flushed every 5 s a
 
 #### 12.3.3 Display
 
-The splash screen shows `PadDis v8.2` (Font 4) for 20 seconds. The main screen shows: large CPM number (Font 8), signal icon, and asymmetry bar (see §12.3.5). The CPM number is refreshed only when `cpm` changes — not on every 100 Hz packet — to avoid blocking the loop.
+The splash screen shows `PadDis v8.4` (Font 4) for 20 seconds. The main screen shows: large CPM number (Font 8), signal icon, and asymmetry bar (see §12.3.5). The CPM number is refreshed only when `cpm` changes — not on every 100 Hz packet — to avoid blocking the loop.
 
 #### 12.3.4 Serial Output
 
@@ -1173,14 +1193,35 @@ A horizontal bar displayed on the CYD below the signal icon (top of bar at y=40)
 
 **Colour note (CYD hardware):** The ILI9341 display on this CYD unit uses **BGR** pixel order. To render red, the firmware sends `0x001F` (the RGB565 blue value); the BGR hardware interprets it as full red. Green (0x07E0) is symmetric and unaffected. TFT_WHITE (0xFFFF) is also symmetric.
 
-**Asymmetry computation:**
+**Asymmetry computation (v8.4 — rolling midpoint):**
 
-- Each stroke is labelled **Right** if `pkt.pitch >= 0`, **Left** if `pkt.pitch < 0`. Pitch is rhythmic and crosses zero at each half-stroke transition.
+The Left/Right stroke label is derived from a self-calibrating rolling midpoint of the received roll value, replacing the earlier `pitch >= 0` classifier (which was unreliable when the IMU is mounted with a significant angular offset from the shaft centreline).
+
+**Midpoint tracking (PadDis, executed on every received packet):**
+
+```cpp
+// asymPrevRoll, asymPeakRoll, asymTroughRoll, asymMidRoll initialised to NAN
+if (!isnan(asymPrevRoll)) {
+    if (roll > asymPrevRoll) asymPeakRoll   = roll;
+    else                     asymTroughRoll = roll;
+}
+asymPrevRoll = roll;
+if (!isnan(asymPeakRoll) && !isnan(asymTroughRoll)) {
+    float newMid = (asymPeakRoll + asymTroughRoll) * 0.5f;
+    asymMidRoll  = isnan(asymMidRoll) ? newMid : (0.9f * asymMidRoll + 0.1f * newMid);
+}
+bool isRight = isnan(asymMidRoll) ? (roll >= 0.0f) : (roll > asymMidRoll);
+```
+
+`asymMidRoll` is an EMA of the midpoint between consecutive roll peak and trough values. It converges to the true neutral angle of the paddle shaft over a few strokes, regardless of physical mounting offset.
+
+**Stroke timing:**
+
 - The firmware tracks the TX `timestamp_ms` of the last Right stroke (`tLastR`) and last Left stroke (`tLastL`).
-- On each new Right stroke: if a complete R → L → R sequence exists, compute `r2l = tLastL − tLastR`, `l2r = ts − tLastL`, and `asymMs = r2l − l2r`. Positive `asymMs` = left interval shorter = left blade entered water for less time.
-- On each new Left stroke: mirror logic — L → R → L sequence → `asymMs = r2l − l2r` (same sign convention).
-- Both half-intervals must be in the range 150 ms – 4000 ms; if either is outside this range the measurement is discarded.
-- `asymValid` is set `true` once a valid measurement exists and reset to `false` on signal loss.
+- On each new Right stroke: if a complete R → L → R sequence exists, compute `r2l = tLastL − tLastR`, `l2r = ts − tLastL`, and `asymMs = r2l − l2r`. Positive `asymMs` = left interval shorter = left blade in water for less time.
+- On each new Left stroke: mirror logic — L → R → L sequence → same sign convention.
+- Both half-intervals must be in the range 150 ms – 4000 ms; measurements outside this range are discarded.
+- `asymValid` is set `true` once a valid measurement exists and reset to `false` on signal loss (all four `asym*` state variables reset to `NAN`).
 
 **Redraw discipline:** `drawRate()` wipes the entire usable display area and calls `drawAsymmetryBar()` at its end. When asymmetry changes between CPM updates, `drawAsymmetryBar()` is called independently.
 
