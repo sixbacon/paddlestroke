@@ -43,7 +43,7 @@ static_assert(sizeof(ImuDataPayload) == 60, "Payload size mismatch — check str
 // Positive asymMs = left stroke shorter = RED bar extends left of centre
 // Negative asymMs = right stroke shorter = GREEN bar extends right of centre
 // Bar is invisible (white) until asymValid=true; no grey background to avoid colour artifacts.
-#define BAR_RED   ((uint16_t)0x001F)   // display is BGR: send blue value to get red appearance
+#define BAR_RED   ((uint16_t)0x001F)   // ILI9341 BGR byte order: send RGB565 blue to render red
 
 // ── SD logging ────────────────────────────────────────────────────────────────
 #define FLUSH_INTERVAL_MS 5000UL
@@ -107,20 +107,19 @@ void onReceive(const esp_now_recv_info *info, const uint8_t *data, int len) {
 
 // ── Display helpers ───────────────────────────────────────────────────────────
 static void clearAllPixels() {
-    for (int r = 0; r < 4; r++) { tft.setRotation(r); tft.fillScreen(TFT_WHITE); }
+    for (int r = 0; r < 4; r++) { tft.setRotation(r); tft.fillScreen(TFT_BLACK); }
     tft.setRotation(2);
 }
 
 // Draws (or redraws) the asymmetry bar from current asymMs / asymValid state.
 // Must be called after any drawRate() call since drawRate wipes the usable area.
-// Background is always white (invisible) to avoid colour rendering artefacts.
 static void drawAsymmetryBar() {
     int usableW = tft.width() - (ICON_R * 2 + 16);
     int cx      = usableW / 2;
     int barX    = cx - BAR_W / 2;
 
-    // Clear bar area to white — invisible until asymmetry data is available
-    tft.fillRect(barX, BAR_Y, BAR_W, BAR_H, TFT_WHITE);
+    // Clear bar area to background colour
+    tft.fillRect(barX, BAR_Y, BAR_W, BAR_H, TFT_BLACK);
 
     if (!asymValid) return;
 
@@ -140,13 +139,13 @@ static void drawAsymmetryBar() {
 }
 
 static void drawRate(uint32_t cpm, bool active) {
-    uint16_t col     = active ? TFT_BLACK : GREY;
+    uint16_t col     = active ? TFT_WHITE : GREY;
     int      w       = tft.width();
     int      h       = tft.height();
     int      usableW = w - (ICON_R * 2 + 16);
-    tft.fillRect(0, 0, usableW, h, TFT_WHITE);
+    tft.fillRect(0, 0, usableW, h, TFT_BLACK);
     tft.setTextFont(8);
-    tft.setTextColor(col, TFT_WHITE);
+    tft.setTextColor(col, TFT_BLACK);
     String s  = hasReceived ? String(cpm) : "--";
     int    tw = tft.textWidth(s);
     int    th = tft.fontHeight(8);
@@ -155,7 +154,7 @@ static void drawRate(uint32_t cpm, bool active) {
     tft.setCursor(x, y);
     tft.print(s);
     tft.setTextFont(4);
-    tft.setTextColor(col, TFT_WHITE);
+    tft.setTextColor(col, TFT_BLACK);
     String label = "CPM";
     tft.setCursor((usableW - tft.textWidth(label)) / 2, y + th + 4);
     tft.print(label);
@@ -164,16 +163,16 @@ static void drawRate(uint32_t cpm, bool active) {
 }
 
 static void drawIcon(bool receiving, bool filled) {
-    tft.fillRect(iconCx - ICON_R - 2, 0, (ICON_R + 2) * 2, iconCy + ICON_R + 4, TFT_WHITE);
-    if (receiving && filled)  tft.fillCircle(iconCx, iconCy, ICON_R, TFT_BLACK);
-    else if (receiving)       tft.drawCircle(iconCx, iconCy, ICON_R, TFT_BLACK);
+    tft.fillRect(iconCx - ICON_R - 2, 0, (ICON_R + 2) * 2, iconCy + ICON_R + 4, TFT_BLACK);
+    if (receiving && filled)  tft.fillCircle(iconCx, iconCy, ICON_R, TFT_WHITE);
+    else if (receiving)       tft.drawCircle(iconCx, iconCy, ICON_R, TFT_WHITE);
     else                      tft.drawCircle(iconCx, iconCy, ICON_R, GREY);
 }
 
 static void fatalError(const char *msg) {
-    tft.fillScreen(TFT_WHITE);
+    tft.fillScreen(TFT_BLACK);
     tft.setTextFont(2);
-    tft.setTextColor(TFT_RED, TFT_WHITE);
+    tft.setTextColor(TFT_RED, TFT_BLACK);
     tft.setCursor((tft.width() - tft.textWidth(msg)) / 2, tft.height() / 2 - 8);
     tft.print(msg);
     Serial.println(msg);
@@ -194,7 +193,7 @@ void setup() {
     iconCy = ICON_R + 8;
 
     tft.setTextFont(4);
-    tft.setTextColor(TFT_BLACK, TFT_WHITE);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
     const char *splash = SKETCH_NAME " v" SKETCH_VERSION;
     tft.setCursor((tft.width()  - tft.textWidth(splash)) / 2,
                   (tft.height() - tft.fontHeight(4))      / 2);
@@ -238,7 +237,7 @@ void setup() {
 
     delay(SPLASH_MS);
 
-    tft.fillScreen(TFT_WHITE);
+    tft.fillScreen(TFT_BLACK);
     drawRate(0, false);   // also draws the (initially grey) bar
     drawIcon(false, false);
 }
