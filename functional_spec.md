@@ -2,7 +2,7 @@
 
 **Project:** paddlestroke  
 **Date:** 18 May 2026  
-**Version:** 2.0
+**Version:** 2.1
 
 ---
 
@@ -287,8 +287,8 @@ The following are excluded from the current implementation. Items marked with a 
 | **5** | Transmit stroke rate via ESPnow broadcast. Transmit side complete and tested (T-18a–T-18c). Receiver/display is a separate project. BLE and mobile app deferred. *(Complete)* |
 | **6** | CYD ESPnow receiver with TFT display. LVGL dropped in favour of TFT_eSPI direct. Tests T-19–T-22 passed. *(Complete — 5 May 2026)* |
 | **7** | ESPnow full-IMU data link — transmit raw IMU data from paddle device to CYD at 100 Hz; log to CYD SD card. Enables sealed paddle device. All tests T-23–T-31 passed (6 May 2026). *(Complete)* |
-| **8** | Production integration — full-IMU ESPnow payload in PadLog; SD logging in PadDis; SD card removed from paddle device. Sketches renamed PadLog / PadDis with version scheme phase.iteration. v8.1: hardware validated 12 May 2026 (63 min session, 100 Hz, <0.03% loss, 51–76 CPM). v8.2: streak gate, separate rate buffers, asymmetry bar. v8.3: doze/wake bug fixed — accelerometer left active in doze mode was consuming all wakeup events, blocking RV data; fix disables accelerometer on doze entry. Full cycle validated 14 May 2026. v8.4: two fixes from 59-min field test (15 May 2026) — `isRateMature()` gate prevents post-wake CPM spike; rolling-midpoint asymmetry replaces `pitch >= 0` classifier. Field test 18 May 2026 revealed feather rotation artefacts inflating CPM 1.7× — requires Phase 9 firmware changes. *(Complete — v8.4 flashed 15 May 2026)* |
-| **9** | Feather rotation fix and asymmetry algorithm evaluation — (1) raise AMPLITUDE_GATE_DEG 45°→90° in StrokeDetector (PadLog + sim_test copy); (2) implement three-bar display on PadDis to evaluate Options 1, 2, and 3 simultaneously in one session; (3) 20-second EMA on displayed CPM (raw CSV value unchanged); (4) compiler directive for selective CSV columns. *(Pending — coding not started)* |
+| **8** | Production integration — full-IMU ESPnow payload in PadLog; SD logging in PadDis; SD card removed from paddle device. Sketches renamed PadLog / PadDis with version scheme phase.iteration. v8.1: hardware validated 12 May 2026 (63 min session, 100 Hz, <0.03% loss, 51–76 CPM). v8.2: streak gate, separate rate buffers, asymmetry bar. v8.3: doze/wake bug fixed — accelerometer left active in doze mode was consuming all wakeup events, blocking RV data; fix disables accelerometer on doze entry. Full cycle validated 14 May 2026. v8.4: `isRateMature()` gate prevents post-wake CPM spike; rolling-midpoint asymmetry replaces `pitch >= 0` classifier. Field test 18 May 2026 revealed feather rotation artefacts inflating CPM 1.7× at 45° gate. v8.5 (PadDis only): CSV column selector (`CSV_COLUMNS_REDUCED`) reduces SD write volume 72%; 20-second EMA on displayed CPM (raw CSV unchanged). v8.6: `AMPLITUDE_GATE_DEG` raised 45°→90° (PadLog + sim_test) — rejects feather rotation events; Option 3 consecutive-event asymmetry replaces v8.4 rolling-midpoint EMA; dark display theme (black background, white text). *(Complete — v8.6 flashed and confirmed 18 May 2026)* |
+| **9** | Blade entry/exit detection — use `accel_x`/`accel_y` transients to detect blade catch and release independently of roll oscillation. Enables stroke quality metrics (catch angle, release timing). *(Pending — design not started)* |
 
 ---
 
@@ -563,7 +563,7 @@ The USB-C port requires a USB-C to USB-A adaptor when connecting to a USB-C-only
 
 **Rotation:** `tft.setRotation(2)` gives correct landscape orientation on this unit. Rotations 1 and 3 produce portrait, rotation 0 produces landscape mirrored.
 
-**Startup display clear:** The display has noise pixels in areas outside the active window that persist across reboots. At startup, call `tft.fillScreen(TFT_WHITE)` in all four rotations before settling on rotation 2. This writes white to every addressable pixel regardless of which rotation maps to which physical area, eliminating the noise strip.
+**Startup display clear:** The display has noise pixels in areas outside the active window that persist across reboots. At startup, call `tft.fillScreen(TFT_BLACK)` in all four rotations before settling on rotation 2. This writes the background colour to every addressable pixel regardless of rotation mapping, eliminating the noise strip.
 
 ---
 
@@ -597,11 +597,12 @@ After the splash, show the stroke rate. The rate value must occupy most of the s
 **Layout (landscape, rotation 2):**
 
 ```
-┌─────────────────────────────┐
-│                          [●] │  ← signal icon (top-right)
+┌─────────────────────────────┐  ← black background
+│                          [●] │  ← signal icon (top-right), white
 │                              │
-│          72 CPM              │  ← large label, centre screen
+│          72 CPM              │  ← white text; grey when signal lost
 │                              │
+│      ────────|──────────     │  ← asymmetry bar (red/green)
 └─────────────────────────────┘
 ```
 
@@ -617,14 +618,18 @@ A small icon in the top-right corner indicates reception state:
 | Receiving (packet within last 3 s) | Filled circle, flashing at ~1 Hz |
 | Signal lost (no packet for > 3 s) | Hollow circle, static |
 
-#### 10.3.4 Rate Value Colour
+#### 10.3.4 Colour Scheme
+
+Background is black throughout. Text and icon colours:
 
 | State | Colour |
 |-------|--------|
-| Receiving (packet within last 3 s) | Black `#000000` (white background) |
-| Signal lost (no packet for > 3 s) | Grey `#909090` |
+| Receiving (packet within last 3 s) | White `#FFFFFF` (black background) |
+| Signal lost (no packet for > 3 s) | Grey `0x9492` |
 
 When signal is lost the last received rate remains on screen in grey. The display does not reset to `--` until the device is power-cycled.
+
+**Startup clear:** At startup, `fillScreen(TFT_BLACK)` is called in all four rotations before settling on rotation 2. This writes black to every addressable pixel regardless of rotation mapping, eliminating noise pixels in areas outside the active window.
 
 ---
 
@@ -1065,13 +1070,13 @@ If any check fails, the change must be investigated and fixed before the version
 Both sketches define:
 ```cpp
 #define SKETCH_NAME    "PadLog"   // or "PadDis"
-#define SKETCH_VERSION "8.4"
+#define SKETCH_VERSION "8.6"
 ```
 
 The version string appears in:
-- Serial startup banner: `PadLog v8.4 — ready`
+- Serial startup banner: `PadLog v8.6 — ready`
 - CYD splash screen (PadDis only)
-- First line of every CSV log file: `# PadDis v8.4`
+- First line of every CSV log file: `# PadDis v8.6`
 
 ---
 
@@ -1163,6 +1168,18 @@ if (g_strokeStreak >= 3 && detector.isRateMature()) {
 
 ---
 
+#### 12.2.9 Amplitude Gate Raised to 90° (v8.6)
+
+**Change:** `AMPLITUDE_GATE_DEG` in `PadLog/StrokeDetector.cpp` (and the sync copy in `paddlestroke_sim_test/StrokeDetector.cpp`) raised from 45° to 90°.
+
+**Why this was necessary:** The v8.1–v8.4 gate of 45° was designed for an unfeathered paddle. Field analysis of the 18 May 2026 session (§3.4) revealed that the 60° feathered blades on this paddle require a wrist rotation before each blade entry. In the EMA high-pass filtered roll signal this rotation produces a 70–85° amplitude event — larger than the raw 60° wrist angle because the DC filter shifts the effective baseline. At 45° and even at 70°, these feather events pass the amplitude gate and also pass the period gate (530–670 ms sub-event period is within the 0.4–4.0 s range). The result is one spurious qualifying event per true stroke cycle, in a repeating T, P, feather-peak pattern, which inflated the displayed CPM by ~1.7×.
+
+A gate of 90° cleanly separates feather events (70–85° filtered amplitude) from genuine strokes (~100°+ filtered amplitude) with ~10° margin on each side. This was confirmed by re-running the detection algorithm at five gate values (45°, 70°, 80°, 90°, 100°) against the recorded CSV — only 90° produced a P:T ratio near 1.0 and a T-T CPM matching the true paddling rate of ~32 CPM.
+
+**Sim-test update:** ST-04 threshold changed from ±22.5° to ±40° (80° P-T, below the 90° gate); ST-05 changed from ±22.5° to ±46° (92° P-T, above the 90° gate with margin for the 3-sample MA ~1% attenuation at 1 Hz / 100 Hz sample rate). All 20 tests pass.
+
+---
+
 ### 12.3 PadDis — Changes from Phase 7
 
 #### 12.3.1 Payload and Ring Buffer
@@ -1173,16 +1190,23 @@ Receives the 60-byte `ImuDataPayload`. Ring buffer stores `ImuDataPayload` entri
 
 Auto-numbered `/ImuLog00.CSV` … `/ImuLog99.CSV`. The first line is a version comment; the second is the column header:
 
+**Full column set:**
 ```
-# PadDis v8.4
+# PadDis v8.6
 seq,timestamp_ms,accel_x,accel_y,accel_z,q_w,q_x,q_y,q_z,roll,pitch,yaw,stroke_count,cpm,hz
+```
+
+**Reduced column set** (when `CSV_COLUMNS_REDUCED` is defined — see §12.3.6):
+```
+# PadDis v8.6
+timestamp_ms,roll,pitch,yaw,stroke_count,cpm
 ```
 
 Every received packet is written as one CSV row. The file is flushed every 5 s and on signal loss. SD absence is non-fatal.
 
 #### 12.3.3 Display
 
-The splash screen shows `PadDis v8.4` (Font 4) for 20 seconds. The main screen shows: large CPM number (Font 8), signal icon, and asymmetry bar (see §12.3.5). The CPM number is refreshed only when `cpm` changes — not on every 100 Hz packet — to avoid blocking the loop.
+The splash screen shows `PadDis v8.6` (Font 4) for 20 seconds. The main screen shows: large CPM number (Font 8), signal icon, and asymmetry bar (see §12.3.5). Colour scheme: black background, white active text, grey on signal loss. The CPM number is refreshed only when the displayed value changes — not on every 100 Hz packet — to avoid blocking the loop. The displayed value is a 20-second EMA of the raw CPM (see §12.3.7).
 
 #### 12.3.4 Serial Output
 
@@ -1194,9 +1218,9 @@ Asym: +45 ms  (LEFT shorter)
 Signal lost
 ```
 
-#### 12.3.5 Asymmetry Bar (v8.2; algorithm under evaluation — Phase 9)
+#### 12.3.5 Asymmetry Bar
 
-A horizontal bar displayed on the CYD below the signal icon visualises left/right stroke asymmetry in real time. Field analysis (18 May 2026) showed the v8.4 algorithm has significant problems (see §3.4). Phase 9 will evaluate three algorithm options simultaneously with a three-bar display before selecting one for production. This section documents the v8.4 baseline, the three candidate options, and the plan.
+A horizontal bar displayed on the CYD below the signal icon visualises left/right stroke timing asymmetry in real time. The bar was introduced in v8.2 but the v8.4 algorithm was found to be unreliable in field data (see §3.4 and the v8.4 baseline subsection below). The v8.6 production algorithm is **Option 3 — consecutive-event comparison**. This section documents the v8.4 baseline (for historical reference), the three algorithms evaluated offline on 18 May 2026 field data, and the v8.6 production implementation.
 
 **Layout (single bar — v8.4 current):**
 
@@ -1219,7 +1243,7 @@ A horizontal bar displayed on the CYD below the signal icon visualises left/righ
 | Full-deflection asymmetry | 500 ms |
 | Centre tick | Grey line at bar midpoint |
 | Outline | Grey rectangle (only when `asymValid`) |
-| Background | White (invisible) when no data available |
+| Background | Black (invisible against dark theme) when no data available |
 
 **Colour convention:**
 
@@ -1233,9 +1257,9 @@ A horizontal bar displayed on the CYD below the signal icon visualises left/righ
 
 ---
 
-**v8.4 rolling-midpoint algorithm (current firmware — known issues):**
+**v8.4 rolling-midpoint algorithm (historical — replaced in v8.6):**
 
-L/R classification uses a self-calibrating rolling midpoint of roll values, replacing the earlier `pitch >= 0` classifier.
+L/R classification used a self-calibrating rolling midpoint of roll values, replacing the earlier `pitch >= 0` classifier.
 
 ```cpp
 // Executed on every received packet (100 Hz)
@@ -1298,9 +1322,78 @@ Compare roll values of consecutive qualifying events. The higher-roll event is l
 
 ---
 
-**Phase 9 plan — three-bar evaluation display:**
+---
 
-Three stacked 220×18 px bars at y = 40, 62, 84 (one per option) will be drawn simultaneously in a single field session. Fits within the 240 px landscape screen; draw time ~5 ms, negligible at 100 Hz. After evaluation, the best-performing option will become the single production bar.
+**v8.6 production algorithm — Option 3 (consecutive-event comparison + timing):**
+
+Option 3 was selected for production based on offline analysis of 18 May 2026 field data at the 90° gate: 35% lower noise than Option 2, parameter-free, 98% consistent cycle classification. The three-bar evaluation display was not required.
+
+```cpp
+// On each new qualifying stroke event (pkt.stroke_count change):
+// Higher roll than the previous event = peak side (right); lower = trough side (left).
+// No midpoint, no EMA — just a comparison of two consecutive roll values.
+if (!isnan(prevEventRoll)) {
+    bool isRight = (roll > prevEventRoll);
+    if (isRight) {
+        if (tLastL > tLastR && tLastR > 0) {
+            int32_t r2l = (int32_t)(tLastL - tLastR);
+            int32_t l2r = (int32_t)(ts     - tLastL);
+            if (r2l > 150 && r2l < 4000 && l2r > 150 && l2r < 4000) {
+                asymMs    = r2l - l2r;  // +ve = left shorter = RED
+                asymValid = true;
+            }
+        }
+        tLastR = ts;
+    } else {
+        if (tLastR > tLastL && tLastL > 0) {
+            int32_t l2r = (int32_t)(tLastR - tLastL);
+            int32_t r2l = (int32_t)(ts     - tLastR);
+            if (l2r > 150 && l2r < 4000 && r2l > 150 && r2l < 4000) {
+                asymMs    = r2l - l2r;
+                asymValid = true;
+            }
+        }
+        tLastL = ts;
+    }
+}
+prevEventRoll = roll;
+```
+
+State variables: `prevEventRoll`, `tLastR`, `tLastL`, `asymMs`, `asymValid`. All reset to NAN/0/false on signal loss. This replaces four state variables (`asymPrevRoll`, `asymPeakRoll`, `asymTroughRoll`, `asymMidRoll`) from v8.4 with a single `prevEventRoll`.
+
+---
+
+#### 12.3.6 CSV Column Selector (v8.5)
+
+A compiler directive in `PadDis.ino` selects which columns are written to each CSV row:
+
+```cpp
+#define CSV_COLUMNS_REDUCED   // comment out for full columns
+```
+
+**Reduced column set** (defined by default — for field use):
+`timestamp_ms, roll, pitch, yaw, stroke_count, cpm`
+~50 characters/row, ~72% smaller than the full set.
+
+**Full column set** (comment out `CSV_COLUMNS_REDUCED`):
+All fields in `ImuDataPayload`: `seq, timestamp_ms, accel_x, accel_y, accel_z, q_w, q_x, q_y, q_z, roll, pitch, yaw, stroke_count, cpm, hz`
+
+`stroke_count` is included in the reduced set because it identifies which samples are qualifying stroke events, enabling offline asymmetry algorithm evaluation in Python. `cpm` is included in raw (un-EMAd) form for the same reason.
+
+#### 12.3.7 CPM Display EMA (v8.5)
+
+A 20-second exponential moving average is applied to the **displayed** CPM value on PadDis. The raw CPM value received from PadLog is stored in the CSV unchanged.
+
+```
+alpha = 1 − exp(−(1/100) / 20) ≈ 0.0005   // at 100 Hz sample rate
+displayCpm = alpha × rawCpm + (1 − alpha) × displayCpm
+```
+
+- On first valid CPM received after signal return (or session start), pre-seed `displayCpm` to `rawCpm` immediately — no ramp-up delay.
+- When `rawCpm == 0` (PadLog inactivity timeout), reset `displayCpm` to 0 immediately — no gradual decay.
+- The display refreshes only when the rounded integer value of `displayCpm` changes, to avoid unnecessary redraws.
+
+**Motivation:** 18 May 2026 field data showed stdev of 16.8 CPM at a true rate of ~32 CPM (~52% relative noise). A 20-second EMA reduces visible fluctuation to ~2–3 CPM stdev while still tracking genuine rate changes within a few seconds.
 
 ---
 
@@ -1385,75 +1478,28 @@ arduino-cli upload -p COM6 PadDis/
 
 ---
 
-## 13. Phase 9 — Feather Gate Fix and Asymmetry Evaluation
+## 13. Phase 9 — Blade Entry/Exit Detection
 
-Field test 18 May 2026 (43.8 min, ImuLog1620260518.CSV) revealed that the 60° feathered paddle blades produce spurious StrokeDetector events. Phase 9 corrects the amplitude gate and evaluates the three asymmetry algorithm options in a single field session.
+*Status: pending — design not started.*
 
----
-
-### 13.1 Amplitude Gate Change
-
-**Change:** `AMPLITUDE_GATE_DEG` in `StrokeDetector.cpp` (and the copy in `paddlestroke_sim_test/StrokeDetector.cpp`): 45 → 90.
-
-**Rationale:** At 45°, feather rotation events (70–85° filtered amplitude) pass the gate and inflate CPM ~1.7×. At 90° they are rejected while genuine strokes (~100°+) continue to pass. Gate sweep analysis at 45°, 70°, 80°, 90°, 100° confirmed 90° as the clean threshold. See §3.2 and §3.4 for full analysis.
-
-**Files to change:**
-- `PadLog/StrokeDetector.cpp` — `AMPLITUDE_GATE_DEG` constant
-- `paddlestroke_sim_test/StrokeDetector.cpp` — keep in sync
+Phase 9 adds stroke quality metrics by detecting the moment the blade enters the water (catch) and exits the water (release) independently of the roll oscillation cycle already used for CPM. These events are not cleanly visible in the roll signal but should be detectable as transients in `accel_x` and `accel_y` (lateral and forward accelerometer channels), which are already included in the ESPnow payload and logged to the SD card.
 
 ---
 
-### 13.2 Three-Bar Evaluation Display
+### 13.1 Motivation
 
-PadDis will draw three stacked 220×18 px asymmetry bars simultaneously, one per algorithm option:
-
-| Bar position (y) | Option | Algorithm |
-|-----------------|--------|-----------|
-| 40 | Option 1 | Amplitude asymmetry (EMA neutral reference) |
-| 62 | Option 2 | Event midRoll EMA + timing |
-| 84 | Option 3 | Consecutive-event comparison + timing |
-
-The CPM number (Font 8) moves down to y = 105. All three bars use the same colour convention (red = left shorter, green = right shorter). Draw time ~5 ms total, negligible.
-
-**Goal:** Determine which option most reliably and stably reflects deliberate L/R asymmetry. Option 3 is expected to perform best based on offline analysis (35% lower noise, parameter-free) but all three should be validated on live hardware before committing.
+The Phase 8 stroke detection confirms that a cycle occurred and measures its rate. It does not distinguish between an efficient catch (blade enters at low angle, pulls cleanly) and an inefficient one (blade slaps the water, or enters late). Blade entry and exit events produce distinct accelerometer transients; characterising these enables coaching feedback beyond CPM.
 
 ---
 
-### 13.3 CPM Display EMA
+### 13.2 Data Available
 
-A 20-second EMA is applied to the **displayed** CPM value on PadDis. The raw CPM value is stored in the CSV unchanged.
-
-```
-alpha = 1 − exp(−(1/100) / 20) ≈ 0.0005   // at 100 Hz
-displayCpm = alpha × rawCpm + (1 − alpha) × displayCpm
-```
-
-- On first valid CPM after signal resume (or session start), pre-seed `displayCpm` to `rawCpm` immediately (no warm-up ramp).
-- When `rawCpm == 0` (inactivity timeout), reset `displayCpm` to 0 immediately (no gradual decay).
-
-**Motivation:** 18 May 2026 field data showed stdev of displayed CPM = 16.8 CPM at the true rate of ~32 CPM. A 20-second EMA reduces this to ~2–3 CPM stdev.
+All required data is already captured in the Phase 8 CSV (even in the reduced column set, `accel_x`, `accel_y`, and `accel_z` are available alongside `roll` and `stroke_count`). No hardware or firmware changes are needed to capture data for offline analysis.
 
 ---
 
-### 13.4 CSV Column Selector (Compiler Directive)
+### 13.3 Approach (to be designed)
 
-A `#define` in `PadDis.ino` selects which columns are written to each CSV row:
+Candidate approach: detect the onset and cessation of lateral acceleration transients time-locked to the roll zero-crossing (mid-stroke) in each qualifying cycle. The `stroke_count` transitions in the CSV provide exact event timestamps to align against.
 
-```cpp
-#define CSV_COLUMNS_REDUCED   // comment out for full columns
-```
-
-**Reduced column set (default for field use):**
-`timestamp_ms, roll, pitch, yaw, stroke_count, cpm`
-
-~50 characters/row vs ~180 characters/row for the full set — 72% SD write reduction.
-
-**Full column set (for debugging):** all fields in the `ImuDataPayload` struct plus re-derived Euler angles and error columns.
-
-`stroke_count` is included in the reduced set because it is required to reconstruct which samples correspond to qualifying stroke events, enabling offline asymmetry algorithm evaluation.
-
----
-
-### 13.5 Offline Algorithm Evaluation
-
-The reduced CSV (timestamp_ms, roll, pitch, yaw, stroke_count, cpm) is sufficient to run all three asymmetry options offline in Python. `stroke_count` transitions identify qualifying stroke events; roll values at those events drive Options 2 and 3; the full roll time-series drives Option 1. This allows retrospective comparison without requiring multiple simultaneous hardware implementations.
+Design, offline validation, and firmware specification are deferred to a future session.
