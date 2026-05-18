@@ -1,7 +1,7 @@
 #include "StrokeDetector.h"
 #include <math.h>
 
-static const float         AMPLITUDE_GATE_DEG   = 45.0f;
+static const float         AMPLITUDE_GATE_DEG   = 90.0f;  // 60° feathered paddle: wrist rotation reaches 70-85° in filtered space
 static const float         PERIOD_MIN_S         = 0.4f;
 static const float         PERIOD_MAX_S         = 4.0f;
 static const unsigned long TIMEOUT_US           = 3000000UL;

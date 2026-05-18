@@ -5,7 +5,7 @@
 #include <SD.h>
 
 #define SKETCH_NAME    "PadDis"
-#define SKETCH_VERSION "8.5"
+#define SKETCH_VERSION "8.6"
 
 // ── Payload struct — must match PadLog (PadLog.ino) exactly ──────────────────
 struct __attribute__((packed)) ImuDataPayload {
@@ -86,14 +86,10 @@ static uint32_t tLastR    = 0;     // TX timestamp_ms of last right-labelled str
 static uint32_t tLastL    = 0;     // TX timestamp_ms of last left-labelled stroke
 static uint32_t prevSc    = 0;     // previous stroke_count (to detect increments)
 
-// Option A — rolling midpoint for L/R classification
-// Instead of pitch >= 0 (unreliable with offset mounting), track the midpoint
-// between consecutive peak and trough roll values.  midRoll self-calibrates to
-// the mounting offset and drifts slowly with it during the session.
-static float asymPrevRoll   = NAN; // roll at the previous stroke event
-static float asymPeakRoll   = NAN; // roll at most recent positive-side extremum
-static float asymTroughRoll = NAN; // roll at most recent negative-side extremum
-static float asymMidRoll    = NAN; // EMA of (peakRoll + troughRoll) / 2
+// Option 3 — consecutive-event comparison for L/R classification.
+// Compare this event's roll to the previous event's roll: higher = peak side (right),
+// lower = trough side (left).  No EMA or midpoint needed — parameter-free.
+static float prevEventRoll = NAN;
 
 // ── ESPnow callback (Core 0) ──────────────────────────────────────────────────
 void onReceive(const esp_now_recv_info *info, const uint8_t *data, int len) {
@@ -301,56 +297,41 @@ void loop() {
         uint32_t showCpm = (pkt.cpm == 0) ? 0u : (uint32_t)roundf(cpmEma);
 
         // ── Stroke asymmetry tracking ─────────────────────────────────────────
-        // Label each stroke R or L using the rolling midpoint of peak/trough roll
-        // values (Option A).  This self-calibrates to the mounting offset so the
-        // bar reflects true stroke asymmetry rather than mounting angle.
+        // Option 3: classify each stroke by comparing its roll to the previous
+        // stroke's roll.  Higher roll = peak side (right); lower = trough side (left).
+        // First event sets the reference only — classification starts from event 2.
         if (pkt.stroke_count != prevSc) {
             prevSc = pkt.stroke_count;
             uint32_t ts   = pkt.timestamp_ms;
             float    roll = pkt.roll;
 
-            // Update peak / trough tracking from consecutive stroke roll values.
-            // Consecutive strokes alternate extrema, so comparing to the previous
-            // stroke roll reliably identifies peaks (higher) and troughs (lower).
-            if (!isnan(asymPrevRoll)) {
-                if (roll > asymPrevRoll) asymPeakRoll   = roll;
-                else                     asymTroughRoll = roll;
-            }
-            asymPrevRoll = roll;
-
-            // Recompute midpoint EMA whenever both sides are known.
-            if (!isnan(asymPeakRoll) && !isnan(asymTroughRoll)) {
-                float newMid = (asymPeakRoll + asymTroughRoll) * 0.5f;
-                asymMidRoll  = isnan(asymMidRoll) ? newMid : (0.9f * asymMidRoll + 0.1f * newMid);
-            }
-
-            // Classify stroke: above midpoint = positive-side (right), below = left.
-            // Fall back to roll >= 0 until the midpoint is established.
-            bool isRight = isnan(asymMidRoll) ? (roll >= 0.0f) : (roll > asymMidRoll);
-
-            if (isRight) {
-                if (tLastL > tLastR && tLastR > 0) {
-                    // Complete R → L → R sequence: both halves available
-                    int32_t r2l = (int32_t)(tLastL - tLastR);
-                    int32_t l2r = (int32_t)(ts     - tLastL);
-                    if (r2l > 150 && r2l < 4000 && l2r > 150 && l2r < 4000) {
-                        asymMs    = r2l - l2r;  // +ve = left shorter = RED
-                        asymValid = true;
+            if (!isnan(prevEventRoll)) {
+                bool isRight = (roll > prevEventRoll);
+                if (isRight) {
+                    if (tLastL > tLastR && tLastR > 0) {
+                        // Complete R → L → R sequence: both halves available
+                        int32_t r2l = (int32_t)(tLastL - tLastR);
+                        int32_t l2r = (int32_t)(ts     - tLastL);
+                        if (r2l > 150 && r2l < 4000 && l2r > 150 && l2r < 4000) {
+                            asymMs    = r2l - l2r;  // +ve = left shorter = RED
+                            asymValid = true;
+                        }
                     }
-                }
-                tLastR = ts;
-            } else {
-                if (tLastR > tLastL && tLastL > 0) {
-                    // Complete L → R → L sequence: both halves available
-                    int32_t l2r = (int32_t)(tLastR - tLastL);
-                    int32_t r2l = (int32_t)(ts     - tLastR);
-                    if (l2r > 150 && l2r < 4000 && r2l > 150 && r2l < 4000) {
-                        asymMs    = r2l - l2r;  // same sign convention
-                        asymValid = true;
+                    tLastR = ts;
+                } else {
+                    if (tLastR > tLastL && tLastL > 0) {
+                        // Complete L → R → L sequence: both halves available
+                        int32_t l2r = (int32_t)(tLastR - tLastL);
+                        int32_t r2l = (int32_t)(ts     - tLastR);
+                        if (l2r > 150 && l2r < 4000 && r2l > 150 && r2l < 4000) {
+                            asymMs    = r2l - l2r;  // same sign convention
+                            asymValid = true;
+                        }
                     }
+                    tLastL = ts;
                 }
-                tLastL = ts;
             }
+            prevEventRoll = roll;
         }
 
         // Update display only when the smoothed integer value changes
@@ -396,10 +377,7 @@ void loop() {
             tLastL         = 0;
             prevSc         = 0;
             cpmSeeded      = false;   // re-seed EMA to first packet on signal return
-            asymPrevRoll   = NAN;
-            asymPeakRoll   = NAN;
-            asymTroughRoll = NAN;
-            asymMidRoll    = NAN;
+            prevEventRoll  = NAN;
             drawRate(displayedCpm, false);   // also redraws bar (now grey)
             drawIcon(false, false);
             Serial.println("Signal lost");

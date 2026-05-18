@@ -155,17 +155,17 @@ static void st03() {
 }
 
 static void st04() {
-    // spec originally said +-30deg but 60deg peak-to-trough > 45deg gate.
-    // Corrected to +-20deg (40deg peak-to-trough) to test below-threshold.
+    // +-40deg (80deg peak-to-trough) is below the 90deg gate.
     det.reset();
-    float r = feedSine(20.0f, 1.0f, 8, 0, nullptr, nullptr);
-    checkZero("ST-04", "Amplitude gate below 45deg (+-20deg)", r);
+    float r = feedSine(40.0f, 1.0f, 8, 0, nullptr, nullptr);
+    checkZero("ST-04", "Amplitude gate below 90deg (+-40deg)", r);
 }
 
 static void st05() {
+    // +-46deg (92deg peak-to-trough) is above the 90deg gate with margin for MA attenuation.
     det.reset();
-    float r = feedSine(22.5f, 1.0f, 8, 0, nullptr, nullptr);
-    checkRate("ST-05", "Amplitude gate at 45deg (+-22.5deg)", r, 1.0f, RATE_TOL_HZ);
+    float r = feedSine(46.0f, 1.0f, 8, 0, nullptr, nullptr);
+    checkRate("ST-05", "Amplitude gate above 90deg (+-46deg)", r, 1.0f, RATE_TOL_HZ);
 }
 
 static void st06() {
