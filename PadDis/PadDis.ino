@@ -5,7 +5,7 @@
 #include <SD.h>
 
 #define SKETCH_NAME    "PadDis"
-#define SKETCH_VERSION "8.4"
+#define SKETCH_VERSION "8.5"
 
 // ── Payload struct — must match PadLog (PadLog.ino) exactly ──────────────────
 struct __attribute__((packed)) ImuDataPayload {
@@ -48,6 +48,16 @@ static_assert(sizeof(ImuDataPayload) == 60, "Payload size mismatch — check str
 // ── SD logging ────────────────────────────────────────────────────────────────
 #define FLUSH_INTERVAL_MS 5000UL
 
+// Comment out to log all payload fields; leave defined for the compact fieldset.
+// Reduced set:  timestamp_ms, roll, pitch, yaw, stroke_count, cpm
+// Full set:     seq + all IMU fields + stroke_count + cpm + hz (~180 chars/row)
+#define CSV_COLUMNS_REDUCED
+
+// ── CPM display EMA ───────────────────────────────────────────────────────────
+// 20-second time constant at 100 Hz: alpha = 1 - exp(-0.01/20) ≈ 0.0005
+// Raw pkt.cpm is written to SD unchanged; only the displayed value is smoothed.
+#define CPM_EMA_ALPHA 0.0005f
+
 // ── Ring buffer (WiFi task Core 0 → loop Core 1) ─────────────────────────────
 #define RING_SIZE 32
 static ImuDataPayload rxRing[RING_SIZE];
@@ -64,6 +74,10 @@ static bool          hasReceived  = false;
 static uint32_t      displayedCpm = UINT32_MAX;   // force first draw
 static unsigned long lastRxMs     = 0;
 static int           iconCx, iconCy;
+
+// ── CPM EMA state ─────────────────────────────────────────────────────────────
+static float cpmEma    = 0.0f;
+static bool  cpmSeeded = false;
 
 // ── Asymmetry state ───────────────────────────────────────────────────────────
 static int32_t  asymMs    = 0;
@@ -206,11 +220,15 @@ void setup() {
             Serial.println("SD file open failed — logging disabled");
         } else {
             logFile.println("# " SKETCH_NAME " v" SKETCH_VERSION);
+#ifdef CSV_COLUMNS_REDUCED
+            logFile.println("timestamp_ms,roll,pitch,yaw,stroke_count,cpm");
+#else
             logFile.println("seq,timestamp_ms,"
                             "accel_x,accel_y,accel_z,"
                             "q_w,q_x,q_y,q_z,"
                             "roll,pitch,yaw,"
                             "stroke_count,cpm,hz");
+#endif
             Serial.print("Logging to "); Serial.println(fname);
             sdReady = true;
         }
@@ -246,8 +264,16 @@ void loop() {
         hasReceived = true;
         lastRxMs    = millis();
 
-        // Log every packet to SD
+        // Log every packet to SD (raw pkt.cpm — not EMA-smoothed)
         if (sdReady) {
+#ifdef CSV_COLUMNS_REDUCED
+            char row[80];
+            int n = snprintf(row, sizeof(row),
+                "%u,%.5f,%.5f,%.5f,%u,%u\n",
+                pkt.timestamp_ms,
+                pkt.roll, pkt.pitch, pkt.yaw,
+                pkt.stroke_count, pkt.cpm);
+#else
             char row[192];
             int n = snprintf(row, sizeof(row),
                 "%u,%u,%.5f,%.5f,%.5f,%.8f,%.8f,%.8f,%.8f,%.5f,%.5f,%.5f,%u,%u,%.3f\n",
@@ -256,8 +282,23 @@ void loop() {
                 pkt.q_w, pkt.q_x, pkt.q_y, pkt.q_z,
                 pkt.roll, pkt.pitch, pkt.yaw,
                 pkt.stroke_count, pkt.cpm, pkt.hz);
+#endif
             logFile.write((const uint8_t*)row, n);
         }
+
+        // EMA smoothing for the displayed CPM (20-second time constant at 100 Hz).
+        // Pre-seed to first received value so there is no warm-up ramp.
+        // Reset immediately to 0 on inactivity (pkt.cpm == 0).
+        if (pkt.cpm == 0) {
+            cpmEma    = 0.0f;
+            cpmSeeded = false;
+        } else if (!cpmSeeded) {
+            cpmEma    = (float)pkt.cpm;
+            cpmSeeded = true;
+        } else {
+            cpmEma = CPM_EMA_ALPHA * (float)pkt.cpm + (1.0f - CPM_EMA_ALPHA) * cpmEma;
+        }
+        uint32_t showCpm = (pkt.cpm == 0) ? 0u : (uint32_t)roundf(cpmEma);
 
         // ── Stroke asymmetry tracking ─────────────────────────────────────────
         // Label each stroke R or L using the rolling midpoint of peak/trough roll
@@ -312,12 +353,12 @@ void loop() {
             }
         }
 
-        // Update CPM display only when value changes
-        if (pkt.cpm != displayedCpm) {
-            displayedCpm = pkt.cpm;
-            drawRate(pkt.cpm, true);   // drawRate also redraws the bar
-            Serial.printf("CPM: %u  (%.2f Hz)  stroke=%u  asymMs=%d\n",
-                          pkt.cpm, pkt.hz, pkt.stroke_count, asymMs);
+        // Update display only when the smoothed integer value changes
+        if (showCpm != displayedCpm) {
+            displayedCpm = showCpm;
+            drawRate(showCpm, true);   // drawRate also redraws the bar
+            Serial.printf("CPM: %u (raw %u)  (%.2f Hz)  stroke=%u  asymMs=%d\n",
+                          showCpm, pkt.cpm, pkt.hz, pkt.stroke_count, asymMs);
         } else {
             // Redraw bar independently when asymmetry updates between CPM changes
             static int32_t prevAsymMs    = INT32_MIN;
@@ -349,11 +390,12 @@ void loop() {
 
     if (receiving != prevReceiving) {
         if (!receiving) {
-            // Reset asymmetry state on signal loss
-            asymValid     = false;
-            tLastR        = 0;
-            tLastL        = 0;
-            prevSc        = 0;
+            // Reset asymmetry and EMA state on signal loss
+            asymValid      = false;
+            tLastR         = 0;
+            tLastL         = 0;
+            prevSc         = 0;
+            cpmSeeded      = false;   // re-seed EMA to first packet on signal return
             asymPrevRoll   = NAN;
             asymPeakRoll   = NAN;
             asymTroughRoll = NAN;

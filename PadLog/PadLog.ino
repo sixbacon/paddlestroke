@@ -7,7 +7,7 @@
 #include "StrokeDetector.h"
 
 #define SKETCH_NAME    "PadLog"
-#define SKETCH_VERSION "8.4"
+#define SKETCH_VERSION "8.5"
 
 // ── Payload struct — must match PadDis (PadDis.ino) exactly ──────────────────
 struct __attribute__((packed)) ImuDataPayload {
