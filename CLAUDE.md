@@ -63,8 +63,8 @@ The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `paddlestroke_sim_t
 - **Phase 5** — ESPnow broadcast of stroke rate: complete (transmit side; receiver is a separate project)
 - **Phase 6** — CYD ESPnow receiver: complete (5 May 2026). LVGL dropped in favour of TFT_eSPI direct. All tests T-19–T-22 passed.
 - **Phase 7** — ESPnow full-IMU data link + CYD SD logging: complete (6 May 2026). All tests T-23–T-31 passed. Bug fixed: yaw wrap at ±180° caused EulerErr=360° (corrected with wrap-aware subtraction in RX sketch).
-- **Phase 8** — Production integration: complete (v8.4 flashed 15 May 2026). v8.1: hardware validated 12 May 2026. v8.2: streak gate, separate rate buffers, asymmetry bar. v8.3: doze/wake bug fixed (accelerometer left active in doze blocked RV wakeup events). v8.4: isRateMature gate + rolling-midpoint asymmetry. Field test 18 May 2026 revealed feather rotation artefacts inflating CPM ~1.7× — requires Phase 9 fix.
-- **Phase 9** — Pending: (1) raise AMPLITUDE_GATE_DEG 45°→90°; (2) three-bar asymmetry evaluation display; (3) 20-second CPM display EMA; (4) compiler directive for CSV column selection.
+- **Phase 8** — Production integration: complete (v8.6 flashed 18 May 2026). v8.1: hardware validated 12 May 2026. v8.2: streak gate, separate rate buffers, asymmetry bar. v8.3: doze/wake bug fixed (accelerometer left active in doze blocked RV wakeup events). v8.4: isRateMature gate + rolling-midpoint asymmetry. Field test 18 May 2026 revealed feather rotation artefacts inflating CPM ~1.7×. v8.5 (PadDis only): CSV_COLUMNS_REDUCED directive; 20-second CPM display EMA. v8.6: AMPLITUDE_GATE_DEG 45°→90°; Option 3 consecutive-event asymmetry; dark display theme.
+- **Phase 9** — Pending: blade entry/exit detection using accel_x/accel_y transients to detect blade catch and release independently of roll oscillation. Design not started.
 
 ## Production Sketches
 
@@ -73,7 +73,7 @@ The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `paddlestroke_sim_t
 | PadLog | `PadLog/` | LOLIN32 Lite | COM3 | `esp32:esp32:lolin32-lite` |
 | PadDis | `PadDis/` | CYD ESP32-2432S028 | COM6 | `esp32:esp32:esp32` |
 
-**Version scheme:** `<phase>.<iteration>` — currently **v8.4**. Version shown in serial banner, CYD splash screen, and CSV first line (`# PadDis v8.4`).
+**Version scheme:** `<phase>.<iteration>` — currently **v8.6**. Version shown in serial banner, CYD splash screen, and CSV first line (`# PadDis v8.6`).
 
 **Payload struct** (60 bytes, float — must be identical in both sketches):
 ```
@@ -82,14 +82,14 @@ seq, timestamp_ms, accel_x/y/z, q_w/x/y/z, roll/pitch/yaw, stroke_count, cpm, hz
 
 **Key display findings (5 May 2026):**
 - `setRotation(2)` gives correct landscape orientation on this unit (not rotation 1)
-- At startup, call `fillScreen(TFT_WHITE)` in all four rotations before settling on rotation 2 — this clears noise pixels in the display area outside the active window
+- At startup, call `fillScreen(TFT_BLACK)` in all four rotations before settling on rotation 2 — this clears noise pixels in the display area outside the active window
 - TFT_eSPI Font 8 (75 px 7-segment style) is readable and sufficient — no custom font needed
 - `User_Setup.h` must be in the sketch directory with `#define USER_SETUP_LOADED`
 
 ## Key Constraints
 
 - Cycle rate valid range: **0.25 – 2.5 Hz** (0.4 s – 4.0 s period)
-- Amplitude gate: peak-to-trough roll must be **≥ 90°** for a 60° feathered paddle (raised from 45° — field test 18 May 2026 showed feather rotation events reach 70–85° in filtered space, inflating CPM ~1.7× at 45°); **Phase 9 pending — not yet coded**
+- Amplitude gate: peak-to-trough roll must be **≥ 90°** for a 60° feathered paddle (raised from 45° in v8.6 — field test 18 May 2026 showed feather rotation events reach 70–85° in filtered space, inflating CPM ~1.7× at 45°)
 - Rate averaging: rolling window over the last **4 qualifying cycles** per buffer (separate peak/trough buffers, up to 8 values total)
 - Streak gate: CPM not reported until **3 consecutive qualifying strokes** detected AND both rate buffers hold ≥ 2 entries (`isRateMature()`)
 - IMU sample rate: minimum 50 Hz, 100 Hz preferred
@@ -97,7 +97,14 @@ seq, timestamp_ms, accel_x/y/z, q_w/x/y/z, roll/pitch/yaw, stroke_count, cpm, hz
 
 ## SD Card Logging
 
-CSV file auto-numbered `/PadDat00.CSV` … `/PadDat99.CSV`. Columns: `timestamp_ms,roll,pitch,yaw`. Written at 100 Hz; flush deferred to stroke timeout or every 30 s. SD absence is non-fatal — device continues with serial output only.
+CSV files auto-numbered `/ImuLog00.CSV` … `/ImuLog99.CSV` on PadDis SD card. Written at 100 Hz; flush every 5 s and on signal loss. SD absence is non-fatal.
+
+**Column sets** (controlled by `#define CSV_COLUMNS_REDUCED` in `PadDis.ino`, enabled by default):
+
+- **Reduced** (field use): `timestamp_ms, roll, pitch, yaw, stroke_count, cpm`
+- **Full** (comment out directive): `seq, timestamp_ms, accel_x, accel_y, accel_z, q_w, q_x, q_y, q_z, roll, pitch, yaw, stroke_count, cpm, hz`
+
+First line of every file: `# PadDis v8.6`. `cpm` column is raw (un-EMAd).
 
 ## Serial Output Format
 
