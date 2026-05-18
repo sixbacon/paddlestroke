@@ -1,8 +1,8 @@
 # Kayak Paddle Stroke Rate Monitor — Functional Specification
 
 **Project:** paddlestroke  
-**Date:** 15 May 2026  
-**Version:** 1.9
+**Date:** 18 May 2026  
+**Version:** 2.0
 
 ---
 
@@ -69,9 +69,11 @@ The long-term goal is a fully **sealed, waterproof paddle device**. To achieve t
 |-----------|---------|---------|
 | Cycle period | 0.4 s | 4.0 s |
 | Cycle rate | 0.25 cycles/s (15 CPM) | 2.5 cycles/s (150 CPM) |
-| Peak-to-trough roll amplitude | 45° | 180° (±90° range) |
+| Peak-to-trough roll amplitude | 90° (feathered paddle) | 180° (±90° range) |
 
 *Note: the original individual-stroke period range of 0.2 s – 2.0 s maps to a cycle period range of 0.4 s – 4.0 s.*
+
+**Amplitude gate — feathered paddle:** The initial gate of 45° was designed for unfeathered paddles. Field analysis (18 May 2026) showed that a 60° feathered paddle produces a wrist rotation before each blade entry that generates a 70–85° roll event in the EMA-filtered signal — larger than the raw angle because the DC high-pass filter shifts the effective baseline. This spurious event passes all algorithm gates at 45° and at 70°, inflating CPM by ~1.7×. A gate of **90°** cleanly rejects feather rotation events (which peak at ~85°) while passing all genuine strokes (which produce ~100°+ peak-to-trough). The gate must be set to 90° for a 60° feathered paddle. Other feather angles require a gate approximately equal to feather_angle × 1.5.
 
 Results outside these bounds must be discarded and not reported.
 
@@ -92,6 +94,41 @@ Key findings:
 - **Both observed rates (1.09–1.29 Hz) are comfortably within the 0.25–2.5 Hz valid range.** No change to the rate gate is needed.
 - **Pitch is rhythmic (~100° range) but drifts with kayak trim**, making it a weaker signal than roll. No backup algorithm using pitch is implemented.
 - **Yaw reflects compass heading** and is not useful for stroke detection.
+
+### 3.4 Field Test Observations (Phase 8 v8.4, 18 May 2026)
+
+File: `ImuLog1620260518.CSV`. 257,112 rows, 43.8 min, 100 Hz. True CPM ~32 (T-T interval 1895ms). Roll mean −31.4° (IMU mounting offset from shaft centreline).
+
+**Root cause — feather rotation artefacts:**
+The paddle has 60° feathered blades. The wrist rotation before each blade entry produces a 70–85° amplitude peak in the EMA high-pass filtered roll signal. This is above the 45° gate and passes the period gate (530–670 ms sub-event period is within 0.4–4.0 s bounds). Result: every stroke cycle generates one spurious qualifying event, in a repeating T, P, spurious-peak pattern.
+
+- 32% of all qualifying events (702 of 2177) are feather rotation artefacts.
+- Displayed CPM ~54 CPM is ~1.7× the true paddling rate of ~32 CPM.
+- P:T event ratio = 0.61 (should be 1.0 for genuine strokes).
+- Trough-to-trough CPM = 48.7 CPM (feather events split each true trough interval into two sub-intervals).
+
+**Amplitude gate sweep (Python re-simulation on CSV):**
+
+| Gate | P:T ratio | P-P CPM | T-T CPM | Result |
+|------|-----------|---------|---------|--------|
+| 45°  | 0.61 | — | 48.7 | Feather events pass freely |
+| 70°  | 0.69 | — | 48.7 | Feather events still pass (amplitude 73–77° in filtered space) |
+| 80°  | 0.93 | 32.9 | 36.1 | Better but not clean |
+| **90°** | **0.90** | **31.7** | **33.6** | **Feather events rejected; true CPM correct** |
+| 100° | — | — | — | Starts losing true strokes |
+
+**Correct amplitude gate for a 60° feathered paddle = 90°.**
+
+**Asymmetry analysis at 90° gate:**
+- Option 1 (amplitude): mean ~0°, stdev 7° during steady paddling. Amplitude is symmetric — asymmetry is entirely in timing, not amplitude.
+- Option 2 (event midRoll EMA + timing): 94% agreement with Option 3; stdev ~155 ms per 20-cycle window.
+- Option 3 (consecutive-event comparison + timing): parameter-free, 35% less noisy than Option 2; **preferred**.
+- Genuine timing asymmetry at 90° gate: P→T = 1494 ms, T→P = 401 ms (ratio 3.7:1), 98% of cycles; stdev 155–200 ms — stable enough to display.
+
+**v8.4 asymmetry bar issues identified:**
+- Bar almost always red because `asymMidRoll` EMA is updated on every 100 Hz sample (not at stroke events), so mid-stroke noise dominates.
+- Five ±180° roll wrap events at t = 1.6–2.3 min corrupted the EMA immediately after session start.
+- All asymmetry options are distorted by feather events until the amplitude gate is raised to 90°.
 
 ---
 
@@ -114,7 +151,7 @@ Key findings:
 Cycles are detected by identifying successive peaks and troughs in the roll signal. One peak + one trough = one complete cycle.
 
 1. **Peak/trough detection** — a local maximum followed by a local minimum (or vice versa) constitutes one cycle. Each half-cycle is a single blade entry.
-2. **Amplitude gate** — the absolute difference between a detected peak and the adjacent trough must be **≥ 45°**. Pairs that do not meet this threshold are ignored.
+2. **Amplitude gate** — the absolute difference between a detected peak and the adjacent trough must be **≥ 90°** (for a 60° feathered paddle). Pairs that do not meet this threshold are ignored. The original 45° gate was insufficient for feathered paddles: the wrist rotation before each blade entry generates a 70–85° spurious event in the filtered signal, inflating CPM by ~1.7× — see §3.2 and §3.4.
 3. **Period measurement** — record the timestamp of each qualifying peak and trough. The time from one peak (or trough) to the next same-polarity extreme is one full cycle period.
 4. **Rate validity gate** — only accept cycle periods in the range **0.4 s – 4.0 s**. Discard any cycle whose period falls outside this range.
 5. **Rate averaging** — compute a rolling average of cycle rate over the last **4 qualifying cycles** to reduce noise. Peak-to-peak intervals and trough-to-trough intervals are tracked in **separate ring buffers** (4 entries each); the average is taken over all entries in both buffers. This prevents alternating half-cycle durations from mixing in a single buffer, which would produce erratic CPM when stroke timing varies.
@@ -250,7 +287,8 @@ The following are excluded from the current implementation. Items marked with a 
 | **5** | Transmit stroke rate via ESPnow broadcast. Transmit side complete and tested (T-18a–T-18c). Receiver/display is a separate project. BLE and mobile app deferred. *(Complete)* |
 | **6** | CYD ESPnow receiver with TFT display. LVGL dropped in favour of TFT_eSPI direct. Tests T-19–T-22 passed. *(Complete — 5 May 2026)* |
 | **7** | ESPnow full-IMU data link — transmit raw IMU data from paddle device to CYD at 100 Hz; log to CYD SD card. Enables sealed paddle device. All tests T-23–T-31 passed (6 May 2026). *(Complete)* |
-| **8** | Production integration — full-IMU ESPnow payload in PadLog; SD logging in PadDis; SD card removed from paddle device. Sketches renamed PadLog / PadDis with version scheme phase.iteration. v8.1: hardware validated 12 May 2026 (63 min session, 100 Hz, <0.03% loss, 51–76 CPM). v8.2: streak gate, separate rate buffers, asymmetry bar. v8.3: doze/wake bug fixed — accelerometer left active in doze mode was consuming all wakeup events, blocking RV data; fix disables accelerometer on doze entry. Full cycle validated 14 May 2026. v8.4: two fixes from 59-min field test (15 May 2026) — `isRateMature()` gate prevents post-wake CPM spike caused by first CPM report with only 1–2 buffer entries; rolling-midpoint asymmetry replaces `pitch >= 0` classifier (unreliable with offset mounting). *(Complete — 15 May 2026)* |
+| **8** | Production integration — full-IMU ESPnow payload in PadLog; SD logging in PadDis; SD card removed from paddle device. Sketches renamed PadLog / PadDis with version scheme phase.iteration. v8.1: hardware validated 12 May 2026 (63 min session, 100 Hz, <0.03% loss, 51–76 CPM). v8.2: streak gate, separate rate buffers, asymmetry bar. v8.3: doze/wake bug fixed — accelerometer left active in doze mode was consuming all wakeup events, blocking RV data; fix disables accelerometer on doze entry. Full cycle validated 14 May 2026. v8.4: two fixes from 59-min field test (15 May 2026) — `isRateMature()` gate prevents post-wake CPM spike; rolling-midpoint asymmetry replaces `pitch >= 0` classifier. Field test 18 May 2026 revealed feather rotation artefacts inflating CPM 1.7× — requires Phase 9 firmware changes. *(Complete — v8.4 flashed 15 May 2026)* |
+| **9** | Feather rotation fix and asymmetry algorithm evaluation — (1) raise AMPLITUDE_GATE_DEG 45°→90° in StrokeDetector (PadLog + sim_test copy); (2) implement three-bar display on PadDis to evaluate Options 1, 2, and 3 simultaneously in one session; (3) 20-second EMA on displayed CPM (raw CSV value unchanged); (4) compiler directive for selective CSV columns. *(Pending — coding not started)* |
 
 ---
 
@@ -1156,11 +1194,11 @@ Asym: +45 ms  (LEFT shorter)
 Signal lost
 ```
 
-#### 12.3.5 Asymmetry Bar (v8.2)
+#### 12.3.5 Asymmetry Bar (v8.2; algorithm under evaluation — Phase 9)
 
-A horizontal bar displayed on the CYD below the signal icon (top of bar at y=40) visualises left/right stroke asymmetry in real time.
+A horizontal bar displayed on the CYD below the signal icon visualises left/right stroke asymmetry in real time. Field analysis (18 May 2026) showed the v8.4 algorithm has significant problems (see §3.4). Phase 9 will evaluate three algorithm options simultaneously with a three-bar display before selecting one for production. This section documents the v8.4 baseline, the three candidate options, and the plan.
 
-**Layout:**
+**Layout (single bar — v8.4 current):**
 
 ```
 ┌─────────────────────────────────┐
@@ -1193,14 +1231,14 @@ A horizontal bar displayed on the CYD below the signal icon (top of bar at y=40)
 
 **Colour note (CYD hardware):** The ILI9341 display on this CYD unit uses **BGR** pixel order. To render red, the firmware sends `0x001F` (the RGB565 blue value); the BGR hardware interprets it as full red. Green (0x07E0) is symmetric and unaffected. TFT_WHITE (0xFFFF) is also symmetric.
 
-**Asymmetry computation (v8.4 — rolling midpoint):**
+---
 
-The Left/Right stroke label is derived from a self-calibrating rolling midpoint of the received roll value, replacing the earlier `pitch >= 0` classifier (which was unreliable when the IMU is mounted with a significant angular offset from the shaft centreline).
+**v8.4 rolling-midpoint algorithm (current firmware — known issues):**
 
-**Midpoint tracking (PadDis, executed on every received packet):**
+L/R classification uses a self-calibrating rolling midpoint of roll values, replacing the earlier `pitch >= 0` classifier.
 
 ```cpp
-// asymPrevRoll, asymPeakRoll, asymTroughRoll, asymMidRoll initialised to NAN
+// Executed on every received packet (100 Hz)
 if (!isnan(asymPrevRoll)) {
     if (roll > asymPrevRoll) asymPeakRoll   = roll;
     else                     asymTroughRoll = roll;
@@ -1213,17 +1251,56 @@ if (!isnan(asymPeakRoll) && !isnan(asymTroughRoll)) {
 bool isRight = isnan(asymMidRoll) ? (roll >= 0.0f) : (roll > asymMidRoll);
 ```
 
-`asymMidRoll` is an EMA of the midpoint between consecutive roll peak and trough values. It converges to the true neutral angle of the paddle shaft over a few strokes, regardless of physical mounting offset.
+**Known problems (from 18 May 2026 field analysis):**
+- `asymMidRoll` is updated on every 100 Hz sample, so mid-stroke roll values dominate — the EMA never converges to the true neutral.
+- Five ±180° roll wrap events at session start injected ±179° values, resetting `asymMidRoll` to near 0° within the first 2 minutes.
+- Feather rotation artefacts (at 45° gate) create extra events that confound L/R classification regardless of the midpoint estimate.
 
-**Stroke timing:**
+All three issues are resolved by raising the amplitude gate to 90° (eliminates feather events) and switching to event-only updates.
 
-- The firmware tracks the TX `timestamp_ms` of the last Right stroke (`tLastR`) and last Left stroke (`tLastL`).
-- On each new Right stroke: if a complete R → L → R sequence exists, compute `r2l = tLastL − tLastR`, `l2r = ts − tLastL`, and `asymMs = r2l − l2r`. Positive `asymMs` = left interval shorter = left blade in water for less time.
-- On each new Left stroke: mirror logic — L → R → L sequence → same sign convention.
-- Both half-intervals must be in the range 150 ms – 4000 ms; measurements outside this range are discarded.
-- `asymValid` is set `true` once a valid measurement exists and reset to `false` on signal loss (all four `asym*` state variables reset to `NAN`).
+---
 
-**Redraw discipline:** `drawRate()` wipes the entire usable display area and calls `drawAsymmetryBar()` at its end. When asymmetry changes between CPM updates, `drawAsymmetryBar()` is called independently.
+**Three candidate asymmetry options (evaluated in Python on 18 May CSV at 90° gate):**
+
+**Option 1 — Amplitude asymmetry:**
+Compute a running EMA of prior-cycle midpoints as the neutral reference. Each cycle: `asymAmp = (peak − neutral) − (neutral − trough)`. Positive = peak side longer. Uses roll amplitude only, no timing.
+
+- Result at 90° gate: mean ~0°, stdev 7° during steady paddling.
+- Conclusion: amplitude is symmetric for this paddler. Asymmetry is in **timing**, not amplitude. Option 1 is useful as a diagnostic but cannot detect the asymmetry present in this data.
+
+**Option 2 — Event-based midRoll EMA + timing:**
+Update peak/trough estimates only at qualifying stroke events (not every sample). Compute midRoll = EMA((peakRoll + troughRoll) / 2), updated each cycle. L/R label = roll > midRoll at the event. Time the L and R half-periods; display the difference.
+
+- Result at 90° gate: 94% agreement with Option 3 on L/R label; stdev ~155 ms per 20-cycle window.
+- Advantage: self-calibrates to mounting offset; insensitive to 100 Hz noise.
+- Disadvantage: EMA parameter (α = 0.1) introduces lag and must be tuned.
+
+**Option 3 — Consecutive-event comparison + timing (preferred):**
+Compare roll values of consecutive qualifying events. The higher-roll event is labelled the peak side (Right); the lower is the trough side (Left) — no midpoint or EMA parameter required. Time each L and R half-period; display the difference.
+
+- Result at 90° gate: 35% less noisy than Option 2; parameter-free; 98% consistent cycle classification.
+- Genuine asymmetry measured: P→T = 1494 ms, T→P = 401 ms (ratio 3.7:1); stdev 155–200 ms — stable for display.
+- Preferred for Phase 9 production use.
+
+**Physical interpretation of timing asymmetry:** The peak-to-trough descent (which includes the wrist rotation preparing the opposite blade) consistently takes ~1494 ms; the return trough-to-peak is consistently only ~401 ms. This is a real biomechanical feature of the feathered-paddle stroke, not measurement noise.
+
+---
+
+**Stroke timing logic (Options 2 and 3):**
+
+- Track `timestamp_ms` of last Right event (`tLastR`) and last Left event (`tLastL`).
+- On each new Right event: if R→L→R sequence complete, compute `r2l = tLastL − tLastR`, `l2r = ts − tLastL`, `asymMs = r2l − l2r`. Positive = left interval shorter.
+- On each new Left event: mirror (L→R→L sequence, same sign convention).
+- Both half-intervals must be in range 150 ms – 4000 ms; discard otherwise.
+- `asymValid` reset to `false` on signal loss (all state variables reset to NAN).
+
+**Redraw discipline:** `drawRate()` wipes the display area and calls `drawAsymmetryBar()`. When asymmetry changes between CPM updates, `drawAsymmetryBar()` is called independently.
+
+---
+
+**Phase 9 plan — three-bar evaluation display:**
+
+Three stacked 220×18 px bars at y = 40, 62, 84 (one per option) will be drawn simultaneously in a single field session. Fits within the 240 px landscape screen; draw time ~5 ms, negligible at 100 Hz. After evaluation, the best-performing option will become the single production bar.
 
 ---
 
@@ -1305,3 +1382,78 @@ arduino-cli upload -p COM6 PadDis/
 3. Observe the asymmetry bar.
 
 **Pass:** The bar area returns to white (invisible) when signal is lost. It does not reappear until PadLog is restored and a valid asymmetry measurement is computed.
+
+---
+
+## 13. Phase 9 — Feather Gate Fix and Asymmetry Evaluation
+
+Field test 18 May 2026 (43.8 min, ImuLog1620260518.CSV) revealed that the 60° feathered paddle blades produce spurious StrokeDetector events. Phase 9 corrects the amplitude gate and evaluates the three asymmetry algorithm options in a single field session.
+
+---
+
+### 13.1 Amplitude Gate Change
+
+**Change:** `AMPLITUDE_GATE_DEG` in `StrokeDetector.cpp` (and the copy in `paddlestroke_sim_test/StrokeDetector.cpp`): 45 → 90.
+
+**Rationale:** At 45°, feather rotation events (70–85° filtered amplitude) pass the gate and inflate CPM ~1.7×. At 90° they are rejected while genuine strokes (~100°+) continue to pass. Gate sweep analysis at 45°, 70°, 80°, 90°, 100° confirmed 90° as the clean threshold. See §3.2 and §3.4 for full analysis.
+
+**Files to change:**
+- `PadLog/StrokeDetector.cpp` — `AMPLITUDE_GATE_DEG` constant
+- `paddlestroke_sim_test/StrokeDetector.cpp` — keep in sync
+
+---
+
+### 13.2 Three-Bar Evaluation Display
+
+PadDis will draw three stacked 220×18 px asymmetry bars simultaneously, one per algorithm option:
+
+| Bar position (y) | Option | Algorithm |
+|-----------------|--------|-----------|
+| 40 | Option 1 | Amplitude asymmetry (EMA neutral reference) |
+| 62 | Option 2 | Event midRoll EMA + timing |
+| 84 | Option 3 | Consecutive-event comparison + timing |
+
+The CPM number (Font 8) moves down to y = 105. All three bars use the same colour convention (red = left shorter, green = right shorter). Draw time ~5 ms total, negligible.
+
+**Goal:** Determine which option most reliably and stably reflects deliberate L/R asymmetry. Option 3 is expected to perform best based on offline analysis (35% lower noise, parameter-free) but all three should be validated on live hardware before committing.
+
+---
+
+### 13.3 CPM Display EMA
+
+A 20-second EMA is applied to the **displayed** CPM value on PadDis. The raw CPM value is stored in the CSV unchanged.
+
+```
+alpha = 1 − exp(−(1/100) / 20) ≈ 0.0005   // at 100 Hz
+displayCpm = alpha × rawCpm + (1 − alpha) × displayCpm
+```
+
+- On first valid CPM after signal resume (or session start), pre-seed `displayCpm` to `rawCpm` immediately (no warm-up ramp).
+- When `rawCpm == 0` (inactivity timeout), reset `displayCpm` to 0 immediately (no gradual decay).
+
+**Motivation:** 18 May 2026 field data showed stdev of displayed CPM = 16.8 CPM at the true rate of ~32 CPM. A 20-second EMA reduces this to ~2–3 CPM stdev.
+
+---
+
+### 13.4 CSV Column Selector (Compiler Directive)
+
+A `#define` in `PadDis.ino` selects which columns are written to each CSV row:
+
+```cpp
+#define CSV_COLUMNS_REDUCED   // comment out for full columns
+```
+
+**Reduced column set (default for field use):**
+`timestamp_ms, roll, pitch, yaw, stroke_count, cpm`
+
+~50 characters/row vs ~180 characters/row for the full set — 72% SD write reduction.
+
+**Full column set (for debugging):** all fields in the `ImuDataPayload` struct plus re-derived Euler angles and error columns.
+
+`stroke_count` is included in the reduced set because it is required to reconstruct which samples correspond to qualifying stroke events, enabling offline asymmetry algorithm evaluation.
+
+---
+
+### 13.5 Offline Algorithm Evaluation
+
+The reduced CSV (timestamp_ms, roll, pitch, yaw, stroke_count, cpm) is sufficient to run all three asymmetry options offline in Python. `stroke_count` transitions identify qualifying stroke events; roll values at those events drive Options 2 and 3; the full roll time-series drives Option 1. This allows retrospective comparison without requiring multiple simultaneous hardware implementations.

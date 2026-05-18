@@ -63,7 +63,8 @@ The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `paddlestroke_sim_t
 - **Phase 5** — ESPnow broadcast of stroke rate: complete (transmit side; receiver is a separate project)
 - **Phase 6** — CYD ESPnow receiver: complete (5 May 2026). LVGL dropped in favour of TFT_eSPI direct. All tests T-19–T-22 passed.
 - **Phase 7** — ESPnow full-IMU data link + CYD SD logging: complete (6 May 2026). All tests T-23–T-31 passed. Bug fixed: yaw wrap at ±180° caused EulerErr=360° (corrected with wrap-aware subtraction in RX sketch).
-- **Phase 8** — Production integration: complete (14 May 2026). PadLog v8.3 (TX) + PadDis v8.3 (RX). v8.1: hardware validated 12 May 2026. v8.2: streak gate, separate rate buffers, asymmetry bar. v8.3: doze/wake bug fixed (accelerometer left active in doze blocked RV wakeup events); full system validated 14 May 2026. v8.4: CPM maturity gate (isRateMature — both buffers ≥ 2 entries before first report); asymmetry L/R classification replaced with rolling-midpoint of peak/trough roll values (self-calibrates to mounting offset); uploaded 15 May 2026, field test pending.
+- **Phase 8** — Production integration: complete (v8.4 flashed 15 May 2026). v8.1: hardware validated 12 May 2026. v8.2: streak gate, separate rate buffers, asymmetry bar. v8.3: doze/wake bug fixed (accelerometer left active in doze blocked RV wakeup events). v8.4: isRateMature gate + rolling-midpoint asymmetry. Field test 18 May 2026 revealed feather rotation artefacts inflating CPM ~1.7× — requires Phase 9 fix.
+- **Phase 9** — Pending: (1) raise AMPLITUDE_GATE_DEG 45°→90°; (2) three-bar asymmetry evaluation display; (3) 20-second CPM display EMA; (4) compiler directive for CSV column selection.
 
 ## Production Sketches
 
@@ -88,7 +89,7 @@ seq, timestamp_ms, accel_x/y/z, q_w/x/y/z, roll/pitch/yaw, stroke_count, cpm, hz
 ## Key Constraints
 
 - Cycle rate valid range: **0.25 – 2.5 Hz** (0.4 s – 4.0 s period)
-- Amplitude gate: peak-to-trough roll must be **≥ 45°**; smaller swings are ignored
+- Amplitude gate: peak-to-trough roll must be **≥ 90°** for a 60° feathered paddle (raised from 45° — field test 18 May 2026 showed feather rotation events reach 70–85° in filtered space, inflating CPM ~1.7× at 45°); **Phase 9 pending — not yet coded**
 - Rate averaging: rolling window over the last **4 qualifying cycles** per buffer (separate peak/trough buffers, up to 8 values total)
 - Streak gate: CPM not reported until **3 consecutive qualifying strokes** detected AND both rate buffers hold ≥ 2 entries (`isRateMature()`)
 - IMU sample rate: minimum 50 Hz, 100 Hz preferred
