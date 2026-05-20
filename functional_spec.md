@@ -2,7 +2,7 @@
 
 **Project:** paddlestroke  
 **Date:** 20 May 2026  
-**Version:** 2.2
+**Version:** 2.3
 
 ---
 
@@ -601,6 +601,26 @@ The USB-C port requires a USB-C to USB-A adaptor when connecting to a USB-C-only
 **Rotation:** `tft.setRotation(2)` gives correct landscape orientation on this unit. Rotations 1 and 3 produce portrait, rotation 0 produces landscape mirrored.
 
 **Startup display clear:** The display has noise pixels in areas outside the active window that persist across reboots. At startup, call `tft.fillScreen(TFT_BLACK)` in all four rotations before settling on rotation 2. This writes the background colour to every addressable pixel regardless of rotation mapping, eliminating the noise strip.
+
+---
+
+#### 10.1.3 ST7789 Driver Investigation (20 May 2026)
+
+The official witnessmenow CYD2USB reference `User_Setup.h` specifies `ST7789_DRIVER`, not `ILI9341_DRIVER`. A dedicated test sketch (`cyd_st7789_test/`) was flashed to confirm behaviour. Results:
+
+| Property | ILI9341 (current) | ST7789 |
+|----------|-------------------|--------|
+| Full 320×240 coverage | yes (with 4-rotation clear workaround) | yes |
+| Landscape rotation | `setRotation(2)` | `setRotation(1)` |
+| After `tft.init()` | nothing | `tft.invertDisplay(false)` |
+| BGR colour order | yes — `0x001F` = red | identical |
+| `TFT_GREEN` | correct | correct |
+
+**ST7789 init sends INVON by default.** Calling `tft.invertDisplay(true)` is a no-op (already on). `tft.invertDisplay(false)` cancels it and restores correct colour polarity.
+
+**BGR behaviour is identical to ILI9341.** All existing colour workarounds (`BAR_RED = 0x001F`, etc.) carry over unchanged.
+
+**Decision:** PadDis remains on `ILI9341_DRIVER` for the current firmware — it is validated and the colour workarounds are unchanged. Switch to `ST7789_DRIVER` in the next rewrite (change driver define, add `invertDisplay(false)`, change rotation 2→1). One open question: whether ST7789 eliminates the four-rotation startup `fillScreen` noise-pixel workaround — not yet tested without it.
 
 ---
 
