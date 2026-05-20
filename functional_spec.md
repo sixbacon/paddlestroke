@@ -1,8 +1,8 @@
 # Kayak Paddle Stroke Rate Monitor — Functional Specification
 
 **Project:** paddlestroke  
-**Date:** 18 May 2026  
-**Version:** 2.1
+**Date:** 20 May 2026  
+**Version:** 2.2
 
 ---
 
@@ -129,6 +129,43 @@ The paddle has 60° feathered blades. The wrist rotation before each blade entry
 - Bar almost always red because `asymMidRoll` EMA is updated on every 100 Hz sample (not at stroke events), so mid-stroke noise dominates.
 - Five ±180° roll wrap events at t = 1.6–2.3 min corrupted the EMA immediately after session start.
 - All asymmetry options are distorted by feather events until the amplitude gate is raised to 90°.
+
+---
+
+### 3.5 Field Test Observations (Phase 8 v8.6, 20 May 2026)
+
+File: `ImuLog0520260520.CSV`. 222,164 rows, 37.8 min, 97.9 Hz, 71% active.
+
+**Stroke detection — 90° gate confirmed working:**
+- P:T event ratio = **1.02** (was 0.61 at 45° gate on 18 May). Feather rotation artefacts are essentially eliminated.
+- True full-cycle CPM from P-P / T-T intervals: mean **33.3**, stdev **4.7**.
+- Displayed CPM (20 s EMA): mean 35.5, stdev 9.5.
+
+**Roll waveform symmetry:**
+Roll amplitude is symmetric: peak excursion above the roll mean = 44.1° ± 39.0°; trough excursion below mean = 45.0° ± 31.0°. Difference = **0.9°** — negligible. The asymmetry is entirely in timing, not amplitude.
+
+**Timing asymmetry — structural, not left/right:**
+
+| Half-interval | Mean | Stdev |
+|---------------|------|-------|
+| Peak → Trough | 1414 ms | 358 ms |
+| Trough → Peak | 510 ms | 443 ms |
+| Ratio | 2.77:1 | |
+
+This is a biomechanical feature of the feathered paddle: the down-phase (which includes wrist rotation preparing the opposite blade) is consistently slow; the recovery phase is fast. This structural asymmetry causes the v8.6 Option 3 asymmetry bar to always deflect in the same direction regardless of paddling technique. **Conclusion: timing-based asymmetry measurement on roll alone is not informative for this paddle. The asymmetry bar and all related state variables are to be removed in the next firmware version.**
+
+**Pitch as a L/R classifier:**
+
+| Event type | Mean pitch | IQR |
+|------------|------------|-----|
+| Peak events (roll at maximum) | −26.4° ± 12.8° | [−36.1°, −20.9°] |
+| Trough events (roll at minimum) | +11.9° ± 10.7° | [+13.3°, +15.5°] |
+
+IQR overlap = 0° — the two distributions are completely non-overlapping. Using `pitch < 0` as a threshold gives **92% classification accuracy** (95% peaks, 90% troughs) with no calibration required.
+
+Physical explanation: when a blade is being pulled through the water, the paddle shaft is tilted forward (negative pitch); when the opposite blade is entering, the shaft is tilted back (positive pitch). This is a reliable, parameter-free signal.
+
+Pitch cannot separate the structural timing asymmetry from genuine L/R paddling imbalance, but it is the correct starting point for any future L/R classification requirement (e.g., Phase 9 blade-entry detection).
 
 ---
 
@@ -1328,6 +1365,8 @@ Compare roll values of consecutive qualifying events. The higher-roll event is l
 
 Option 3 was selected for production based on offline analysis of 18 May 2026 field data at the 90° gate: 35% lower noise than Option 2, parameter-free, 98% consistent cycle classification. The three-bar evaluation display was not required.
 
+**Status — to be removed in next version:** Field analysis of 20 May 2026 data (§3.5) confirmed that the timing asymmetry measured by Option 3 is a structural biomechanical feature of the feathered paddle (P→T = 1414 ms, T→P = 510 ms, ratio 2.77:1), not a left/right paddling imbalance. The bar deflects in the same direction every session. All asymmetry state variables (`prevEventRoll`, `tLastR`, `tLastL`, `asymMs`, `asymValid`) and the `drawAsymmetryBar()` call are to be removed. The display area currently occupied by the bar will be reclaimed for CPM or future metrics.
+
 ```cpp
 // On each new qualifying stroke event (pkt.stroke_count change):
 // Higher roll than the previous event = peak side (right); lower = trough side (left).
@@ -1393,7 +1432,7 @@ displayCpm = alpha × rawCpm + (1 − alpha) × displayCpm
 - When `rawCpm == 0` (PadLog inactivity timeout), reset `displayCpm` to 0 immediately — no gradual decay.
 - The display refreshes only when the rounded integer value of `displayCpm` changes, to avoid unnecessary redraws.
 
-**Motivation:** 18 May 2026 field data showed stdev of 16.8 CPM at a true rate of ~32 CPM (~52% relative noise). A 20-second EMA reduces visible fluctuation to ~2–3 CPM stdev while still tracking genuine rate changes within a few seconds.
+**Motivation:** 18 May 2026 field data showed stdev of 16.8 CPM at a true rate of ~32 CPM (~52% relative noise). 20 May 2026 data (v8.6, 90° gate) shows true stdev 4.7 CPM; displayed stdev 9.5 CPM with the 20 s EMA. A **10-second** time constant (`alpha ≈ 0.001`) is planned for the next version — it halves the display lag and still reduces noise significantly relative to the raw signal.
 
 ---
 
@@ -1503,3 +1542,15 @@ All required data is already captured in the Phase 8 CSV (even in the reduced co
 Candidate approach: detect the onset and cessation of lateral acceleration transients time-locked to the roll zero-crossing (mid-stroke) in each qualifying cycle. The `stroke_count` transitions in the CSV provide exact event timestamps to align against.
 
 Design, offline validation, and firmware specification are deferred to a future session.
+
+---
+
+### 13.4 L/R Blade Classification — Pitch Signal (20 May 2026)
+
+Analysis of 20 May 2026 field data (§3.5) identified pitch as a reliable, parameter-free L/R classifier:
+
+- At peak roll events (one blade side in water): pitch mean = −26.4°, IQR [−36.1°, −20.9°]
+- At trough roll events (other blade side in water): pitch mean = +11.9°, IQR [+13.3°, +15.5°]
+- IQR overlap = 0°; `pitch < 0` threshold gives 92% accuracy with no calibration.
+
+**How to apply in Phase 9:** Use `pitch < 0` at each `stroke_count` event to determine which blade side just completed its pull. This label can be used to time-align accelerometer transients per blade side for catch/release detection.
