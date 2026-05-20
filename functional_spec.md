@@ -2,7 +2,7 @@
 
 **Project:** paddlestroke  
 **Date:** 20 May 2026  
-**Version:** 2.3
+**Version:** 2.4
 
 ---
 
@@ -324,7 +324,7 @@ The following are excluded from the current implementation. Items marked with a 
 | **5** | Transmit stroke rate via ESPnow broadcast. Transmit side complete and tested (T-18a–T-18c). Receiver/display is a separate project. BLE and mobile app deferred. *(Complete)* |
 | **6** | CYD ESPnow receiver with TFT display. LVGL dropped in favour of TFT_eSPI direct. Tests T-19–T-22 passed. *(Complete — 5 May 2026)* |
 | **7** | ESPnow full-IMU data link — transmit raw IMU data from paddle device to CYD at 100 Hz; log to CYD SD card. Enables sealed paddle device. All tests T-23–T-31 passed (6 May 2026). *(Complete)* |
-| **8** | Production integration — full-IMU ESPnow payload in PadLog; SD logging in PadDis; SD card removed from paddle device. Sketches renamed PadLog / PadDis with version scheme phase.iteration. v8.1: hardware validated 12 May 2026 (63 min session, 100 Hz, <0.03% loss, 51–76 CPM). v8.2: streak gate, separate rate buffers, asymmetry bar. v8.3: doze/wake bug fixed — accelerometer left active in doze mode was consuming all wakeup events, blocking RV data; fix disables accelerometer on doze entry. Full cycle validated 14 May 2026. v8.4: `isRateMature()` gate prevents post-wake CPM spike; rolling-midpoint asymmetry replaces `pitch >= 0` classifier. Field test 18 May 2026 revealed feather rotation artefacts inflating CPM 1.7× at 45° gate. v8.5 (PadDis only): CSV column selector (`CSV_COLUMNS_REDUCED`) reduces SD write volume 72%; 20-second EMA on displayed CPM (raw CSV unchanged). v8.6: `AMPLITUDE_GATE_DEG` raised 45°→90° (PadLog + sim_test) — rejects feather rotation events; Option 3 consecutive-event asymmetry replaces v8.4 rolling-midpoint EMA; dark display theme (black background, white text). *(Complete — v8.6 flashed and confirmed 18 May 2026)* |
+| **8** | Production integration — full-IMU ESPnow payload in PadLog; SD logging in PadDis; SD card removed from paddle device. Sketches renamed PadLog / PadDis with version scheme phase.iteration. v8.1: hardware validated 12 May 2026 (63 min session, 100 Hz, <0.03% loss, 51–76 CPM). v8.2: streak gate, separate rate buffers, asymmetry bar. v8.3: doze/wake bug fixed — accelerometer left active in doze mode was consuming all wakeup events, blocking RV data; fix disables accelerometer on doze entry. Full cycle validated 14 May 2026. v8.4: `isRateMature()` gate prevents post-wake CPM spike; rolling-midpoint asymmetry replaces `pitch >= 0` classifier. Field test 18 May 2026 revealed feather rotation artefacts inflating CPM 1.7× at 45° gate. v8.5 (PadDis only): CSV column selector (`CSV_COLUMNS_REDUCED`) reduces SD write volume 72%; 20-second EMA on displayed CPM (raw CSV unchanged). v8.6: `AMPLITUDE_GATE_DEG` raised 45°→90° (PadLog + sim_test) — rejects feather rotation events; Option 3 consecutive-event asymmetry replaces v8.4 rolling-midpoint EMA; dark display theme (black background, white text). v8.7 (PadDis only): asymmetry bar and all related state removed (timing asymmetry is structural — see §3.5); CPM display EMA 20 s→10 s; yellow NO SD CARD warning on splash screen. *(Complete — v8.7 flashed and validated 20 May 2026)* |
 | **9** | Blade entry/exit detection — use `accel_x`/`accel_y` transients to detect blade catch and release independently of roll oscillation. Enables stroke quality metrics (catch angle, release timing). *(Pending — design not started)* |
 
 ---
@@ -1127,13 +1127,13 @@ If any check fails, the change must be investigated and fixed before the version
 Both sketches define:
 ```cpp
 #define SKETCH_NAME    "PadLog"   // or "PadDis"
-#define SKETCH_VERSION "8.6"
+#define SKETCH_VERSION "8.7"
 ```
 
 The version string appears in:
-- Serial startup banner: `PadLog v8.6 — ready`
+- Serial startup banner: `PadLog v8.7 — ready`
 - CYD splash screen (PadDis only)
-- First line of every CSV log file: `# PadDis v8.6`
+- First line of every CSV log file: `# PadDis v8.7`
 
 ---
 
@@ -1249,13 +1249,13 @@ Auto-numbered `/ImuLog00.CSV` … `/ImuLog99.CSV`. The first line is a version c
 
 **Full column set:**
 ```
-# PadDis v8.6
+# PadDis v8.7
 seq,timestamp_ms,accel_x,accel_y,accel_z,q_w,q_x,q_y,q_z,roll,pitch,yaw,stroke_count,cpm,hz
 ```
 
 **Reduced column set** (when `CSV_COLUMNS_REDUCED` is defined — see §12.3.6):
 ```
-# PadDis v8.6
+# PadDis v8.7
 timestamp_ms,roll,pitch,yaw,stroke_count,cpm
 ```
 
@@ -1263,15 +1263,14 @@ Every received packet is written as one CSV row. The file is flushed every 5 s a
 
 #### 12.3.3 Display
 
-The splash screen shows `PadDis v8.6` (Font 4) for 20 seconds. The main screen shows: large CPM number (Font 8), signal icon, and asymmetry bar (see §12.3.5). Colour scheme: black background, white active text, grey on signal loss. The CPM number is refreshed only when the displayed value changes — not on every 100 Hz packet — to avoid blocking the loop. The displayed value is a 20-second EMA of the raw CPM (see §12.3.7).
+The splash screen shows `PadDis v8.7` (Font 4) for 20 seconds. If the SD card is absent or fails to open, a yellow warning `NO SD CARD — logging disabled` is displayed below the version text in Font 2 for the duration of the splash. The main screen shows: large CPM number (Font 8) centred on screen, signal icon top-right. Colour scheme: black background, white active text, grey on signal loss. The CPM number is refreshed only when the smoothed integer value changes — not on every 100 Hz packet — to avoid blocking the loop. The displayed value is a 10-second EMA of the raw CPM (see §12.3.7).
 
 #### 12.3.4 Serial Output
 
-CPM is logged to serial only when the value changes, avoiding 100 lines/second of output. Asymmetry is also logged when it changes:
+CPM is logged to serial only when the value changes, avoiding 100 lines/second of output:
 
 ```
-CPM: 72  (1.20 Hz)  stroke=14  asymMs=0
-Asym: +45 ms  (LEFT shorter)
+CPM: 72 (raw 71)  (1.20 Hz)  stroke=14
 Signal lost
 ```
 
@@ -1385,7 +1384,7 @@ Compare roll values of consecutive qualifying events. The higher-roll event is l
 
 Option 3 was selected for production based on offline analysis of 18 May 2026 field data at the 90° gate: 35% lower noise than Option 2, parameter-free, 98% consistent cycle classification. The three-bar evaluation display was not required.
 
-**Status — to be removed in next version:** Field analysis of 20 May 2026 data (§3.5) confirmed that the timing asymmetry measured by Option 3 is a structural biomechanical feature of the feathered paddle (P→T = 1414 ms, T→P = 510 ms, ratio 2.77:1), not a left/right paddling imbalance. The bar deflects in the same direction every session. All asymmetry state variables (`prevEventRoll`, `tLastR`, `tLastL`, `asymMs`, `asymValid`) and the `drawAsymmetryBar()` call are to be removed. The display area currently occupied by the bar will be reclaimed for CPM or future metrics.
+**Removed in v8.7:** Field analysis of 20 May 2026 data (§3.5) confirmed that the timing asymmetry measured by Option 3 is a structural biomechanical feature of the feathered paddle (P→T = 1414 ms, T→P = 510 ms, ratio 2.77:1), not a left/right paddling imbalance. The bar deflected in the same direction every session. All asymmetry state variables (`prevEventRoll`, `tLastR`, `tLastL`, `asymMs`, `asymValid`) and `drawAsymmetryBar()` were removed in v8.7. The CPM number is now centred on the full usable screen area.
 
 ```cpp
 // On each new qualifying stroke event (pkt.stroke_count change):
@@ -1452,7 +1451,7 @@ displayCpm = alpha × rawCpm + (1 − alpha) × displayCpm
 - When `rawCpm == 0` (PadLog inactivity timeout), reset `displayCpm` to 0 immediately — no gradual decay.
 - The display refreshes only when the rounded integer value of `displayCpm` changes, to avoid unnecessary redraws.
 
-**Motivation:** 18 May 2026 field data showed stdev of 16.8 CPM at a true rate of ~32 CPM (~52% relative noise). 20 May 2026 data (v8.6, 90° gate) shows true stdev 4.7 CPM; displayed stdev 9.5 CPM with the 20 s EMA. A **10-second** time constant (`alpha ≈ 0.001`) is planned for the next version — it halves the display lag and still reduces noise significantly relative to the raw signal.
+**v8.7 update:** Time constant changed from 20 s to **10 s** (`alpha = 0.001` at 100 Hz). 20 May 2026 data showed true stdev 4.7 CPM and displayed stdev 9.5 CPM at 20 s; 10 s halves the display lag while still smoothing the raw signal significantly.
 
 ---
 
