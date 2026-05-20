@@ -1,0 +1,11 @@
+# Field data logs — large, not source
+ImuLog*.CSV
+
+# Editor backups
+*.bak
+
+# Analysis and scratch files
+copilotanalysis.txt
+
+# Screenshots
+screen*.jpg
