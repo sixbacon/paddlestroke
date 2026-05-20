@@ -144,8 +144,8 @@ void setup() {
     tft.setTextFont(4);
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
     const char *splash = SKETCH_NAME " v" SKETCH_VERSION;
-    tft.setCursor((tft.width()  - tft.textWidth(splash)) / 2,
-                  (tft.height() - tft.fontHeight(4))      / 2);
+    int splashY = (tft.height() - tft.fontHeight(4)) / 2;
+    tft.setCursor((tft.width() - tft.textWidth(splash)) / 2, splashY);
     tft.print(splash);
 
     // SD card (VSPI — separate bus from display)
@@ -176,6 +176,16 @@ void setup() {
             Serial.print("Logging to "); Serial.println(fname);
             sdReady = true;
         }
+    }
+
+    // Warn on splash screen if SD unavailable (0x07FF = yellow on BGR ILI9341)
+    if (!sdReady) {
+        const char *warn = "NO SD CARD — logging disabled";
+        tft.setTextFont(2);
+        tft.setTextColor(0x07FF, TFT_BLACK);
+        tft.setCursor((tft.width() - tft.textWidth(warn)) / 2,
+                      splashY + tft.fontHeight(4) + 10);
+        tft.print(warn);
     }
 
     // ESPnow
