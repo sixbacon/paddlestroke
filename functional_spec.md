@@ -2,7 +2,7 @@
 
 **Project:** paddlestroke  
 **Date:** 20 May 2026  
-**Version:** 2.4
+**Version:** 2.5
 
 ---
 
@@ -166,6 +166,43 @@ IQR overlap = 0° — the two distributions are completely non-overlapping. Usin
 Physical explanation: when a blade is being pulled through the water, the paddle shaft is tilted forward (negative pitch); when the opposite blade is entering, the shaft is tilted back (positive pitch). This is a reliable, parameter-free signal.
 
 Pitch cannot separate the structural timing asymmetry from genuine L/R paddling imbalance, but it is the correct starting point for any future L/R classification requirement (e.g., Phase 9 blade-entry detection).
+
+---
+
+### 3.6 Field Test Observations (Phase 8 v8.7, 21 May 2026)
+
+File: `ImuLog0420260521.CSV`. 155,930 rows, 27.8 min, 93.4 Hz mean (two large gaps reduce average — see below), 75% active.
+
+**Stroke detection:**
+- Total strokes: **1,336**. Active time: 19.6 min.
+- Main CPM cluster: **30–39 CPM** (mean 36.2, median 35, SD 9.6 raw from log).
+- Slightly higher pace than 20 May (33.3 CPM mean) — shorter but harder session.
+
+**Spurious high-CPM rows:**
+2,288 rows (1.5%) show CPM > 60 (range 70–129). These are confined to two windows:
+- **Startup** (sc = 5–18, first 18 strokes, ~ts 198–430 s): paddle being picked up and initial strokes before pace settled.
+- **End-of-session** (sc = 1333–1336, ~ts 1390–1432 s): paddle being put down.
+
+No spurious high-CPM values were observed during the sustained paddling phase. The 90° gate continues to perform correctly in-session.
+
+**Session gaps:**
+
+| Gap | Timestamp | Explanation |
+|-----|-----------|-------------|
+| 19,768 ms | ts = 86 s, row 30 | PadLog 20 s startup pause — matches `STARTUP_PAUSE_MS` exactly |
+| 84,409 ms | ts = 26.9 min, end | Paddle laid down; session over |
+
+**Pitch L/R classifier — confirmed, distributions shifted vs 20 May:**
+
+| Event type | 20 May mean / IQR | 21 May mean / IQR |
+|---|---|---|
+| Peak (pitch < 0) | −26.4° / [−34°, −19°] | −25.2° / [−38°, −13°] |
+| Trough (pitch ≥ 0) | +11.9° / [+7°, +16°] | +26.1° / [+14°, +38°] |
+| IQR overlap | none | none |
+
+Zero IQR overlap confirmed — the `pitch < 0` classifier remains valid. However, the **trough distribution has shifted substantially** (+11.9° → +26.1°) and both distributions are wider (IQR ≈ 25° vs ≈ 9° on 20 May). The most likely cause is a slightly different IMU seating angle in the shaft clamp between sessions; a smaller contribution from different forward lean or water conditions.
+
+**Phase 9 implication:** The inter-session shift in the trough pitch mean (+14°) means a fixed classifier threshold cannot be assumed. Any Phase 9 L/R classification will require per-session calibration (e.g., from the first N strokes) rather than a hard-coded `pitch < 0` cut.
 
 ---
 
