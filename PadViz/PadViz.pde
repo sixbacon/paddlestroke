@@ -76,6 +76,8 @@ void draw() {
     image(m3d.canvas, 0, 0);
 
     panel.draw(ds, frameIdx, fd, playSpeed, playing);
+
+    if (liveMode) drawSerialDebug();
 }
 
 // ── CSV frame advance ─────────────────────────────────────────────────────────
@@ -91,6 +93,36 @@ void advanceCSV() {
         playing  = false;
         frameIdx = ds.frameCount() - 1;
     }
+}
+
+// ── Live serial debug overlay ─────────────────────────────────────────────────
+void drawSerialDebug() {
+    int bx = 10, by = TOTAL_H - 90, bw = VIEW_W - 20, bh = 84;
+    fill(0, 0, 0, 180);  noStroke();
+    rect(bx, by, bw, bh, 4);
+
+    textSize(11);  textAlign(LEFT, TOP);
+    int y = by + 6;
+
+    fill(ds.liveFrameTotal > 0 ? color(100, 255, 100) : color(255, 180, 50));
+    text("LIVE  frames=" + ds.liveFrameTotal + "  errors=" + ds.liveParseErrors, bx + 6, y);
+    y += 15;
+
+    fill(200);
+    String raw = ds.lastRawLine;
+    if (raw.length() > 100) raw = raw.substring(0, 100) + "...";
+    text("last: " + raw, bx + 6, y);
+    y += 15;
+
+    FrameData lv = ds.liveLatest();
+    fill(180, 220, 255);
+    text(String.format("roll=%.1f  pitch=%.1f  yaw=%.1f  cpm=%.1f",
+         lv.roll, lv.pitch, lv.yaw, lv.cpm), bx + 6, y);
+    y += 15;
+
+    fill(160);
+    text(String.format("qw=%.4f  qx=%.4f  qy=%.4f  qz=%.4f",
+         lv.qw, lv.qx, lv.qy, lv.qz), bx + 6, y);
 }
 
 // ── Axis test mode ────────────────────────────────────────────────────────────

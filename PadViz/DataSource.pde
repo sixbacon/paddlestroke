@@ -154,10 +154,17 @@ class DataSource {
         }
     }
 
+    // ── Debug state (visible to sketch for overlay) ───────────────────────────
+    String lastRawLine   = "";
+    int    liveFrameTotal = 0;
+    int    liveParseErrors = 0;
+
     private void processLine(String line) {
+        lastRawLine = line;
         if (line.length() == 0 || line.charAt(0) == '#') return;
         FrameData fd = parseLine(line);
-        if (fd == null) return;
+        if (fd == null) { liveParseErrors++; return; }
+        liveFrameTotal++;
         int next = (liveHead + 1) % LIVE_CAP;
         if (next != liveTail) {
             liveRing[liveHead] = fd;
