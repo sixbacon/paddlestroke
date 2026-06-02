@@ -12,9 +12,9 @@ class Model3D {
     float camDist = 350.0f;
     final float MODEL_SCALE = 150.0f;
 
-    // Correction: 90° around world Z → aligns model X-axis to world Y
-    //   corrW = cos(45°) ≈ 0.70711,  corrZ = sin(45°) ≈ 0.70711
-    float corrW = 0.70711f, corrX = 0.0f, corrY = 0.0f, corrZ = 0.70711f;
+    // Correction: 90°Z then 180°Y = combined [0, 0.70711, 0.70711, 0]
+    // 90°Z aligns model X-axis (shaft) to world Y; 180°Y flips upside-down
+    float corrW = 0.0f, corrX = 0.70711f, corrY = 0.70711f, corrZ = 0.0f;
 
     // ── Mouse drag ────────────────────────────────────────────────────────────
     private int   dragStartX, dragStartY;
