@@ -1,8 +1,8 @@
 # PadViz — Paddle Visualisation Specification
 
-**Version:** 0.1 (draft)
-**Date:** 2026-05-20
-**Status:** Pre-implementation — awaiting model format and serial source decision
+**Version:** 0.3
+**Date:** 2026-06-02
+**Status:** Phase 2 ready to implement. Phase 3 ready to implement (all questions resolved).
 
 ---
 
@@ -13,7 +13,8 @@ driven by live IMU orientation data or replayed from a recorded CSV file. Intend
 
 - Technique analysis (stroke shape, symmetry, entry/exit angles)
 - Algorithm development and validation
-- Replay of field sessions at variable speed with variable selection
+- Detailed replay of field sessions: zoom to a specific section, step frame-by-frame or
+  play back at up to 4× speed
 
 ---
 
@@ -32,9 +33,32 @@ driven by live IMU orientation data or replayed from a recorded CSV file. Intend
 
 ---
 
-## 3. Data Sources
+## 3. Implementation Phases
 
-### 3.1 Source selection
+### Phase 2 — Firmware (PadLog + PadDis)
+
+Modify the production sketches to output data in the format PadViz requires.
+This is identical to the planned v8.8 firmware changes (already documented in
+`functional_spec.md §8 roadmap`):
+
+| Change | Sketch(es) | Detail |
+|---|---|---|
+| Add `q_w, q_x, q_y, q_z` to `CSV_COLUMNS_REDUCED` | PadDis | Enables quaternion-based 3D rotation in file replay mode |
+| `cpm` field: `uint32_t` → `float` | Both | Transmit `hz × 60.0` directly; 1 dp in display and CSV |
+| Remove `hz` field from payload | Both | Redundant once `cpm` is float; payload 60 → 56 bytes; update `static_assert` |
+| Add structured serial output line to `loop()` | PadDis | Enables live serial mode in PadViz (see §4.2) |
+
+Version bump: **v8.8**. Both sketches must be updated together (payload struct must match).
+
+### Phase 3 — Processing sketch (PadViz)
+
+Write the Processing visualisation sketch. All blocking questions are now resolved — see §8.
+
+---
+
+## 4. Data Sources
+
+### 4.1 Source selection
 
 A boolean constant at the top of the sketch selects the active source:
 
@@ -42,52 +66,12 @@ A boolean constant at the top of the sketch selects the active source:
 boolean USE_SERIAL = false;   // false = file replay, true = live serial
 ```
 
-### 3.2 Option A — Dedicated `PadLogSerial` sketch (decision pending)
+### 4.2 Live serial — PadDis tap
 
-A new Arduino sketch derived from PadLog with ESPnow removed. The LOLIN32 Lite USB
-becomes unstable when ESPnow runs at 100 Hz; without ESPnow the serial link is
-rock-solid at 100 Hz.
+Modify PadDis to emit one structured line per received packet on COM6 (USB-C, stable).
+Both production units run normally; the laptop listens on COM6.
 
-- Hardware: PadLog unit (LOLIN32 Lite, COM3) — standalone, no CYD needed
-- Output: one CSV line per IMU packet at 100 Hz to serial (see §4.2)
-- Maintenance: StrokeDetector copies must be kept in sync with PadLog
-
-### 3.3 Option B — PadDis serial tap (decision pending)
-
-Add a single `Serial.printf` line to PadDis's packet-received block. The CYD uses
-USB-C and ESPnow receive does not disrupt USB serial. Both production units run
-normally; laptop listens on COM6.
-
-- Hardware: both units (PadLog + PadDis) running production firmware
-- Output: same CSV line format as Option A, on COM6
-- Maintenance: one extra line in PadDis.ino — minimal
-
-**Decision:** TBD. Spec will be updated when chosen.
-
----
-
-## 4. Data Format
-
-### 4.1 File replay — CSV
-
-Existing `ImuLog*.CSV` files logged by PadDis. The reduced column set (`CSV_COLUMNS_REDUCED`)
-currently omits quaternions. **A firmware change is required** to add quaternion columns:
-
-**Current reduced columns:**
-```
-timestamp_ms, roll, pitch, yaw, stroke_count, cpm
-```
-
-**Required extended columns (new format, requires PadDis firmware update and version bump):**
-```
-timestamp_ms, q_w, q_x, q_y, q_z, roll, pitch, yaw, stroke_count, cpm
-```
-
-File header line (`# PadDis vX.Y`) is skipped during parsing.
-
-### 4.2 Live serial — line format
-
-One line per packet, matching the CSV column order (no header):
+Output format — one line per packet at 100 Hz:
 
 ```
 timestamp_ms,q_w,q_x,q_y,q_z,roll,pitch,yaw,stroke_count,cpm\n
@@ -95,57 +79,123 @@ timestamp_ms,q_w,q_x,q_y,q_z,roll,pitch,yaw,stroke_count,cpm\n
 
 Example:
 ```
-183420,0.99710,-0.01234,0.07543,0.00021,-14.23,4.51,87.32,42,34
+183420,0.99710,-0.01234,0.07543,0.00021,-14.23,4.51,87.32,42,34.1
 ```
 
 Baud rate: 115200.
 
 ---
 
-## 5. Layout
+## 5. Data Format — File Replay
+
+### 5.1 CSV columns (v8.8 format)
+
+```
+# PadDis v8.8
+timestamp_ms,q_w,q_x,q_y,q_z,roll,pitch,yaw,stroke_count,cpm
+```
+
+The header line (`# PadDis vX.Y`) and column-name line are skipped during parsing.
+
+### 5.2 Zoom / subset replay
+
+The user selects a time-range window from the full file (see §7.2). Only rows within
+that window are used for replay. The full file is always held in memory so the window
+can be changed without reloading.
+
+---
+
+## 6. Layout
 
 The window is divided into two panels:
 
 ```
-+---------------------------+-------------------+
-|                           |                   |
-|   3D paddle model         |  Strip chart      |
-|   (orbit camera)          |  (selected vars)  |
-|                           |                   |
-|   HUD overlay             |  Variable select  |
-|   (CPM, stroke, time)     |  (click to plot)  |
-+---------------------------+-------------------+
++-------------------------------+---------------------+
+|                               |  Speed slider       |
+|   3D paddle model             |  Zoom range         |
+|   (orbit camera)              |                     |
+|                               |  Strip chart        |
+|   HUD overlay                 |  (selected vars)    |
+|   (CPM, stroke, time, speed)  |                     |
+|                               |  Variable select    |
++-------------------------------+---------------------+
 ```
 
-Approximate split: 65 % left (3D), 35 % right (chart). Window size: 1400 × 800 px.
+Approximate split: 65 % left (3D), 35 % right (side panel). Window size: 1400 × 800 px.
 
 ---
 
-## 6. 3D Visualisation
+## 7. Replay Controls (file mode)
 
-### 6.1 Model
+### 7.1 Speed
 
-User-supplied 3D model of the paddle. Format: **TBD** (OBJ preferred — natively supported
-by Processing's `loadShape()`; STL requires an additional library).
+A **slider in the side panel** controls replay speed. Range:
 
-Model file placed in `PadViz/data/paddle.obj` (or equivalent).
+| Slider position | Behaviour |
+|---|---|
+| Maximum | 4× (four times real-time) |
+| Mid-range | 1× (real-time) |
+| Minimum (above zero) | Step-by-step — each press of `→` or Play advances exactly one frame |
+| `Space` / Pause button | Freeze at current frame |
 
-### 6.2 Orientation — quaternion method
+Inter-frame delay is derived from consecutive `timestamp_ms` values, divided by the
+speed multiplier. This preserves the original cadence — gaps at rest play at the same
+relative speed as active paddling sections.
 
-Orientation is applied via the IMU quaternion (`q_w, q_x, q_y, q_z`) rather than
-sequential Euler rotations. Reasons:
+### 7.2 Zoom — selecting a replay window
 
-- BNO085 outputs quaternions natively; Euler angles are derived and lose information
-- Avoids gimbal lock (pitch ±90° is reachable during aggressive strokes)
-- No angle-wrapping artefacts (eliminates the ±180° yaw wrap seen in Phase 7)
-- Applied via `applyMatrix()` from the quaternion-to-rotation-matrix conversion (no trig at runtime)
+The user can restrict replay to a sub-range of the file:
 
-The shaft axis mapping (which model axis aligns with the paddle shaft) is **TBD** — to be
-confirmed once the model is provided.
+- **Strip chart drag:** click and drag on the strip chart time axis to define start and
+  end time. The selected range highlights. Replay loops within the window.
+- **Side panel inputs:** numeric start / end time fields (seconds) mirror the strip chart
+  selection and can be edited directly.
+- **Reset:** a "Full file" button clears the zoom and restores the full session.
 
-### 6.3 Camera / viewpoint
+The strip chart always displays the full session; the zoom window is shown as a shaded
+overlay. The cursor line moves within the window during replay.
 
-Mouse interaction (Processing arcball pattern):
+### 7.3 Keyboard shortcuts
+
+| Key | Action |
+|---|---|
+| `Space` | Play / pause |
+| `→` | Step one frame forward (while paused or in step mode) |
+| `←` | Step one frame back (while paused or in step mode) |
+| `R` | Reset camera to default view |
+
+---
+
+## 8. 3D Visualisation
+
+### 8.1 Model
+
+**File:** `PadViz/data/paddle60.obj` with `paddle60.mtl` (already present).
+**Format:** OBJ + MTL — natively supported by Processing `loadShape()`, no extra library needed.
+
+**Visual convention:** The red-coloured blade face is the **drive side** — the face that
+pushes against the water, oriented towards the rear of the kayak during a stroke.
+
+### 8.2 Model coordinate system and IMU axis mapping
+
+The model uses the following axes (confirmed by user):
+
+| Axis | Direction |
+|---|---|
+| **X** | Normal to the plane of the right-hand blade (points out of the blade face) |
+| **Y** | Along the shaft, towards the right-hand blade |
+| **Z** | In the plane of the right-hand blade (blade vertical) |
+
+The BNO085 **roll** (rotation about the shaft long axis) therefore maps to **rotation about
+the model Y axis**. The full quaternion from the IMU is applied via `applyMatrix()` to
+orient the model. Because the physical mounting angle of the IMU on the shaft may differ
+from the model's rest pose, a fixed correction rotation (determined during first-run
+calibration) may be applied before the quaternion to align the model to the real-world
+resting orientation.
+
+### 8.3 Camera / viewpoint
+
+Mouse interaction:
 
 | Interaction | Action |
 |---|---|
@@ -154,77 +204,46 @@ Mouse interaction (Processing arcball pattern):
 | Middle-drag | Pan |
 | `R` key | Reset to default view |
 
-Default view: isometric-ish, paddle horizontal, blades visible.
+Default view: isometric, paddle horizontal, red (drive) blade facing right, blades fully
+visible.
 
 ---
 
-## 7. Replay Controls (file mode)
+## 9. Side Panel
 
-| Control | Action |
-|---|---|
-| `Space` | Play / pause |
-| `←` / `→` arrow keys | Step one frame back / forward |
-| `[` / `]` | Decrease / increase replay speed (0.1× … 10×) |
-| Click on strip chart | Jump playback to that time position |
+The right-hand panel contains, from top to bottom:
 
-Speed indicator displayed in HUD. Real-time is 1.0×.
-
-Inter-frame delay is computed from consecutive `timestamp_ms` values, scaled by the speed
-multiplier. Preserves the original cadence — pauses at rest, runs faster during active
-paddling.
-
----
-
-## 8. Strip Chart
-
-- Scrolling time-series plot, right-hand panel
-- Up to **3 variables** plotted simultaneously (different colours)
-- Variables available for plotting: `roll`, `pitch`, `yaw`, `cpm`, `stroke_count`, `q_w/x/y/z`
-- Click a variable name in a legend list to toggle it on/off
-- Vertical red cursor line tracks current playback position
-- Y-axis auto-scales to visible data range
-- Time axis shows last N seconds (N configurable, default 10 s)
+1. **Speed slider** — label shows current multiplier (e.g. `2.0×`) or `STEP` at minimum
+2. **Pause / Play button**
+3. **Zoom range** — start time field, end time field, "Full file" reset button
+4. **Strip chart** — full session width
+   - Vertical cursor line = current playback position
+   - Shaded overlay = active zoom window
+   - Up to 3 variables plotted simultaneously (different colours)
+   - Y-axis auto-scales to visible data range
+5. **Variable selector** — click to toggle on/off:
+   `roll`, `pitch`, `yaw`, `cpm`, `stroke_count`, `q_w`, `q_x`, `q_y`, `q_z`
 
 ---
 
-## 9. HUD Overlay (3D panel)
+## 10. HUD Overlay (3D panel)
 
 Displayed in the top-left corner of the 3D panel:
 
 ```
 Time:   183.4 s
-CPM:    34
+CPM:    34.1
 Stroke: 42
-Speed:  1.0×       [file mode only]
+Speed:  2.0×       [file mode only — shows STEP at minimum speed]
 Source: FILE        or  SERIAL
 ```
 
 ---
 
-## 10. Outstanding Questions
-
-| # | Question | Needed for |
-|---|---|---|
-| Q1 | 3D model file format (OBJ / STL / other)? | Library selection, §6.1 |
-| Q2 | Paddle shaft axis in model coordinate system (X / Y / Z)? | Quaternion axis mapping, §6.2 |
-| Q3 | Serial source: Option A (PadLogSerial) or Option B (PadDis tap)? | §3, firmware changes |
-
----
-
-## 11. Firmware Changes Required
-
-| Change | Sketch | When |
-|---|---|---|
-| Add `q_w, q_x, q_y, q_z` to `CSV_COLUMNS_REDUCED` columns | PadDis | Before first file-mode test |
-| Add structured serial output line (§4.2) | PadDis (Option B) or new PadLogSerial (Option A) | Before first serial-mode test |
-
-Version bump required for PadDis when CSV format changes (v8.8).
-
----
-
-## 12. Out of Scope
+## 11. Out of Scope
 
 - Stroke detection algorithm changes (PadLog / StrokeDetector)
 - Wireless link modifications
 - Real-time network streaming (serial only)
 - VR / headset output
+- Audio feedback
