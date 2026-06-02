@@ -155,9 +155,10 @@ class DataSource {
     }
 
     // ── Debug state (visible to sketch for overlay) ───────────────────────────
-    String lastRawLine   = "";
-    int    liveFrameTotal = 0;
-    int    liveParseErrors = 0;
+    String    lastRawLine    = "";
+    int       liveFrameTotal = 0;
+    int       liveParseErrors = 0;
+    FrameData latestLive     = new FrameData();   // always the most recent parsed frame
 
     private void processLine(String line) {
         lastRawLine = line;
@@ -165,18 +166,17 @@ class DataSource {
         FrameData fd = parseLine(line);
         if (fd == null) { liveParseErrors++; return; }
         liveFrameTotal++;
+        latestLive = fd;                          // always up to date regardless of ring state
         int next = (liveHead + 1) % LIVE_CAP;
-        if (next != liveTail) {
-            liveRing[liveHead] = fd;
-            liveHead           = next;
+        if (next == liveTail) {
+            liveTail = (liveTail + 1) % LIVE_CAP; // ring full — drop oldest, not newest
         }
+        liveRing[liveHead] = fd;
+        liveHead           = next;
     }
 
     boolean   liveReady()  { return liveHead != liveTail; }
     int       liveCount()  { return (liveHead - liveTail + LIVE_CAP) % LIVE_CAP; }
 
-    FrameData liveLatest() {
-        if (!liveReady()) return new FrameData();
-        return liveRing[(liveHead - 1 + LIVE_CAP) % LIVE_CAP];
-    }
+    FrameData liveLatest() { return latestLive; }
 }
