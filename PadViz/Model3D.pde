@@ -51,8 +51,14 @@ class Model3D {
             -MAP_SIGN_X * 0.5f, -1.0f, -0.5f);
 
         // ── Paddle ────────────────────────────────────────────────────────────
+        // In setup view use identity IMU quat so only the correction is applied,
+        // letting the user see the true model rest pose independently of live data.
         canvas.pushMatrix();
-        float[] q = quatMul(fd.qw, fd.qx, fd.qy, fd.qz,
+        float iw = setupView ? 1.0f : fd.qw;
+        float ix = setupView ? 0.0f : fd.qx;
+        float iy = setupView ? 0.0f : fd.qy;
+        float iz = setupView ? 0.0f : fd.qz;
+        float[] q = quatMul(iw, ix, iy, iz,
                             MAP_CORR_W, MAP_CORR_X, MAP_CORR_Y, MAP_CORR_Z);
         applyQuat(canvas, q[0], q[1], q[2], q[3]);
         canvas.scale(MAP_SIGN_X * MAP_SCALE,
@@ -69,8 +75,7 @@ class Model3D {
         // ── World reference axes ──────────────────────────────────────────────
         drawAxes(canvas, 60);
 
-        // ── Setup view label ──────────────────────────────────────────────────
-        if (setupView) drawSetupLabel();
+        // (Setup view label is drawn on the main sketch canvas in PadViz.pde)
 
         // ── HUD ───────────────────────────────────────────────────────────────
         drawHud(fd);
@@ -109,20 +114,6 @@ class Model3D {
         g.strokeWeight(1);
     }
 
-    private void drawSetupLabel() {
-        canvas.hint(DISABLE_DEPTH_TEST);
-        canvas.noLights();
-        canvas.camera();
-        canvas.ortho(0, VIEW_W, 0, TOTAL_H, -1, 1);
-        canvas.noStroke();
-        canvas.fill(255, 220, 60, 220);
-        canvas.textSize(13);
-        canvas.textAlign(CENTER, TOP);
-        canvas.text("SETUP VIEW  — looking down Z  (X right, Y up)  press T to exit",
-                    VIEW_W / 2, 6);
-        canvas.hint(ENABLE_DEPTH_TEST);
-    }
-
     private void drawHud(FrameData fd) {
         canvas.hint(DISABLE_DEPTH_TEST);
         canvas.noLights();
@@ -133,7 +124,7 @@ class Model3D {
         canvas.fill(255, 255, 255, 200);
         canvas.textSize(13);
         canvas.textAlign(LEFT, TOP);
-        int x = 12, y = setupView ? 26 : 12, dy = 17;
+        int x = 12, y = 30, dy = 17;   // y=30 leaves room for setup label drawn above
         canvas.text("t     " + nf(fd.ts / 1000.0f, 0, 1) + " s", x, y);  y += dy;
         canvas.text("roll  " + nf(fd.roll,  0, 1) + "°", x, y);  y += dy;
         canvas.text("pitch " + nf(fd.pitch, 0, 1) + "°", x, y);  y += dy;
@@ -142,7 +133,7 @@ class Model3D {
         canvas.text("sc    " + fd.strokeCount,                 x, y);
 
         canvas.fill(fd.hasQuat ? color(100, 220, 100) : color(220, 160, 60), 200);
-        canvas.text(fd.hasQuat ? "Q" : "E", VIEW_W - 20, setupView ? 26 : 12);
+        canvas.text(fd.hasQuat ? "Q" : "E", VIEW_W - 20, 30);
 
         canvas.hint(ENABLE_DEPTH_TEST);
     }

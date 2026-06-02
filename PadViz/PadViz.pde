@@ -79,6 +79,7 @@ void draw() {
     panel.draw(ds, frameIdx, fd, playSpeed, playing);
 
     if (liveMode) drawSerialDebug();
+    if (m3d.setupView) drawSetupLabel();
 }
 
 // ── CSV frame advance ─────────────────────────────────────────────────────────
@@ -94,6 +95,14 @@ void advanceCSV() {
         playing  = false;
         frameIdx = ds.frameCount() - 1;
     }
+}
+
+// ── Setup view label (drawn on main canvas, not PGraphics) ───────────────────
+void drawSetupLabel() {
+    fill(255, 220, 60);  noStroke();
+    textSize(13);  textAlign(CENTER, TOP);
+    text("SETUP VIEW  — looking down -Z  (X→right, Y→up)  |  press T to exit",
+         VIEW_W / 2, 6);
 }
 
 // ── Live serial debug overlay ─────────────────────────────────────────────────
