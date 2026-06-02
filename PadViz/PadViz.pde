@@ -10,9 +10,9 @@
 //   L            — connect / disconnect live serial
 //   R            — reset camera
 //   0            — normal mode (use file/serial data)
-//   1            — test: slow rotation around X axis
-//   2            — test: slow rotation around Y axis
-//   3            — test: slow rotation around Z axis
+//   1            — test: shaft axis only
+//   2            — test: blade-face axis only
+//   3            — test: blade-up axis only
 //   T            — toggle setup view (look down Z: X right, Y up)
 
 import processing.serial.*;
@@ -135,36 +135,61 @@ void drawSerialDebug() {
          lv.qw, lv.qx, lv.qy, lv.qz), bx + 6, y);
 }
 
+// ── Quaternion helpers ────────────────────────────────────────────────────────
+float[] qMul(float aw, float ax, float ay, float az,
+             float bw, float bx, float by, float bz) {
+    return new float[] {
+        aw*bw - ax*bx - ay*by - az*bz,
+        aw*bx + ax*bw + ay*bz - az*by,
+        aw*by - ax*bz + ay*bw + az*bx,
+        aw*bz + ax*by - ay*bx + az*bw
+    };
+}
+
+float[] qNorm(float[] q) {
+    float n = sqrt(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]);
+    if (n < 1e-6f) return new float[]{ 1, 0, 0, 0 };
+    return new float[]{ q[0]/n, q[1]/n, q[2]/n, q[3]/n };
+}
+
 // ── Axis test mode ────────────────────────────────────────────────────────────
-// Takes the real frame and rebuilds the quaternion using only one Euler angle,
-// so you can physically rotate the device and verify each axis independently.
+// Computes the full corrected rotation (IMU × correction), extracts only the
+// component around the requested corrected paddle axis (swing-twist projection),
+// then back-transforms so that draw()'s IMU×correction gives that projection.
+//
+// Corrected paddle axes in world frame (after correction + SIGN_X=-1 flip):
+//   Mode 1 — shaft      → world +X  (quaternion twist: w,x,0,0)
+//   Mode 2 — blade-face → world +Z  (quaternion twist: w,0,0,z)
+//   Mode 3 — blade-up   → world +Y  (quaternion twist: w,0,y,0)
 FrameData testFrame(FrameData real) {
     FrameData fd = new FrameData();
-    fd.hasQuat  = true;
-    fd.roll     = real.roll;
-    fd.pitch    = real.pitch;
-    fd.yaw      = real.yaw;
-    fd.cpm      = real.cpm;
+    fd.hasQuat     = true;
+    fd.roll        = real.roll;
+    fd.pitch       = real.pitch;
+    fd.yaw         = real.yaw;
+    fd.cpm         = real.cpm;
     fd.strokeCount = real.strokeCount;
-    fd.ts       = real.ts;
-    float h, s, c;
+    fd.ts          = real.ts;
+
+    // total = what draw() would produce: IMU × correction
+    float[] total = qMul(real.qw, real.qx, real.qy, real.qz,
+                         MAP_CORR_W, MAP_CORR_X, MAP_CORR_Y, MAP_CORR_Z);
+
+    // project total onto desired corrected paddle axis (swing-twist)
+    float[] proj;
     switch (testMode) {
-        case 1:  // X axis only — driven by roll
-            h = radians(real.roll) * 0.5f;
-            s = sin(h); c = cos(h);
-            fd.qw=c; fd.qx=s; fd.qy=0; fd.qz=0;
-            break;
-        case 2:  // Y axis only — driven by pitch
-            h = radians(real.pitch) * 0.5f;
-            s = sin(h); c = cos(h);
-            fd.qw=c; fd.qx=0; fd.qy=s; fd.qz=0;
-            break;
-        case 3:  // Z axis only — driven by yaw
-            h = radians(real.yaw) * 0.5f;
-            s = sin(h); c = cos(h);
-            fd.qw=c; fd.qx=0; fd.qy=0; fd.qz=s;
-            break;
+        case 1:  proj = qNorm(new float[]{ total[0], total[1], 0,        0        }); break;
+        case 2:  proj = qNorm(new float[]{ total[0], 0,        0,        total[3] }); break;
+        case 3:  proj = qNorm(new float[]{ total[0], 0,        total[2], 0        }); break;
+        default: proj = new float[]{ real.qw, real.qx, real.qy, real.qz };
     }
+
+    // fd.quat × correction = proj  →  fd.quat = proj × correction_conjugate
+    float[] result = qMul(proj[0], proj[1], proj[2], proj[3],
+                          MAP_CORR_W, -MAP_CORR_X, -MAP_CORR_Y, -MAP_CORR_Z);
+    fd.qw = result[0];  fd.qx = result[1];
+    fd.qy = result[2];  fd.qz = result[3];
+
     return fd;
 }
 
@@ -172,9 +197,9 @@ FrameData testFrame(FrameData real) {
 void keyPressed() {
     if (key == ' ')  { playing = !playing;  return; }
     if (key == '0')  { testMode = 0; surface.setTitle("PadViz"); return; }
-    if (key == '1')  { testMode = 1; surface.setTitle("PadViz — TEST: X axis"); return; }
-    if (key == '2')  { testMode = 2; surface.setTitle("PadViz — TEST: Y axis"); return; }
-    if (key == '3')  { testMode = 3; surface.setTitle("PadViz — TEST: Z axis"); return; }
+    if (key == '1')  { testMode = 1; surface.setTitle("PadViz — TEST: shaft axis"); return; }
+    if (key == '2')  { testMode = 2; surface.setTitle("PadViz — TEST: blade-face axis"); return; }
+    if (key == '3')  { testMode = 3; surface.setTitle("PadViz — TEST: blade-up axis"); return; }
     if (key == 'o' || key == 'O') { selectInput("Select CSV log file", "fileSelected"); return; }
     if (key == 'r' || key == 'R') { m3d.resetCamera(); return; }
     if (key == 't' || key == 'T') { m3d.toggleSetupView(); return; }
