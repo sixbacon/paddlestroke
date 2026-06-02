@@ -51,7 +51,7 @@ class DataSource {
         FrameData fd = new FrameData();
         try {
             if (t.length >= 10) {
-                fd.ts          = long(trim(t[0]));
+                fd.ts          = Long.parseLong(trim(t[0]));
                 fd.qw          = float(trim(t[1]));
                 fd.qx          = float(trim(t[2]));
                 fd.qy          = float(trim(t[3]));
@@ -63,7 +63,7 @@ class DataSource {
                 fd.cpm         = float(trim(t[9]));
                 fd.hasQuat     = true;
             } else if (t.length >= 6) {
-                fd.ts          = long(trim(t[0]));
+                fd.ts          = Long.parseLong(trim(t[0]));
                 fd.roll        = float(trim(t[1]));
                 fd.pitch       = float(trim(t[2]));
                 fd.yaw         = float(trim(t[3]));

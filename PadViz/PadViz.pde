@@ -9,6 +9,10 @@
 //   O            — open file dialog
 //   L            — connect / disconnect live serial
 //   R            — reset camera
+//   0            — normal mode (use file/serial data)
+//   1            — test: slow rotation around X axis
+//   2            — test: slow rotation around Y axis
+//   3            — test: slow rotation around Z axis
 
 import processing.serial.*;
 
@@ -29,6 +33,9 @@ float   frameFrac = 0;
 
 // ── Mode ──────────────────────────────────────────────────────────────────────
 boolean liveMode = false;
+
+// ── Axis test mode (0=off, 1=X, 2=Y, 3=Z) ───────────────────────────────────
+int testMode = 0;
 
 // ── Objects ───────────────────────────────────────────────────────────────────
 DataSource ds;
@@ -62,7 +69,7 @@ void draw() {
         ds.drainSerial();
     }
 
-    FrameData fd = liveMode ? ds.liveLatest() : ds.frameAt(frameIdx);
+    FrameData fd = (testMode > 0) ? testFrame() : (liveMode ? ds.liveLatest() : ds.frameAt(frameIdx));
 
     m3d.draw(fd);
     image(m3d.canvas, 0, 0);
@@ -85,17 +92,38 @@ void advanceCSV() {
     }
 }
 
+// ── Axis test mode ────────────────────────────────────────────────────────────
+// Returns a FrameData with a pure rotation around world X, Y, or Z,
+// cycling at one full revolution every ~6 seconds.
+FrameData testFrame() {
+    float angle = (millis() / 6000.0f) * TWO_PI;
+    float h = angle * 0.5f;
+    float s = sin(h), c = cos(h);
+    FrameData fd = new FrameData();
+    fd.hasQuat = true;
+    switch (testMode) {
+        case 1: fd.qw=c; fd.qx=s; fd.qy=0; fd.qz=0; fd.roll=degrees(angle);  break; // X
+        case 2: fd.qw=c; fd.qx=0; fd.qy=s; fd.qz=0; fd.pitch=degrees(angle); break; // Y
+        case 3: fd.qw=c; fd.qx=0; fd.qy=0; fd.qz=s; fd.yaw=degrees(angle);   break; // Z
+    }
+    return fd;
+}
+
 // ── Keyboard ──────────────────────────────────────────────────────────────────
 void keyPressed() {
     if (key == ' ')  { playing = !playing;  return; }
+    if (key == '0')  { testMode = 0; surface.setTitle("PadViz"); return; }
+    if (key == '1')  { testMode = 1; surface.setTitle("PadViz — TEST: X axis"); return; }
+    if (key == '2')  { testMode = 2; surface.setTitle("PadViz — TEST: Y axis"); return; }
+    if (key == '3')  { testMode = 3; surface.setTitle("PadViz — TEST: Z axis"); return; }
     if (key == 'o' || key == 'O') { selectInput("Select CSV log file", "fileSelected"); return; }
     if (key == 'r' || key == 'R') { m3d.resetCamera(); return; }
     if (key == 'l' || key == 'L') { toggleLive(); return; }
 
     if (keyCode == RIGHT) { frameIdx = min(frameIdx + 1, max(0, ds.frameCount() - 1)); playing = false; }
     if (keyCode == LEFT)  { frameIdx = max(frameIdx - 1, 0); playing = false; }
-    if (keyCode == HOME)  { frameIdx = 0; }
-    if (keyCode == END && ds.frameCount() > 0) frameIdx = ds.frameCount() - 1;
+    if (keyCode == 36)  { frameIdx = 0; }                                         // Home
+    if (keyCode == 35 && ds.frameCount() > 0) frameIdx = ds.frameCount() - 1;    // End
 }
 
 // ── Mouse ─────────────────────────────────────────────────────────────────────
