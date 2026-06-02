@@ -8,13 +8,15 @@
 //   SCALE    — uniform scale to fit model in view at default camera distance
 
 // ── paddle60.obj ──────────────────────────────────────────────────────────────
-// OBJ shaft runs along X (±0.909 m). Correction: 180°X keeps shaft along
-// world X (horizontal in setup view). SIGN_X = -1 corrects handedness.
+// OBJ shaft runs along X (±0.909 m).
+// Correction sequence: 180°X (shaft horizontal) → 90°X → 180°Z
+// Combined quaternion: [0, 0, -0.707, 0.707]. SIGN_X=-1 corrects handedness.
+// Verified correct in setup view (T key) 2 Jun 2026.
 
 float MAP_CORR_W =  0.0f;
-float MAP_CORR_X =  1.0f;
-float MAP_CORR_Y =  0.0f;
-float MAP_CORR_Z =  0.0f;
+float MAP_CORR_X =  0.0f;
+float MAP_CORR_Y = -0.70711f;
+float MAP_CORR_Z =  0.70711f;
 
 float MAP_SIGN_X = -1.0f;   // mirror X to correct handedness
 float MAP_SIGN_Y =  1.0f;
