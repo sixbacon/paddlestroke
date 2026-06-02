@@ -1,8 +1,8 @@
 # PadViz — Paddle Visualisation Specification
 
-**Version:** 0.3
+**Version:** 0.4
 **Date:** 2026-06-02
-**Status:** Phase 2 ready to implement. Phase 3 ready to implement (all questions resolved).
+**Status:** Phase 2 pending (firmware v8.8). Phase 3 complete and working.
 
 ---
 
@@ -50,9 +50,34 @@ This is identical to the planned v8.8 firmware changes (already documented in
 
 Version bump: **v8.8**. Both sketches must be updated together (payload struct must match).
 
-### Phase 3 — Processing sketch (PadViz)
+### Phase 3 — Processing sketch (PadViz) — COMPLETE (2 Jun 2026)
 
-Write the Processing visualisation sketch. All blocking questions are now resolved — see §8.
+Four-tab Processing sketch written and working:
+
+| Tab | Role |
+|---|---|
+| `PadViz.pde` | Main sketch: layout, keyboard/mouse routing, serial toggle, CSV auto-load |
+| `DataSource.pde` | CSV loader (6-col and 10-col formats), live serial ring buffer, eulerToQuat() fallback |
+| `Model3D.pde` | P3D sub-canvas, quaternion rotation via applyMatrix(), orbit camera (drag/scroll/R) |
+| `SidePanel.pde` | Speed slider (log 4×→step), play/pause, strip chart with zoom drag, variable selector |
+| `ModelMapping.pde` | Model-specific frame alignment: correction quaternion, per-axis mirror signs, scale |
+
+**Keyboard shortcuts (final):**
+
+| Key | Action |
+|---|---|
+| `Space` | Play / pause |
+| `→` / `←` | Step one frame |
+| `O` | Open CSV file dialog |
+| `L` | Connect / disconnect live serial (auto-selects COM3 or COM6) |
+| `R` | Reset camera |
+| `T` | Toggle setup view (look straight down Z — X right, Y up — for model alignment) |
+| `0` | Normal mode |
+| `1/2/3` | Test mode: live data isolated to X / Y / Z axis only |
+
+**ModelMapping:** All model-specific alignment in `ModelMapping.pde`. To use a new model,
+edit `MAP_CORR_*` (correction quaternion), `MAP_SIGN_*` (per-axis mirror ±1), and `MAP_SCALE`.
+Use setup view (T) to verify orientation interactively before use.
 
 ---
 
@@ -178,20 +203,23 @@ pushes against the water, oriented towards the rear of the kayak during a stroke
 
 ### 8.2 Model coordinate system and IMU axis mapping
 
-The model uses the following axes (confirmed by user):
+The OBJ model shaft runs along its X axis (±0.909 m). The `ModelMapping.pde` tab
+defines the correction needed to align the model frame to the IMU world frame:
 
-| Axis | Direction |
-|---|---|
-| **X** | Normal to the plane of the right-hand blade (points out of the blade face) |
-| **Y** | Along the shaft, towards the right-hand blade |
-| **Z** | In the plane of the right-hand blade (blade vertical) |
+| Parameter | Value | Meaning |
+|---|---|---|
+| `MAP_CORR_W/X/Y/Z` | `[0, 0, -0.707, 0.707]` | Correction quaternion (verified 2 Jun 2026) |
+| `MAP_SIGN_X` | `-1.0` | Mirror along X to fix handedness |
+| `MAP_SIGN_Y/Z` | `1.0` | No mirror |
+| `MAP_SCALE` | `150.0` | Uniform scale to fit view at camDist=350 |
 
-The BNO085 **roll** (rotation about the shaft long axis) therefore maps to **rotation about
-the model Y axis**. The full quaternion from the IMU is applied via `applyMatrix()` to
-orient the model. Because the physical mounting angle of the IMU on the shaft may differ
-from the model's rest pose, a fixed correction rotation (determined during first-run
-calibration) may be applied before the quaternion to align the model to the real-world
-resting orientation.
+The full IMU quaternion from the BNO085 is applied via `applyMatrix()` (gimbal-lock-free).
+The compound rotation is `IMU_quat × correction_quat`; correction is applied first (model
+rest pose), then the IMU rotation on top.
+
+**Setup view (T key):** Locks camera to look straight down the Z axis (X right, Y up on
+screen) and uses identity IMU quaternion, so only the correction is visible. Use this to
+verify model orientation when updating `ModelMapping.pde` for a new model.
 
 ### 8.3 Camera / viewpoint
 
