@@ -1,20 +1,18 @@
-// Model3D — 3-D paddle sub-canvas with orbit camera
-// OBJ model: shaft runs along the X axis (±0.909 m).
-// Correction quaternion rotates shaft X → world Y before IMU quat is applied.
+// Model3D — 3-D paddle sub-canvas with orbit camera.
+// All model-specific alignment values are in ModelMapping.pde.
 
 class Model3D {
     PGraphics canvas;
     PShape    paddle;
 
-    // ── Camera ────────────────────────────────────────────────────────────────
-    float camAz   = 30.0f;    // azimuth  (degrees)
-    float camEl   = 20.0f;    // elevation (degrees)
+    // ── Camera orbit ──────────────────────────────────────────────────────────
+    float camAz   = 30.0f;
+    float camEl   = 20.0f;
     float camDist = 350.0f;
-    final float MODEL_SCALE = 150.0f;
 
-    // Correction: 90°Z then 180°Y = combined [0, 0.70711, 0.70711, 0]
-    // 90°Z aligns model X-axis (shaft) to world Y; 180°Y flips upside-down
-    float corrW = 0.0f, corrX = 0.70711f, corrY = 0.70711f, corrZ = 0.0f;
+    // Setup view: camera on +Z axis looking at origin, X right, Y up on screen.
+    // Toggle with T key. Useful for verifying model orientation.
+    boolean setupView = false;
 
     // ── Mouse drag ────────────────────────────────────────────────────────────
     private int   dragStartX, dragStartY;
@@ -31,39 +29,48 @@ class Model3D {
     void draw(FrameData fd) {
         canvas.beginDraw();
         canvas.background(20, 24, 32);
-
-        // Camera position
-        float azR  = radians(camAz);
-        float elR  = radians(camEl);
-        float eyeX = camDist * cos(elR) * sin(azR);
-        float eyeY = camDist * cos(elR) * cos(azR);
-        float eyeZ = camDist * sin(elR);
-        canvas.camera(eyeX, eyeY, eyeZ, 0, 0, 0, 0, 0, 1);
         canvas.perspective(PI / 4.0f, (float) VIEW_W / TOTAL_H, 1, 5000);
+
+        // Camera
+        if (setupView) {
+            // Look straight down the Z axis: X goes right, Y goes up on screen.
+            canvas.camera(0, 0, camDist, 0, 0, 0, 0, 1, 0);
+        } else {
+            float azR  = radians(camAz);
+            float elR  = radians(camEl);
+            float eyeX = camDist * cos(elR) * sin(azR);
+            float eyeY = camDist * cos(elR) * cos(azR);
+            float eyeZ = camDist * sin(elR);
+            canvas.camera(eyeX, eyeY, eyeZ, 0, 0, 0, 0, 0, 1);
+        }
 
         canvas.lights();
         canvas.ambientLight(60, 60, 60);
-        canvas.directionalLight(220, 220, 220, -0.5f, -1.0f, -0.5f);
+        // X component of light direction is negated to compensate for MAP_SIGN_X mirror
+        canvas.directionalLight(220, 220, 220,
+            -MAP_SIGN_X * 0.5f, -1.0f, -0.5f);
 
-        // ── Paddle (with IMU rotation) ────────────────────────────────────────
+        // ── Paddle ────────────────────────────────────────────────────────────
         canvas.pushMatrix();
-        // Compound rotation: IMU quat × correction (correction applied first)
         float[] q = quatMul(fd.qw, fd.qx, fd.qy, fd.qz,
-                            corrW, corrX, corrY, corrZ);
+                            MAP_CORR_W, MAP_CORR_X, MAP_CORR_Y, MAP_CORR_Z);
         applyQuat(canvas, q[0], q[1], q[2], q[3]);
-        canvas.scale(MODEL_SCALE);
+        canvas.scale(MAP_SIGN_X * MAP_SCALE,
+                     MAP_SIGN_Y * MAP_SCALE,
+                     MAP_SIGN_Z * MAP_SCALE);
         if (paddle != null) {
             canvas.shape(paddle, 0, 0);
         } else {
-            // Fallback stick
-            canvas.fill(180, 180, 200);
-            canvas.noStroke();
+            canvas.fill(180, 180, 200);  canvas.noStroke();
             canvas.box(0.01f, 1.8f, 0.01f);
         }
         canvas.popMatrix();
 
-        // ── World reference axes (fixed) ──────────────────────────────────────
+        // ── World reference axes ──────────────────────────────────────────────
         drawAxes(canvas, 60);
+
+        // ── Setup view label ──────────────────────────────────────────────────
+        if (setupView) drawSetupLabel();
 
         // ── HUD ───────────────────────────────────────────────────────────────
         drawHud(fd);
@@ -71,7 +78,7 @@ class Model3D {
         canvas.endDraw();
     }
 
-    // Apply unit quaternion (w,x,y,z) as rotation matrix via applyMatrix
+    // Apply unit quaternion as rotation matrix (avoids gimbal lock)
     private void applyQuat(PGraphics g, float w, float x, float y, float z) {
         float x2=x*x, y2=y*y, z2=z*z;
         float xy=x*y, xz=x*z, yz=y*z, wx=w*x, wy=w*y, wz=w*z;
@@ -102,7 +109,20 @@ class Model3D {
         g.strokeWeight(1);
     }
 
-    // HUD: text overlay in screen coords (2-D pass over the 3-D canvas)
+    private void drawSetupLabel() {
+        canvas.hint(DISABLE_DEPTH_TEST);
+        canvas.noLights();
+        canvas.camera();
+        canvas.ortho(0, VIEW_W, 0, TOTAL_H, -1, 1);
+        canvas.noStroke();
+        canvas.fill(255, 220, 60, 220);
+        canvas.textSize(13);
+        canvas.textAlign(CENTER, TOP);
+        canvas.text("SETUP VIEW  — looking down Z  (X right, Y up)  press T to exit",
+                    VIEW_W / 2, 6);
+        canvas.hint(ENABLE_DEPTH_TEST);
+    }
+
     private void drawHud(FrameData fd) {
         canvas.hint(DISABLE_DEPTH_TEST);
         canvas.noLights();
@@ -113,33 +133,39 @@ class Model3D {
         canvas.fill(255, 255, 255, 200);
         canvas.textSize(13);
         canvas.textAlign(LEFT, TOP);
-
-        int x = 12, y = 12, dy = 17;
+        int x = 12, y = setupView ? 26 : 12, dy = 17;
         canvas.text("t     " + nf(fd.ts / 1000.0f, 0, 1) + " s", x, y);  y += dy;
-        canvas.text("roll  " + nf(fd.roll,  0, 1) + "°",     x, y);  y += dy;
-        canvas.text("pitch " + nf(fd.pitch, 0, 1) + "°",     x, y);  y += dy;
-        canvas.text("yaw   " + nf(fd.yaw,   0, 1) + "°",     x, y);  y += dy;
-        canvas.text("CPM   " + nf(fd.cpm,   0, 1),                x, y);  y += dy;
-        canvas.text("sc    " + fd.strokeCount,                     x, y);
+        canvas.text("roll  " + nf(fd.roll,  0, 1) + "°", x, y);  y += dy;
+        canvas.text("pitch " + nf(fd.pitch, 0, 1) + "°", x, y);  y += dy;
+        canvas.text("yaw   " + nf(fd.yaw,   0, 1) + "°", x, y);  y += dy;
+        canvas.text("CPM   " + nf(fd.cpm,   0, 1),            x, y);  y += dy;
+        canvas.text("sc    " + fd.strokeCount,                 x, y);
 
-        // Q/E indicator (quaternion source flag)
         canvas.fill(fd.hasQuat ? color(100, 220, 100) : color(220, 160, 60), 200);
-        canvas.text(fd.hasQuat ? "Q" : "E", VIEW_W - 20, 12);
+        canvas.text(fd.hasQuat ? "Q" : "E", VIEW_W - 20, setupView ? 26 : 12);
 
         canvas.hint(ENABLE_DEPTH_TEST);
     }
 
-    void resetCamera() { camAz = 30; camEl = 20; camDist = 350; }
+    void resetCamera() {
+        if (setupView) { camDist = 350; return; }
+        camAz = 30;  camEl = 20;  camDist = 350;
+    }
+
+    void toggleSetupView() {
+        setupView = !setupView;
+        camDist   = 350;
+    }
 
     // ── Mouse ─────────────────────────────────────────────────────────────────
     void mousePressed(int mx, int my) {
-        dragStartX = mx;   dragStartY = my;
+        dragStartX = mx;  dragStartY = my;
         dragStartAz = camAz;  dragStartEl = camEl;
         dragging = true;
     }
 
     void mouseDragged(int mx, int my) {
-        if (!dragging) return;
+        if (!dragging || setupView) return;
         camAz = dragStartAz + (mx - dragStartX) * 0.5f;
         camEl = constrain(dragStartEl - (my - dragStartY) * 0.5f, -89, 89);
     }

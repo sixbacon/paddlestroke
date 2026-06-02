@@ -13,6 +13,7 @@
 //   1            — test: slow rotation around X axis
 //   2            — test: slow rotation around Y axis
 //   3            — test: slow rotation around Z axis
+//   T            — toggle setup view (look down Z: X right, Y up)
 
 import processing.serial.*;
 
@@ -167,6 +168,7 @@ void keyPressed() {
     if (key == '3')  { testMode = 3; surface.setTitle("PadViz — TEST: Z axis"); return; }
     if (key == 'o' || key == 'O') { selectInput("Select CSV log file", "fileSelected"); return; }
     if (key == 'r' || key == 'R') { m3d.resetCamera(); return; }
+    if (key == 't' || key == 'T') { m3d.toggleSetupView(); return; }
     if (key == 'l' || key == 'L') { toggleLive(); return; }
 
     if (keyCode == RIGHT) { frameIdx = min(frameIdx + 1, max(0, ds.frameCount() - 1)); playing = false; }
