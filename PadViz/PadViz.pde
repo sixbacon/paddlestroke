@@ -69,7 +69,8 @@ void draw() {
         ds.drainSerial();
     }
 
-    FrameData fd = (testMode > 0) ? testFrame() : (liveMode ? ds.liveLatest() : ds.frameAt(frameIdx));
+    FrameData real = liveMode ? ds.liveLatest() : ds.frameAt(frameIdx);
+    FrameData fd   = (testMode > 0) ? testFrame(real) : real;
 
     m3d.draw(fd);
     image(m3d.canvas, 0, 0);
@@ -93,18 +94,34 @@ void advanceCSV() {
 }
 
 // ── Axis test mode ────────────────────────────────────────────────────────────
-// Returns a FrameData with a pure rotation around world X, Y, or Z,
-// cycling at one full revolution every ~6 seconds.
-FrameData testFrame() {
-    float angle = (millis() / 6000.0f) * TWO_PI;
-    float h = angle * 0.5f;
-    float s = sin(h), c = cos(h);
+// Takes the real frame and rebuilds the quaternion using only one Euler angle,
+// so you can physically rotate the device and verify each axis independently.
+FrameData testFrame(FrameData real) {
     FrameData fd = new FrameData();
-    fd.hasQuat = true;
+    fd.hasQuat  = true;
+    fd.roll     = real.roll;
+    fd.pitch    = real.pitch;
+    fd.yaw      = real.yaw;
+    fd.cpm      = real.cpm;
+    fd.strokeCount = real.strokeCount;
+    fd.ts       = real.ts;
+    float h, s, c;
     switch (testMode) {
-        case 1: fd.qw=c; fd.qx=s; fd.qy=0; fd.qz=0; fd.roll=degrees(angle);  break; // X
-        case 2: fd.qw=c; fd.qx=0; fd.qy=s; fd.qz=0; fd.pitch=degrees(angle); break; // Y
-        case 3: fd.qw=c; fd.qx=0; fd.qy=0; fd.qz=s; fd.yaw=degrees(angle);   break; // Z
+        case 1:  // X axis only — driven by roll
+            h = radians(real.roll) * 0.5f;
+            s = sin(h); c = cos(h);
+            fd.qw=c; fd.qx=s; fd.qy=0; fd.qz=0;
+            break;
+        case 2:  // Y axis only — driven by pitch
+            h = radians(real.pitch) * 0.5f;
+            s = sin(h); c = cos(h);
+            fd.qw=c; fd.qx=0; fd.qy=s; fd.qz=0;
+            break;
+        case 3:  // Z axis only — driven by yaw
+            h = radians(real.yaw) * 0.5f;
+            s = sin(h); c = cos(h);
+            fd.qw=c; fd.qx=0; fd.qy=0; fd.qz=s;
+            break;
     }
     return fd;
 }
