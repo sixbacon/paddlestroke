@@ -201,7 +201,8 @@ void keyPressed() {
                        m3d.camAz = 0; m3d.camEl = 0; return; }   // look from +Y: gaze is -Y (opposite green)
     if (key == '2')  { testMode = 2; surface.setTitle("PadViz — TEST: blade-face axis");
                        m3d.camAz = 0; m3d.camEl = 0; return; }  // Z points up on screen
-    if (key == '3')  { testMode = 3; surface.setTitle("PadViz — TEST: blade-up axis"); return; }
+    if (key == '3')  { testMode = 3; surface.setTitle("PadViz — TEST: blade-up axis");
+                       m3d.camAz = 0; m3d.camEl = 0; return; }   // Z points up; rotation sweeps shaft side to side
     if (key == 'o' || key == 'O') { selectInput("Select CSV log file", "fileSelected"); return; }
     if (key == 'r' || key == 'R') { m3d.resetCamera(); return; }
     if (key == 't' || key == 'T') { m3d.toggleSetupView(); return; }
