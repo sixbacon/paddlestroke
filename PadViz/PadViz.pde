@@ -197,7 +197,8 @@ FrameData testFrame(FrameData real) {
 void keyPressed() {
     if (key == ' ')  { playing = !playing;  return; }
     if (key == '0')  { testMode = 0; surface.setTitle("PadViz"); return; }
-    if (key == '1')  { testMode = 1; surface.setTitle("PadViz — TEST: shaft axis"); return; }
+    if (key == '1')  { testMode = 1; surface.setTitle("PadViz — TEST: shaft axis");
+                       m3d.camAz = 90; m3d.camEl = 20; return; }  // look from +X end: shaft toward viewer
     if (key == '2')  { testMode = 2; surface.setTitle("PadViz — TEST: blade-face axis"); return; }
     if (key == '3')  { testMode = 3; surface.setTitle("PadViz — TEST: blade-up axis"); return; }
     if (key == 'o' || key == 'O') { selectInput("Select CSV log file", "fileSelected"); return; }
