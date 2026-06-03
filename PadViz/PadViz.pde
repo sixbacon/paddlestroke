@@ -178,9 +178,9 @@ FrameData testFrame(FrameData real) {
     // project total onto desired corrected paddle axis (swing-twist)
     float[] proj;
     switch (testMode) {
-        case 1:  proj = qNorm(new float[]{ total[0], total[1], 0,        0        }); break;
-        case 2:  proj = qNorm(new float[]{ total[0], 0,        0,        total[3] }); break;
-        case 3:  proj = qNorm(new float[]{ total[0], 0,        total[2], 0        }); break;
+        case 1:  proj = qNorm(new float[]{ total[0], -total[1], 0,        0        }); break;
+        case 2:  proj = qNorm(new float[]{ total[0],  0,        0,       -total[3] }); break;
+        case 3:  proj = qNorm(new float[]{ total[0],  0,        total[2], 0        }); break;
         default: proj = new float[]{ real.qw, real.qx, real.qy, real.qz };
     }
 
