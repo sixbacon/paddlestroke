@@ -202,7 +202,7 @@ void keyPressed() {
     if (key == '2')  { testMode = 2; surface.setTitle("PadViz — TEST: blade-face axis");
                        m3d.camAz = 0; m3d.camEl = 0; return; }  // Z points up on screen
     if (key == '3')  { testMode = 3; surface.setTitle("PadViz — TEST: blade-up axis");
-                       m3d.camAz = 0; m3d.camEl = 0; return; }   // Z points up; rotation sweeps shaft side to side
+                       m3d.camAz = 30; m3d.camEl = 20; return; } // default 3/4 view: blue (Z) axis points up
     if (key == 'o' || key == 'O') { selectInput("Select CSV log file", "fileSelected"); return; }
     if (key == 'r' || key == 'R') { m3d.resetCamera(); return; }
     if (key == 't' || key == 'T') { m3d.toggleSetupView(); return; }
