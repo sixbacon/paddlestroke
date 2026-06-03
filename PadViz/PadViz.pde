@@ -157,10 +157,10 @@ float[] qNorm(float[] q) {
 // component around the requested corrected paddle axis (swing-twist projection),
 // then back-transforms so that draw()'s IMU×correction gives that projection.
 //
-// Corrected paddle axes in world frame (after correction + SIGN_X=-1 flip):
+// Corrected paddle axes in world frame (after correction [0,0,-1,0] + SIGN_X=-1):
 //   Mode 1 — shaft      → world +X  (quaternion twist: w,x,0,0)
-//   Mode 2 — blade-face → world +Z  (quaternion twist: w,0,0,z)
-//   Mode 3 — blade-up   → world +Y  (quaternion twist: w,0,y,0)
+//   Mode 2 — blade-face → world +Y  (quaternion twist: w,0,y,0)
+//   Mode 3 — blade-up   → world -Z  (quaternion twist: w,0,0,z)
 FrameData testFrame(FrameData real) {
     FrameData fd = new FrameData();
     fd.hasQuat     = true;
@@ -179,8 +179,8 @@ FrameData testFrame(FrameData real) {
     float[] proj;
     switch (testMode) {
         case 1:  proj = qNorm(new float[]{ total[0], -total[1], 0,        0        }); break;
-        case 2:  proj = qNorm(new float[]{ total[0],  0,        0,       -total[3] }); break;
-        case 3:  proj = qNorm(new float[]{ total[0],  0,        total[2], 0        }); break;
+        case 2:  proj = qNorm(new float[]{ total[0],  0,        total[2], 0        }); break;
+        case 3:  proj = qNorm(new float[]{ total[0],  0,        0,       -total[3] }); break;
         default: proj = new float[]{ real.qw, real.qx, real.qy, real.qz };
     }
 
