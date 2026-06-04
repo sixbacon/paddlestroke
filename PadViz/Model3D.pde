@@ -42,7 +42,7 @@ class Model3D {
         } else if (kayakView) {
             // Fixed context camera: (0, +1.5m, +1.5m) looking at paddle origin, Z up.
             float d = 1.5f * MAP_SCALE;
-            canvas.camera(0, d, d, 0, 0, 0, 0, 0, 1);
+            canvas.camera(0, d, -d, 0, 0, 0, 0, 0, 1);
         } else {
             float azR  = radians(camAz);
             float elR  = radians(camEl);
@@ -208,6 +208,18 @@ class Model3D {
             g.vertex(bot[j][0]*s, bot[j][1]*s, bot[j][2]*s);
             g.vertex(top[j][0]*s, top[j][1]*s, top[j][2]*s);
         }
+        g.endShape();
+
+        // Cockpit — dark rectangle on deck (drawn above blue deck, same z=+0.15)
+        // Vertices match kayak.obj: (±0.40, ±0.225, 0.15)
+        g.fill(30, 32, 40);
+        g.beginShape(TRIANGLES);
+        g.vertex( 0.40f*s, -0.225f*s, 0.15f*s);
+        g.vertex( 0.40f*s,  0.225f*s, 0.15f*s);
+        g.vertex(-0.40f*s,  0.225f*s, 0.15f*s);
+        g.vertex( 0.40f*s, -0.225f*s, 0.15f*s);
+        g.vertex(-0.40f*s,  0.225f*s, 0.15f*s);
+        g.vertex(-0.40f*s, -0.225f*s, 0.15f*s);
         g.endShape();
     }
 

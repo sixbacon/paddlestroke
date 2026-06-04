@@ -158,10 +158,16 @@ float[] qNorm(float[] q) {
 // component around the requested corrected paddle axis (swing-twist projection),
 // then back-transforms so that draw()'s IMU×correction gives that projection.
 //
-// Corrected paddle axes in world frame (after correction [0,0,-1,0] + SIGN_X=-1):
-//   Mode 1 — shaft      → world +X  (quaternion twist: w,x,0,0)
-//   Mode 2 — blade-face → world +Y  (quaternion twist: w,0,y,0)
-//   Mode 3 — blade-up   → world -Z  (quaternion twist: w,0,0,z)
+// *** WARNING: these projection formulas are derived for a SPECIFIC correction
+// quaternion. If MAP_CORR_* in ModelMapping.pde is changed, all three case
+// formulas below must be rederived to match the new corrected paddle axes. ***
+//
+// Current correction [0,1,0,0] = Rx(180°). Corrected paddle axes:
+//   Mode 1 — shaft      → world +X  (OBJ X → Rx(180°) → +X)
+//   Mode 2 — blade-face → world -Y  (OBJ Y → Rx(180°) → -Y)
+//   Mode 3 — blade-up   → world -Z  (OBJ Z → Rx(180°) → -Z)
+// NOTE: modes 2 and 3 projection formulas below are stale (written for old
+// correction [0,0,-1,0]) and need updating for the current correction [0,1,0,0].
 FrameData testFrame(FrameData real) {
     FrameData fd = new FrameData();
     fd.hasQuat     = true;
