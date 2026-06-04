@@ -81,6 +81,7 @@ void draw() {
 
     if (liveMode) drawSerialDebug();
     if (m3d.setupView) drawSetupLabel();
+    if (testMode > 0) drawTestDiag(real);
 }
 
 // ── CSV frame advance ─────────────────────────────────────────────────────────
@@ -96,6 +97,21 @@ void advanceCSV() {
         playing  = false;
         frameIdx = ds.frameCount() - 1;
     }
+}
+
+// ── Test-mode diagnostic overlay ─────────────────────────────────────────────
+// Shows the total[] quaternion (IMU × correction) live so formulas can be
+// verified empirically: rotate the device about one physical axis at a time
+// and observe which components change.
+void drawTestDiag(FrameData real) {
+    float[] t = qMul(real.qw, real.qx, real.qy, real.qz,
+                     MAP_CORR_W, MAP_CORR_X, MAP_CORR_Y, MAP_CORR_Z);
+    fill(0, 0, 0, 160);  noStroke();
+    rect(6, TOTAL_H - 36, VIEW_W - 12, 30, 3);
+    fill(255, 200, 80);
+    textSize(12);  textAlign(LEFT, CENTER);
+    text(String.format("total  w=%.3f  x=%.3f  y=%.3f  z=%.3f", t[0], t[1], t[2], t[3]),
+         14, TOTAL_H - 21);
 }
 
 // ── Setup view label (drawn on main canvas, not PGraphics) ───────────────────
@@ -185,7 +201,7 @@ FrameData testFrame(FrameData real) {
     // project total onto desired corrected paddle axis (swing-twist)
     float[] proj;
     switch (testMode) {
-        case 1:  proj = qNorm(new float[]{ total[0], -total[1], 0,        0        }); break;
+        case 1:  proj = qNorm(new float[]{ total[0],  total[1], 0,        0        }); break;
         case 2:  proj = qNorm(new float[]{ total[0],  0,        total[2], 0        }); break;
         case 3:  proj = qNorm(new float[]{ total[0],  0,        0,       -total[3] }); break;
         default: proj = new float[]{ real.qw, real.qx, real.qy, real.qz };
