@@ -25,7 +25,7 @@ class SidePanel {
 
     // ── Zoom state ────────────────────────────────────────────────────────────
     int  zoomA = -1, zoomB = -1;
-    boolean sliderDrag = false, zoomDrag = false;
+    boolean sliderDrag = false, zoomDrag = false, seekDrag = false;
     int  zoomDragStart;
 
     SidePanel(int originX, int height, int width) {
@@ -127,10 +127,11 @@ class SidePanel {
 
         fill(18, 20, 28);  noStroke();  rect(chartX, chartY, chartW, chartH);
 
-        // Cursor line
+        // Cursor line (thicker — grab within ±6 px to seek)
         float curT = (float)(frameIdx - viewA) / max(1, viewB - viewA);
-        stroke(255, 255, 100, 180);  strokeWeight(1);
+        stroke(255, 255, 100, 220);  strokeWeight(2);
         line(chartX + curT * chartW, chartY, chartX + curT * chartW, chartY + chartH);
+        strokeWeight(1);
 
         // Zoom region overlay
         if (zoomA >= 0 && zoomB > zoomA) {
@@ -204,11 +205,22 @@ class SidePanel {
             if (my >= ry && my < ry + VAR_ROW_H) { cycleSlot(v); return; }
         }
 
-        // Chart zoom drag
+        // Chart: drag cursor to seek, or drag elsewhere to zoom
         if (my >= chartY && my <= chartY + chartH && mx >= chartX && mx <= chartX + chartW) {
-            zoomDrag      = true;
-            zoomDragStart = frameFromChartX(mx, ds);
-            zoomA = zoomB = zoomDragStart;
+            int n = ds.frameCount();
+            int viewA = (zoomA >= 0 && zoomB > zoomA) ? zoomA : 0;
+            int viewB = (zoomB >  0 && zoomB > zoomA) ? zoomB : n - 1;
+            float curT   = (float)(frameIdx - viewA) / max(1, viewB - viewA);
+            int   cursorX = chartX + (int)(curT * chartW);
+            if (abs(mx - cursorX) <= 6) {
+                seekDrag = true;
+                setFrameIdx(frameFromChartX(mx, ds));
+                setPlaying(false);
+            } else {
+                zoomDrag      = true;
+                zoomDragStart = frameFromChartX(mx, ds);
+                zoomA = zoomB = zoomDragStart;
+            }
             return;
         }
 
@@ -220,6 +232,7 @@ class SidePanel {
 
     void mouseDragged(int mx, int my, DataSource ds) {
         if (sliderDrag) { applySlider(mx, MARGIN, pw - MARGIN * 2); return; }
+        if (seekDrag)   { setFrameIdx(frameFromChartX(mx, ds)); return; }
         if (zoomDrag) {
             int fi = frameFromChartX(mx, ds);
             if (fi >= zoomDragStart) { zoomA = zoomDragStart; zoomB = fi; }
@@ -230,6 +243,7 @@ class SidePanel {
     void mouseReleased(int mx, int my) {
         sliderDrag = false;
         zoomDrag   = false;
+        seekDrag   = false;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

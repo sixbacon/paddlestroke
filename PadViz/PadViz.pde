@@ -14,6 +14,7 @@
 //   2            — test: blade-face axis only
 //   3            — test: blade-up axis only
 //   T            — toggle setup view (look down Z: X right, Y up)
+//   K            — toggle kayak context view (fixed camera above-aft)
 
 import processing.serial.*;
 
@@ -206,6 +207,7 @@ void keyPressed() {
     if (key == 'o' || key == 'O') { selectInput("Select CSV log file", "fileSelected"); return; }
     if (key == 'r' || key == 'R') { m3d.resetCamera(); return; }
     if (key == 't' || key == 'T') { m3d.toggleSetupView(); return; }
+    if (key == 'k' || key == 'K') { m3d.kayakView = !m3d.kayakView; return; }
     if (key == 'l' || key == 'L') { toggleLive(); return; }
 
     if (keyCode == RIGHT) { frameIdx = min(frameIdx + 1, max(0, ds.frameCount() - 1)); playing = false; }

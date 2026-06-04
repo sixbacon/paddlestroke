@@ -9,13 +9,12 @@
 
 // ── paddle60.obj ──────────────────────────────────────────────────────────────
 // OBJ shaft runs along X (±0.909 m).
-// Previous [0,0,-0.707,0.707] with additional Rx(+90°) world-space to match
-// sensor mounting orientation → combined = [0, 0, -1, 0] (180° around Y).
-// SIGN_X=-1 corrects handedness. 3 Jun 2026.
+// Previous [0,0,-1,0] (Ry180) composed with additional Rz(180°) = Rx(180°) = [0,1,0,0].
+// SIGN_X=-1 corrects handedness. 4 Jun 2026.
 
 float MAP_CORR_W =  0.0f;
-float MAP_CORR_X =  0.0f;
-float MAP_CORR_Y = -1.0f;
+float MAP_CORR_X =  1.0f;
+float MAP_CORR_Y =  0.0f;
 float MAP_CORR_Z =  0.0f;
 
 float MAP_SIGN_X = -1.0f;   // mirror X to correct handedness

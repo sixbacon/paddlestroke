@@ -14,6 +14,10 @@ class Model3D {
     // Toggle with T key. Useful for verifying model orientation.
     boolean setupView = false;
 
+    // Kayak context view: fixed camera at (0, +1.5m, +1.5m) looking at paddle origin.
+    // Toggle with K key.
+    boolean kayakView = false;
+
     // ── Mouse drag ────────────────────────────────────────────────────────────
     private int   dragStartX, dragStartY;
     private float dragStartAz, dragStartEl;
@@ -35,6 +39,10 @@ class Model3D {
         if (setupView) {
             // Look straight down the Z axis: X goes right, Y goes up on screen.
             canvas.camera(0, 0, camDist, 0, 0, 0, 0, 1, 0);
+        } else if (kayakView) {
+            // Fixed context camera: (0, +1.5m, +1.5m) looking at paddle origin, Z up.
+            float d = 1.5f * MAP_SCALE;
+            canvas.camera(0, d, d, 0, 0, 0, 0, 0, 1);
         } else {
             float azR  = radians(camAz);
             float elR  = radians(camEl);
@@ -70,6 +78,16 @@ class Model3D {
             canvas.fill(180, 180, 200);  canvas.noStroke();
             canvas.box(0.01f, 1.8f, 0.01f);
         }
+        canvas.popMatrix();
+
+        // ── Kayak (fixed world position, no IMU rotation) ────────────────────
+        // Local long axis is X; rotateZ(HALF_PI) maps it to +Y in world space.
+        // Centre at (0, -0.4m, 0.4m).
+        canvas.pushMatrix();
+        canvas.translate(0, -0.4f * MAP_SCALE, 0.4f * MAP_SCALE);
+        canvas.rotateY(PI);
+        canvas.rotateZ(HALF_PI);
+        drawKayakShape(canvas);
         canvas.popMatrix();
 
         // ── World reference axes ──────────────────────────────────────────────
@@ -138,6 +156,61 @@ class Model3D {
         canvas.hint(ENABLE_DEPTH_TEST);
     }
 
+    // ── Procedural kayak ─────────────────────────────────────────────────────
+    // 8-vertex hull: long axis X (-2.75 to +2.75 m), half-width 0.275 m,
+    // half-height 0.15 m. Coordinates in metres, scaled by MAP_SCALE.
+    private void drawKayakShape(PGraphics g) {
+        float s = MAP_SCALE;
+        float[][] top = {
+            { 2.75f,  0.000f, 0.15f}, { 1.50f, -0.200f, 0.15f},
+            { 0.00f, -0.275f, 0.15f}, {-1.50f, -0.200f, 0.15f},
+            {-2.75f,  0.000f, 0.15f}, {-1.50f,  0.200f, 0.15f},
+            { 0.00f,  0.275f, 0.15f}, { 1.50f,  0.200f, 0.15f}
+        };
+        float[][] bot = {
+            { 2.75f,  0.000f, -0.15f}, { 1.50f, -0.200f, -0.15f},
+            { 0.00f, -0.275f, -0.15f}, {-1.50f, -0.200f, -0.15f},
+            {-2.75f,  0.000f, -0.15f}, {-1.50f,  0.200f, -0.15f},
+            { 0.00f,  0.275f, -0.15f}, { 1.50f,  0.200f, -0.15f}
+        };
+        int n = top.length;
+        g.noStroke();
+
+        // Blue deck — fan from top[0]
+        g.fill(0, 50, 200);
+        g.beginShape(TRIANGLES);
+        for (int i = 1; i < n - 1; i++) {
+            g.vertex(top[0][0]*s, top[0][1]*s, top[0][2]*s);
+            g.vertex(top[i][0]*s, top[i][1]*s, top[i][2]*s);
+            g.vertex(top[i+1][0]*s, top[i+1][1]*s, top[i+1][2]*s);
+        }
+        g.endShape();
+
+        // Grey hull bottom — fan from bot[n-1], reversed winding
+        g.fill(160, 160, 160);
+        g.beginShape(TRIANGLES);
+        for (int i = n - 2; i > 0; i--) {
+            g.vertex(bot[n-1][0]*s, bot[n-1][1]*s, bot[n-1][2]*s);
+            g.vertex(bot[i][0]*s,   bot[i][1]*s,   bot[i][2]*s);
+            g.vertex(bot[i-1][0]*s, bot[i-1][1]*s, bot[i-1][2]*s);
+        }
+        g.endShape();
+
+        // Sides — two triangles per quad
+        g.fill(120, 125, 135);
+        g.beginShape(TRIANGLES);
+        for (int i = 0; i < n; i++) {
+            int j = (i + 1) % n;
+            g.vertex(top[i][0]*s, top[i][1]*s, top[i][2]*s);
+            g.vertex(bot[i][0]*s, bot[i][1]*s, bot[i][2]*s);
+            g.vertex(top[j][0]*s, top[j][1]*s, top[j][2]*s);
+            g.vertex(bot[i][0]*s, bot[i][1]*s, bot[i][2]*s);
+            g.vertex(bot[j][0]*s, bot[j][1]*s, bot[j][2]*s);
+            g.vertex(top[j][0]*s, top[j][1]*s, top[j][2]*s);
+        }
+        g.endShape();
+    }
+
     void resetCamera() {
         if (setupView) { camDist = 350; return; }
         camAz = 30;  camEl = 20;  camDist = 350;
@@ -156,7 +229,7 @@ class Model3D {
     }
 
     void mouseDragged(int mx, int my) {
-        if (!dragging || setupView) return;
+        if (!dragging || setupView || kayakView) return;
         camAz = dragStartAz + (mx - dragStartX) * 0.5f;
         camEl = constrain(dragStartEl - (my - dragStartY) * 0.5f, -89, 89);
     }
