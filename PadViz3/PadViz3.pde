@@ -9,9 +9,12 @@ void draw() {
     background(30);
 
     // Camera: position (0, -400, 400), looking at origin, Z up
-    camera(0, -400, 400,   // eye
+    camera(0, -400, 400,   // eye: first view
            0,    0,   0,   // centre
-           0,    0,  -1);  // up: -Z in Processing = upward on screen
+           0,    0,  -1);  // up
+
+    // Mirror about YZ plane: x → -x
+    scale(-1, 1, 1);
 
     lights();
 
