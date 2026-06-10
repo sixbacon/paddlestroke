@@ -5,17 +5,18 @@
 // The remap matrix applied once per frame converts user coords → Processing coords:
 //   (xu, yu, zu) → (xu, -zu, -yu)
 //
-// Camera default: eye at (0, -1.5 m, +0.5 m) in user coords → Processing (0, -0.5s, 1.5s)
+// Camera default: eye at (0, -3.5m, +1.3m) in user coords, 0.75m behind stern.
 
 class Model3D {
     PGraphics canvas;
     PShape    paddle;
 
     // ── Camera orbit (user coords, degrees / metres) ──────────────────────────
-    // Default: eye at (0, -1.5m, 0.5m) → dist=sqrt(1.5²+0.5²)×S≈237px, el≈18°
+    // Stern is at y=-2.75m × S = -412px. Camera must be further back than that.
+    // camDist=560, el=20° → eye at user (0, -3.5m, 1.3m) — 0.75m behind stern.
     float camAz   =  0.0f;
-    float camEl   = 18.4f;
-    float camDist = 237.0f;
+    float camEl   = 20.0f;
+    float camDist = 560.0f;
 
     // Mouse drag
     private int   dragStartX, dragStartY;
@@ -94,7 +95,7 @@ class Model3D {
                        0,  -1,   0);  // up: user +Z → Processing -Y
     }
 
-    void resetCamera() { camAz = 0; camEl = 18.4f; camDist = 237; }
+    void resetCamera() { camAz = 0; camEl = 20.0f; camDist = 560; }
 
     // ── World axes (user coord space) ─────────────────────────────────────────
     private void drawAxes(PGraphics g, float len) {
