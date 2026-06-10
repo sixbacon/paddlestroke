@@ -3,7 +3,7 @@
 // Coordinate system: X right, Y into screen, Z up.
 // Processing native is X right, Y down, Z toward viewer.
 // The remap matrix applied once per frame converts user coords → Processing coords:
-//   (xu, yu, zu) → (xu, -zu, -yu)
+//   (xu, yu, zu) → (xu, +zu, -yu)   det=+1, preserves winding and normals
 //
 // Camera default: eye at (0, -3.5m, +1.3m) in user coords, 0.75m behind stern.
 
@@ -44,10 +44,11 @@ class Model3D {
         canvas.ambientLight(60, 60, 60);
         canvas.directionalLight(220, 220, 220, 0.4f, 0.6f, -0.7f);
 
-        // Apply coordinate remap: user(x,y,z) → Processing(x,-z,-y)
+        // Apply coordinate remap: user(x,y,z) → Processing(x,+z,-y)
+        // det=+1 (proper rotation): user Z→Processing +Y (up), user Y→Processing -Z (into screen)
         canvas.applyMatrix(
             1,  0,  0,  0,
-            0,  0, -1,  0,
+            0,  0,  1,  0,
             0, -1,  0,  0,
             0,  0,  0,  1
         );
@@ -89,10 +90,10 @@ class Model3D {
         float ux = camDist * cos(elR) * sin(azR);
         float uy = -camDist * cos(elR) * cos(azR);  // default az=0 → Y into screen
         float uz = camDist * sin(elR);
-        // Convert to Processing coords: (ux, -uz, -uy)
-        canvas.camera(ux, -uz, -uy,   // eye
+        // Convert to Processing coords: user(x,y,z) → Processing(x,+z,-y)
+        canvas.camera(ux,  uz, -uy,   // eye
                        0,   0,   0,   // centre (origin)
-                       0,  -1,   0);  // up: user +Z → Processing -Y
+                       0,   1,   0);  // up: user +Z → Processing +Y → screen up
     }
 
     void resetCamera() { camAz = 0; camEl = 20.0f; camDist = 560; }
