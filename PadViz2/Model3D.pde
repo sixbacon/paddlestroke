@@ -51,8 +51,9 @@ class Model3D {
             0, -1,  0,  0,
             0,  0,  0,  1
         );
-        // Rotate scene 180° about Y to flip the view right-way-up
+        // Rotate scene 180° about Y then 180° about X
         canvas.rotateY(PI);
+        canvas.rotateX(PI);
 
         // ── World reference axes ──────────────────────────────────────────────
         // Drawn in user coords (X right, Y into screen, Z up)
