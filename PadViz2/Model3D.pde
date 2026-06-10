@@ -1,11 +1,9 @@
 // Model3D — 3-D sub-canvas (P3D).
 //
 // Coordinate system: X right, Y into screen, Z up.
-// Processing native is X right, Y down, Z toward viewer.
-// The remap matrix applied once per frame converts user coords → Processing coords:
-//   (xu, yu, zu) → (xu, +zu, -yu)   det=+1, preserves winding and normals
-//
-// Camera default: eye at (0, -3.5m, +1.3m) in user coords, 0.75m behind stern.
+// Achieved by: camera with up=(0,0,-1) + scale(-1,1,1).
+// Verified in PadViz3: camera(0,-400,400,...,0,0,-1) + scale(-1,1,1) gives correct axes.
+// Camera default: eye at (0, -camDist*cos(el), camDist*sin(el)) — behind stern, elevated.
 
 class Model3D {
     PGraphics canvas;
@@ -44,17 +42,9 @@ class Model3D {
         canvas.ambientLight(60, 60, 60);
         canvas.directionalLight(220, 220, 220, 0.4f, 0.6f, -0.7f);
 
-        // Apply coordinate remap: user(x,y,z) → Processing(x,-z,-y)
-        canvas.applyMatrix(
-            1,  0,  0,  0,
-            0,  0, -1,  0,
-            0, -1,  0,  0,
-            0,  0,  0,  1
-        );
-        // Rotate scene 180° about Y, 180° about X, 180° about Z
-        canvas.rotateY(PI);
-        canvas.rotateX(PI);
-        canvas.rotateZ(PI);
+        // Mirror about YZ plane: makes X increase to the right.
+        // Combined with camera up=(0,0,-1) this gives X right, Y into screen, Z up.
+        canvas.scale(-1, 1, 1);
 
         // ── World reference axes ──────────────────────────────────────────────
         // Drawn in user coords (X right, Y into screen, Z up)
@@ -89,14 +79,13 @@ class Model3D {
     private void setCamera() {
         float azR = radians(camAz);
         float elR = radians(camEl);
-        // Eye in user coords
-        float ux = camDist * cos(elR) * sin(azR);
-        float uy = -camDist * cos(elR) * cos(azR);  // default az=0 → Y into screen
-        float uz = camDist * sin(elR);
-        // Convert to Processing coords: user(x,y,z) → Processing(x,-z,-y)
-        canvas.camera(ux, -uz, -uy,   // eye
-                       0,   0,   0,   // centre (origin)
-                       0,  -1,   0);  // up
+        // Eye: behind (−Y) and above (+Z). Orbit azimuth negated to match mirrored X.
+        float ux =  camDist * cos(elR) * sin(-azR);
+        float uy = -camDist * cos(elR) * cos( azR);
+        float uz =  camDist * sin(elR);
+        canvas.camera(ux, uy, uz,   // eye
+                       0,  0,  0,   // centre
+                       0,  0, -1);  // up: -Z is screen-up (verified in PadViz3)
     }
 
     void resetCamera() { camAz = 0; camEl = 20.0f; camDist = 560; }
