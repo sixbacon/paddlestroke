@@ -44,14 +44,15 @@ class Model3D {
         canvas.ambientLight(60, 60, 60);
         canvas.directionalLight(220, 220, 220, 0.4f, 0.6f, -0.7f);
 
-        // Apply coordinate remap: user(x,y,z) → Processing(x,+z,-y)
-        // det=+1 (proper rotation): user Z→Processing +Y (up), user Y→Processing -Z (into screen)
+        // Apply coordinate remap: user(x,y,z) → Processing(x,-z,-y)
         canvas.applyMatrix(
             1,  0,  0,  0,
-            0,  0,  1,  0,
+            0,  0, -1,  0,
             0, -1,  0,  0,
             0,  0,  0,  1
         );
+        // Rotate scene 180° about Y to flip the view right-way-up
+        canvas.rotateY(PI);
 
         // ── World reference axes ──────────────────────────────────────────────
         // Drawn in user coords (X right, Y into screen, Z up)
@@ -90,10 +91,10 @@ class Model3D {
         float ux = camDist * cos(elR) * sin(azR);
         float uy = -camDist * cos(elR) * cos(azR);  // default az=0 → Y into screen
         float uz = camDist * sin(elR);
-        // Convert to Processing coords: user(x,y,z) → Processing(x,+z,-y)
-        canvas.camera(ux,  uz, -uy,   // eye
+        // Convert to Processing coords: user(x,y,z) → Processing(x,-z,-y)
+        canvas.camera(ux, -uz, -uy,   // eye
                        0,   0,   0,   // centre (origin)
-                       0,   1,   0);  // up: user +Z → Processing +Y → screen up
+                       0,  -1,   0);  // up
     }
 
     void resetCamera() { camAz = 0; camEl = 20.0f; camDist = 560; }
