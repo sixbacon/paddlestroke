@@ -1,8 +1,8 @@
 # PadViz — Paddle Visualisation Specification
 
-**Version:** 0.5
+**Version:** 0.6
 **Date:** 2026-06-11
-**Status:** PadViz complete (Phase 3, 2 Jun 2026). PadViz2 complete (11 Jun 2026). PadViz3 complete (11 Jun 2026). Phase 2 firmware (v8.8) still pending.
+**Status:** PadViz complete (Phase 3, 2 Jun 2026). PadViz2 complete (11 Jun 2026). PadViz3 complete (11 Jun 2026). PadViz4 complete (11 Jun 2026). Phase 2 firmware (v8.8) still pending.
 
 ---
 
@@ -29,9 +29,11 @@ retained for reference.
 | PadViz | `PadViz/` | Quaternion via applyMatrix; ModelMapping tab | Complete (2 Jun 2026) |
 | PadViz2 | `PadViz2/` | Euler angles: rotateZ/Y/X chain | Complete (11 Jun 2026) |
 | PadViz3 | `PadViz3/` | Quaternion: quatMul + applyMatrix | Complete (11 Jun 2026) |
+| PadViz4 | `PadViz4/` | PadViz3 + IMU double-integration position tracking | Complete (11 Jun 2026) |
 
 PadViz2 and PadViz3 are functionally identical; PadViz3 uses the BNO085 quaternion output
 directly (no Euler round-trip for 10-col CSV) and is the preferred sketch for new work.
+PadViz4 extends PadViz3 with experimental paddle-centre position tracking via IMU integration.
 
 ---
 
@@ -245,7 +247,59 @@ Modify the production sketches to output data in the format PadViz requires (v8.
 
 ---
 
-## 12. Out of Scope
+## 12. PadViz4 — Position Tracking
+
+PadViz4 (`PadViz4/`) adds an `Integrator.pde` tab to PadViz3. All other features are
+identical (same coordinate system, keyboard, kayak, strip chart, etc.).
+
+### 12.1 How it works
+
+1. Raw `accelX/Y/Z` (BNO085 sensor body frame, gravity included) is rotated to world
+   frame using the orientation quaternion.
+2. Gravity is subtracted: world-frame Z reads +9.81 m/s² at rest, so subtract `(0, 0, 9.81)`.
+3. Convert to user frame: `user_X = −world_X` (left→right-hand flip); Z unchanged.
+4. Double-integrate: acceleration → velocity → position.
+5. High-pass drift correction removes low-frequency integration drift:
+   - **X** τ = 10 s (paddle path assumed zero-mean over ~10 s)
+   - **Z** τ = 30 s + ±0.5 m hard clamp (stroke height bounded)
+
+### 12.2 Data requirement
+
+Requires the **15-col full CSV** format (comment out `#define CSV_COLUMNS_REDUCED` in
+PadDis before logging):
+```
+seq, timestamp_ms, accel_x, accel_y, accel_z, q_w, q_x, q_y, q_z, roll, pitch, yaw, stroke_count, cpm, hz
+```
+6-col and 10-col CSV files are still accepted; `P` key mode has no effect on them (accel
+fields default to zero so no translation occurs).
+
+### 12.3 Additional key
+
+| Key | Action |
+|---|---|
+| `P` | Toggle paddle position mode (resets integrator on enable, file load, or seek) |
+
+### 12.4 HUD additions (when position mode active)
+
+```
+posX   0.12 m
+velX   0.34 m/s
+posZ  -0.05 m
+```
+
+### 12.5 Accuracy notes
+
+- Drift is severe beyond ~30 s of integration. Best used for short clips.
+- The high-pass filters remove slow drift but also attenuate genuine low-frequency motion.
+- For better accuracy: change firmware to report `SH2_LINEAR_ACCELERATION` (gravity
+  already subtracted by BNO085 fusion engine), which eliminates the gravity-subtraction
+  step and improves linearity.
+- Left/right sign may require empirical verification; negate `posX` in `Integrator.pde`
+  if the paddle moves in the wrong direction on screen.
+
+---
+
+## 13. Out of Scope
 
 - Stroke detection algorithm changes (PadLog / StrokeDetector)
 - Wireless link modifications
