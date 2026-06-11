@@ -1610,3 +1610,179 @@ Analysis of 20 May 2026 field data (§3.5) identified pitch as a reliable, param
 - IQR overlap = 0°; `pitch < 0` threshold gives 92% accuracy with no calibration.
 
 **How to apply in Phase 9:** Use `pitch < 0` at each `stroke_count` event to determine which blade side just completed its pull. This label can be used to time-align accelerometer transients per blade side for catch/release detection.
+
+---
+
+## 14. Future Hardware Extensions
+
+*Status: under consideration — not yet designed or scheduled.*
+
+This section records proposed hardware additions, their likely analytical value, and known
+integration constraints, as a basis for future design decisions.
+
+---
+
+### 14.1 GPS Module on CYD (Display Unit)
+
+**What it adds:**
+
+| Data | Rate | Value |
+|------|------|-------|
+| Ground speed (speed over ground) | 1–10 Hz | Directly correlates stroke rate and technique with boat speed — the primary efficiency metric |
+| Course over ground (COG) | 1–10 Hz | Drift-free absolute heading; long-time-constant correction for IMU yaw drift |
+| Position (lat/lon) | 1–10 Hz | Track on water; paddling trajectory |
+
+**Analytical value:**
+The single most useful derived metric from GPS is **boat speed vs. CPM efficiency** — how
+many metres per stroke at a given cadence, and how that changes with technique variations.
+This cannot be computed from the paddle IMU alone.
+
+GPS course-over-ground also provides a drift-free yaw reference. The BNO085 heading drifts
+over minutes; GPS COG updated at 1 Hz can be fused as a very slow correction (time constant
+30–60 s) to prevent long-session heading accumulation errors. This directly improves the
+paddle-centre position estimate in PadViz4 (§14.3).
+
+**Integration:**
+GPS typically communicates via UART (NMEA sentences at 4800 or 9600 baud). The CYD's
+UART0 is used by USB; UART1 and UART2 are available on free GPIO pins. No SPI or I²C
+bus conflict. GPS is the least invasive hardware addition.
+
+**Logging:** Add `gps_speed_ms, gps_cog_deg, gps_lat, gps_lon` columns to the PadDis CSV,
+written at the GPS update rate (pad with last known value between GPS fixes).
+
+---
+
+### 14.2 Second IMU on CYD (Kayak Body Frame)
+
+**What it adds:**
+
+A BNO085 fixed to the CYD / cockpit rim measures the kayak's own orientation
+independently of the paddle. This unlocks **relative motion analysis** — the paddle's
+orientation and motion expressed in the kayak's body frame rather than the world frame.
+
+| Measurement | How obtained | Value |
+|-------------|--------------|-------|
+| Paddle orientation relative to kayak | `q_paddle × q_kayak⁻¹` | True catch angle, exit angle, feather angle relative to boat — the quantities that define stroke technique |
+| Kayak yaw rate during a stroke | From kayak IMU | A well-executed stroke minimises kayak yaw; excessive yaw indicates unbalanced push-pull |
+| Kayak lean (roll) during stroke | From kayak IMU | Independent of paddle; quantifies stability and edge control |
+| Kayak pitch | From kayak IMU | Forward/aft trim; changes with load and conditions |
+
+Without the kayak IMU, all paddle orientation data is in the absolute world frame. This
+is a less meaningful coordinate system for technique analysis — a catch angle of 20° in
+world frame means something different depending on whether the kayak is turning or level.
+The relative frame is the one a coach or athlete actually cares about.
+
+**Yaw drift correction:** The kayak IMU's yaw also drifts over time, but the relative
+orientation `q_paddle × q_kayak⁻¹` cancels most of the common-mode drift. Both IMUs
+share the same BNO085 ARVR fusion algorithm and similar environmental conditions, so
+their heading errors are correlated and substantially cancel in the relative calculation.
+
+**Integration — SPI constraint:**
+The BNO085 requires SPI for reliable operation (I²C is unreliable at production data rates).
+The CYD's two hardware SPI peripherals are both in use:
+- HSPI: ILI9341 display (SCK=14, MOSI=13, MISO=12, CS=15)
+- VSPI: SD card (SCK=18, MOSI=23, MISO=19, CS=5)
+
+Options:
+
+*Option A — Share VSPI with SD card:* Add a third CS pin on VSPI for the second BNO085.
+Feasible in hardware; requires the ESP32 SD library to release the bus cleanly between
+transactions. SD writes are already buffered (flush every 5 s), so bus contention is low
+in practice, but library-level bus arbitration needs careful implementation.
+
+*Option B — Software SPI on free GPIO pins (preferred):* Use software-emulated SPI on
+GPIO pins not currently allocated. The BNO085 needs only 1–4 MHz; software SPI at that
+rate adds modest CPU overhead (estimated 2–4% of one core at 100 Hz polling). The
+dual-core ESP32 can absorb this without impacting display or SD performance.
+The CYD-2432S028 GPIO availability must be checked against the touchscreen and backlight
+pins before finalising pin assignments.
+
+*Option C — Second ESP32 (cleanest architecture):* Mount a LOLIN32 Lite on the kayak
+to read the kayak IMU and transmit its orientation via ESPnow alongside the existing
+paddle unit. The CYD receives two ESPnow streams (distinguished by MAC address).
+This completely avoids SPI bus constraints on the CYD and keeps each device simple.
+Disadvantage: additional hardware unit to power and mount.
+
+**Recommended path:** Option C for initial prototyping (no firmware changes to CYD,
+fastest to test). Option B for a production-integrated single-unit solution.
+
+**Logging:** Add `kayak_q_w, kayak_q_x, kayak_q_y, kayak_q_z, kayak_roll, kayak_pitch,
+kayak_yaw` columns to the PadDis CSV. Compute and log relative orientation
+`rel_q_w/x/y/z` for direct use in post-processing and PadViz.
+
+---
+
+### 14.3 PadViz4 — Paddle Centre Position Tracking
+
+*Planned for implementation in Processing (PadViz4 sketch).*
+
+The goal is to animate the centre of the paddle model moving in the X (left-right) and
+Z (up-down) directions, driven by the IMU accelerometer data. The Y direction (fore-aft)
+is out of scope for this phase.
+
+**Approach — double integration with physical constraints:**
+
+Position is obtained by double-integrating the world-frame linear acceleration. Raw
+accelerometer data (which includes gravity) is rotated into the world frame using the
+quaternion, then gravity is subtracted to give linear acceleration. This is then
+integrated twice: linear acceleration → velocity → position.
+
+Double integration of accelerometer data accumulates drift that grows without bound.
+Two physical constraints are used to prevent this:
+
+| Axis | Physical constraint | Correction method |
+|------|--------------------|--------------------|
+| X (left-right) | Net displacement over several stroke cycles is zero — the paddle returns to centre | High-pass filter: `posX_filtered = posX − posX_lowpass`, where `posX_lowpass` tracks with time constant τ ≈ 10 s |
+| Z (up-down) | Average height varies by at most ±0.5 m over a session | High-pass with long time constant τ ≈ 30 s; hard clamp to ±0.5 m if exceeded |
+
+The high-pass approach enforces the zero-mean constraint continuously rather than
+requiring discrete cycle detection.
+
+**Implementation plan (PadViz4):**
+
+*Step 1 — DataSource:*
+Parse the full 15-column CSV format (`seq, timestamp_ms, accel_x/y/z, q_w/x/y/z,
+roll, pitch, yaw, stroke_count, cpm, hz`) to extract raw accelerometer data.
+Add `accelX/Y/Z` fields to `FrameData`.
+
+*Step 2 — Integrator tab (new):*
+Per frame:
+1. Compute `dt` from consecutive timestamps; clamp to 50 ms to handle seeks and pauses.
+2. Rotate raw accel vector to world frame: `a_world = R(q) × a_sensor`.
+3. Subtract gravity: in the Z-up world frame, gravity acts in the −Z direction
+   (`a_world.z += 9.81`); X and Y components require no correction if the quaternion
+   is accurate.
+4. Integrate velocity: `vel += a_world × dt`.
+5. Integrate position: `pos += vel × dt`.
+6. High-pass X: `posX_lp += (posX − posX_lp) × (dt / tau_x)`;
+   `posX_filtered = posX − posX_lp`.
+7. Reset all integrator state (velocity, position, low-pass baseline) on file load or seek.
+
+*Step 3 — Model3D:*
+Translate the paddle model by `(posX_filtered × S, 0, 0)` before applying the
+rotation quaternion.
+
+*Step 4 — Key `P`:*
+Toggle position tracking on/off for direct A/B comparison.
+
+*Step 5 — HUD:*
+Display `posX` and `velX` for diagnostic purposes during tuning.
+
+*Step 6 — X confirmed working, then add Z:*
+Once X position looks physically plausible, apply the same integration to Z with
+`tau_z ≈ 30 s` and a ±0.5 m hard clamp.
+
+**Data quality note:** The current payload uses raw accelerometer output from
+`SH2_ACCELEROMETER` (gravity included). Manual gravity subtraction via quaternion
+rotation introduces error proportional to orientation uncertainty. The BNO085 provides
+a dedicated `SH2_LINEAR_ACCELERATION` report (gravity removed internally by the fusion
+algorithm) which is more accurate. Adding this report to PadLog and PadDis (a minor
+firmware change) is the recommended next step once the integration approach is
+validated in PadViz4 using existing data.
+
+**GPS integration (when available):** GPS ground speed can replace the low-frequency
+velocity estimate from integration, dramatically reducing position drift. The GPS
+velocity (at 1–10 Hz) would be used as the baseline; the paddle IMU acceleration
+fills in the high-frequency detail between GPS fixes. This is a standard GNSS/IMU
+loose-coupling architecture and would give significantly more reliable position estimates
+than accelerometer integration alone.
