@@ -11,7 +11,7 @@
 //   R            — reset camera to default
 //   1/2/3        — isolate roll / pitch / yaw only (test modes)
 //   0            — normal mode (all axes)
-//   [  ]         — nudge correction rotation -/+ 5° about current tune axis
+//   -  =         — nudge correction rotation -/+ 5° about current tune axis
 //   A            — cycle tune axis (X → Y → Z) for correction nudge
 
 import processing.serial.*;
@@ -125,7 +125,7 @@ void drawHudOverlay(FrameData fd) {
     fill(255, 200, 80, 200);
     String axName = new String[]{"X","Y","Z"}[tuneAxis];
     text("corr  Rx=" + nf(corrX,0,1) + "  Ry=" + nf(corrY,0,1) + "  Rz=" + nf(corrZ,0,1)
-         + "   [tune:" + axName + "]", x, y);
+         + "   tune:" + axName + " (A to cycle, -/= to nudge)", x, y);
 
     if (testMode > 0) {
         y += dy + 4;
@@ -166,8 +166,8 @@ void keyPressed() {
     if (key == 'o' || key == 'O') { selectInput("Select CSV log file", "fileSelected"); return; }
     if (key == 'l' || key == 'L') { toggleLive(); return; }
     if (key == 'a' || key == 'A') { tuneAxis = (tuneAxis + 1) % 3; return; }
-    if (key == '[') { nudgeCorr(-NUDGE); return; }
-    if (key == ']') { nudgeCorr(+NUDGE); return; }
+    if (key == '-' || key == '_') { nudgeCorr(-NUDGE); return; }
+    if (key == '=' || key == '+') { nudgeCorr(+NUDGE); return; }
     if (keyCode == RIGHT) { frameIdx = min(frameIdx + 1, max(0, ds.frameCount()-1)); playing = false; }
     if (keyCode == LEFT)  { frameIdx = max(frameIdx - 1, 0); playing = false; }
     if (keyCode == 36)    { frameIdx = 0; }
