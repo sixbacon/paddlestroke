@@ -1,15 +1,16 @@
 # PadViz — Paddle Visualisation Specification
 
-**Version:** 0.4
-**Date:** 2026-06-02
-**Status:** Phase 2 pending (firmware v8.8). Phase 3 complete and working.
+**Version:** 0.5
+**Date:** 2026-06-11
+**Status:** PadViz complete (Phase 3, 2 Jun 2026). PadViz2 complete (11 Jun 2026). PadViz3 complete (11 Jun 2026). Phase 2 firmware (v8.8) still pending.
 
 ---
 
 ## 1. Purpose
 
-A desktop visualisation tool for the kayak paddle stroke monitor. Displays a 3D paddle model
-driven by live IMU orientation data or replayed from a recorded CSV file. Intended for:
+A desktop visualisation tool for the kayak paddle stroke monitor. Displays a 3D paddle
+model and kayak driven by live IMU orientation data or replayed from a recorded CSV file.
+Intended for:
 
 - Technique analysis (stroke shape, symmetry, entry/exit angles)
 - Algorithm development and validation
@@ -18,257 +19,233 @@ driven by live IMU orientation data or replayed from a recorded CSV file. Intend
 
 ---
 
-## 2. Technology
+## 2. Sketch Versions
+
+Three Processing 4.x sketches exist. PadViz2 and PadViz3 are the current tools; PadViz is
+retained for reference.
+
+| Sketch | Folder | Rotation approach | Status |
+|---|---|---|---|
+| PadViz | `PadViz/` | Quaternion via applyMatrix; ModelMapping tab | Complete (2 Jun 2026) |
+| PadViz2 | `PadViz2/` | Euler angles: rotateZ/Y/X chain | Complete (11 Jun 2026) |
+| PadViz3 | `PadViz3/` | Quaternion: quatMul + applyMatrix | Complete (11 Jun 2026) |
+
+PadViz2 and PadViz3 are functionally identical; PadViz3 uses the BNO085 quaternion output
+directly (no Euler round-trip for 10-col CSV) and is the preferred sketch for new work.
+
+---
+
+## 3. Technology
 
 **Runtime:** Processing 4.x (processing.org, free, Java-based, cross-platform)
-
-**Libraries used (all bundled with Processing unless noted):**
 
 | Library | Purpose |
 |---|---|
 | `processing.serial` | Live serial port input |
-| `processing.data` (Table) | CSV file loading and parsing |
 | P3D renderer (built-in) | Hardware-accelerated 3D |
-| `loadShape()` (built-in) | OBJ model loading |
+| `loadShape()` (built-in) | OBJ paddle model loading |
 
 ---
 
-## 3. Implementation Phases
+## 4. Coordinate System (PadViz2 / PadViz3)
 
-### Phase 2 — Firmware (PadLog + PadDis)
+**User coordinate system:** X right, Y into screen, Z up.
 
-Modify the production sketches to output data in the format PadViz requires.
-This is identical to the planned v8.8 firmware changes (already documented in
-`functional_spec.md §8 roadmap`):
+Achieved in Processing P3D by:
+```java
+camera(eye, centre, up=(0,0,-1));   // makes -Z = screen-up
+scale(-1, 1, 1);                     // mirrors X: left-handed IMU → right-handed Processing
+```
 
-| Change | Sketch(es) | Detail |
-|---|---|---|
-| Add `q_w, q_x, q_y, q_z` to `CSV_COLUMNS_REDUCED` | PadDis | Enables quaternion-based 3D rotation in file replay mode |
-| `cpm` field: `uint32_t` → `float` | Both | Transmit `hz × 60.0` directly; 1 dp in display and CSV |
-| Remove `hz` field from payload | Both | Redundant once `cpm` is float; payload 60 → 56 bytes; update `static_assert` |
-| Add structured serial output line to `loop()` | PadDis | Enables live serial mode in PadViz (see §4.2) |
+The BNO085 and Blender both use left-handed axis sets. The `scale(-1,1,1)` mirror is the
+only handedness correction needed — no correction quaternion or per-axis sign flags required
+(contrast with original PadViz).
 
-Version bump: **v8.8**. Both sketches must be updated together (payload struct must match).
+**Scale:** S = 150 (1 m = 150 px).
+**Camera default:** eye at (0, −3.5 m, 1.3 m) — 0.75 m behind stern, 20° elevation.
+camDist = 560, camEl = 20°.
 
-### Phase 3 — Processing sketch (PadViz) — COMPLETE (2 Jun 2026)
+---
 
-Four-tab Processing sketch written and working:
+## 5. Implementation — PadViz2 / PadViz3
+
+### 5.1 Tabs
 
 | Tab | Role |
 |---|---|
-| `PadViz.pde` | Main sketch: layout, keyboard/mouse routing, serial toggle, CSV auto-load |
-| `DataSource.pde` | CSV loader (6-col and 10-col formats), live serial ring buffer, eulerToQuat() fallback |
-| `Model3D.pde` | P3D sub-canvas, quaternion rotation via applyMatrix(), orbit camera (drag/scroll/R) |
-| `SidePanel.pde` | Speed slider (log 4×→step), play/pause, strip chart with zoom drag, variable selector |
-| `ModelMapping.pde` | Model-specific frame alignment: correction quaternion, per-axis mirror signs, scale |
+| `PadViz2.pde` / `PadViz3.pde` | Main: layout, keyboard/mouse, test modes, yaw EMA, CSV auto-load |
+| `Model3D.pde` | P3D sub-canvas, kayak, paddle OBJ, orbit + deck camera |
+| `DataSource.pde` | CSV loader (6-col and 10-col), live serial ring buffer |
+| `SidePanel.pde` | Speed slider, play/pause, strip chart with zoom, variable selector |
 
-**Keyboard shortcuts (final):**
+### 5.2 Paddle rotation
+
+**PadViz2 (Euler):**
+```java
+canvas.rotateZ(radians(corrZ)); canvas.rotateY(radians(corrY)); canvas.rotateX(radians(corrX));
+canvas.rotateZ(radians(fd.yaw)); canvas.rotateY(radians(fd.pitch)); canvas.rotateX(radians(fd.roll));
+```
+
+**PadViz3 (quaternion):**
+```java
+float[] qCorr = eulerToQuat(corrX, corrY, corrZ);   // ZYX convention
+float[] q     = quatMul(qCorr, new float[]{fd.qw, fd.qx, fd.qy, fd.qz});
+applyQuat(canvas, q);   // 3×3 rotation matrix via applyMatrix()
+```
+
+Both produce identical results for 6-col CSV. PadViz3 avoids the Euler round-trip for
+10-col CSV files that carry raw quaternions.
+
+### 5.3 Kayak model (procedural)
+
+Drawn in `drawKayak()`. Eight-vertex procedural hull in user coordinates:
+
+| Feature | Value |
+|---|---|
+| Long axis | Y (bow at y = +2.75 m, stern at y = −2.75 m) |
+| Deck (blue) | z = −0.5 m — nearest to XY plane, visible from above |
+| Hull bottom (grey) | z = −0.65 m |
+| Cockpit | Dark rectangle at deck surface, centred at origin |
+| Width | ±0.275 m at midship |
+
+The kayak rotates to face the **average yaw** direction (5 s EMA, wrap-safe sin/cos).
+This keeps the kayak aligned with the paddling direction while ignoring stroke-to-stroke
+yaw oscillation.
+
+### 5.4 Camera modes
+
+Two camera modes toggled with the `C` key:
+
+**Orbit (default):** Camera orbits the world origin. Mouse drag = azimuth/elevation,
+scroll = zoom, `R` = reset to default.
+
+**Deck:** Camera pinned 3.25 m behind the stern at deck height (0.1 m above deck),
+looking toward the cockpit. Eye position rotates with average yaw so it always follows
+the stern as the kayak turns. Mouse drag has no effect in this mode.
+
+### 5.5 Correction nudge
+
+Rest-pose alignment is not needed in practice (Blender and BNO085 both left-handed,
+so no correction is required). Controls are present for future use if a different model
+is loaded:
+
+- `A` — cycle tune axis: X → Y → Z
+- `-` / `=` — nudge −5° / +5° about current axis
+- Values shown in HUD as `corr Rx=… Ry=… Rz=…`
+
+---
+
+## 6. Data Sources
+
+### 6.1 CSV file (O key)
+
+Two column formats supported:
+
+**6-col (reduced, field default):**
+```
+timestamp_ms, roll, pitch, yaw, stroke_count, cpm
+```
+Quaternion computed from Euler via ZYX convention (`eulerToQuat`).
+
+**10-col (full):**
+```
+timestamp_ms, q_w, q_x, q_y, q_z, roll, pitch, yaw, stroke_count, cpm
+```
+Quaternion used directly in PadViz3. First line `# PadDis vX.Y` and column-name header
+are skipped.
+
+### 6.2 Live serial (L key)
+
+Auto-selects COM3 or COM6 at 115200 baud. Same line format as CSV (6-col or 10-col).
+A debug overlay shows frame count, error count, and last raw line.
+
+---
+
+## 7. Layout
+
+```
++-------------------------------+---------------------+
+|                               |  Source / filename  |
+|   3D view                     |  Play/pause button  |
+|   - world axes (RGB)          |  Speed slider       |
+|   - kayak (avg yaw heading)   |                     |
+|   - paddle (IMU orientation)  |  Variable selector  |
+|                               |  (roll/pitch/yaw/   |
+|   HUD overlay (top-left)      |   CPM/strokes)      |
+|                               |                     |
+|                               |  Strip chart        |
+|                               |  + zoom footer      |
++-------------------------------+---------------------+
+```
+
+Window: 1400 × 800 px. 3D view: 900 px wide. Side panel: 500 px wide.
+
+---
+
+## 8. Keyboard Reference (PadViz2 / PadViz3)
 
 | Key | Action |
 |---|---|
 | `Space` | Play / pause |
 | `→` / `←` | Step one frame |
+| `Home` / `End` | Jump to start / end |
 | `O` | Open CSV file dialog |
-| `L` | Connect / disconnect live serial (auto-selects COM3 or COM6) |
-| `R` | Reset camera |
-| `T` | Toggle setup view (look straight down Z — X right, Y up — for model alignment) |
-| `0` | Normal mode |
-| `1/2/3` | Test mode: live data isolated to X / Y / Z axis only |
-
-**ModelMapping:** All model-specific alignment in `ModelMapping.pde`. To use a new model,
-edit `MAP_CORR_*` (correction quaternion), `MAP_SIGN_*` (per-axis mirror ±1), and `MAP_SCALE`.
-Use setup view (T) to verify orientation interactively before use.
+| `L` | Connect / disconnect live serial |
+| `R` | Reset camera to default orbit |
+| `0` | Normal mode (all axes) |
+| `1` / `2` / `3` | Test mode: isolate roll / pitch / yaw only |
+| `A` | Cycle correction tune axis (X → Y → Z) |
+| `-` / `=` | Nudge correction −5° / +5° about tune axis |
+| `C` | Toggle deck camera / orbit camera |
 
 ---
 
-## 4. Data Sources
-
-### 4.1 Source selection
-
-A boolean constant at the top of the sketch selects the active source:
-
-```java
-boolean USE_SERIAL = false;   // false = file replay, true = live serial
-```
-
-### 4.2 Live serial — PadDis tap
-
-Modify PadDis to emit one structured line per received packet on COM6 (USB-C, stable).
-Both production units run normally; the laptop listens on COM6.
-
-Output format — one line per packet at 100 Hz:
+## 9. HUD Overlay (3D panel, top-left)
 
 ```
-timestamp_ms,q_w,q_x,q_y,q_z,roll,pitch,yaw,stroke_count,cpm\n
+t       183.4 s
+roll    −14.2°
+pitch     4.5°
+yaw      87.3°
+CPM      34.1
+sc       42
+corr  Rx=0.0  Ry=0.0  Rz=0.0   tune:X (A to cycle, -/= to nudge)
+cam   ORBIT  (C to toggle)
 ```
 
-Example:
-```
-183420,0.99710,-0.01234,0.07543,0.00021,-14.23,4.51,87.32,42,34.1
-```
-
-Baud rate: 115200.
+In test modes an additional red line shows e.g. `TEST: ROLL ONLY`.
 
 ---
 
-## 5. Data Format — File Replay
+## 10. Side Panel
 
-### 5.1 CSV columns (v8.8 format)
+Top to bottom:
 
-```
-# PadDis v8.8
-timestamp_ms,q_w,q_x,q_y,q_z,roll,pitch,yaw,stroke_count,cpm
-```
-
-The header line (`# PadDis vX.Y`) and column-name line are skipped during parsing.
-
-### 5.2 Zoom / subset replay
-
-The user selects a time-range window from the full file (see §7.2). Only rows within
-that window are used for replay. The full file is always held in memory so the window
-can be changed without reloading.
+1. **Source name** — filename or `(no file — press O to open)`
+2. **Play / Pause button** — green when playing, red when paused
+3. **Speed slider** — `STEP` at left end, `1×` at mid, `4×` at right
+4. **Variable selector** — click to assign to a colour slot (up to 3 simultaneously):
+   `roll`, `pitch`, `yaw`, `CPM`, `strokes`
+5. **Strip chart** — full session; yellow cursor = current frame; drag cursor to seek;
+   drag elsewhere to set zoom window
+6. **Zoom footer** — `Full` button resets zoom; shows current time window
 
 ---
 
-## 6. Layout
+## 11. Phase 2 — Firmware (PadLog + PadDis) — PENDING
 
-The window is divided into two panels:
+Modify the production sketches to output data in the format PadViz requires (v8.8):
 
-```
-+-------------------------------+---------------------+
-|                               |  Speed slider       |
-|   3D paddle model             |  Zoom range         |
-|   (orbit camera)              |                     |
-|                               |  Strip chart        |
-|   HUD overlay                 |  (selected vars)    |
-|   (CPM, stroke, time, speed)  |                     |
-|                               |  Variable select    |
-+-------------------------------+---------------------+
-```
-
-Approximate split: 65 % left (3D), 35 % right (side panel). Window size: 1400 × 800 px.
-
----
-
-## 7. Replay Controls (file mode)
-
-### 7.1 Speed
-
-A **slider in the side panel** controls replay speed. Range:
-
-| Slider position | Behaviour |
-|---|---|
-| Maximum | 4× (four times real-time) |
-| Mid-range | 1× (real-time) |
-| Minimum (above zero) | Step-by-step — each press of `→` or Play advances exactly one frame |
-| `Space` / Pause button | Freeze at current frame |
-
-Inter-frame delay is derived from consecutive `timestamp_ms` values, divided by the
-speed multiplier. This preserves the original cadence — gaps at rest play at the same
-relative speed as active paddling sections.
-
-### 7.2 Zoom — selecting a replay window
-
-The user can restrict replay to a sub-range of the file:
-
-- **Strip chart drag:** click and drag on the strip chart time axis to define start and
-  end time. The selected range highlights. Replay loops within the window.
-- **Side panel inputs:** numeric start / end time fields (seconds) mirror the strip chart
-  selection and can be edited directly.
-- **Reset:** a "Full file" button clears the zoom and restores the full session.
-
-The strip chart always displays the full session; the zoom window is shown as a shaded
-overlay. The cursor line moves within the window during replay.
-
-### 7.3 Keyboard shortcuts
-
-| Key | Action |
-|---|---|
-| `Space` | Play / pause |
-| `→` | Step one frame forward (while paused or in step mode) |
-| `←` | Step one frame back (while paused or in step mode) |
-| `R` | Reset camera to default view |
-
----
-
-## 8. 3D Visualisation
-
-### 8.1 Model
-
-**File:** `PadViz/data/paddle60.obj` with `paddle60.mtl` (already present).
-**Format:** OBJ + MTL — natively supported by Processing `loadShape()`, no extra library needed.
-
-**Visual convention:** The red-coloured blade face is the **drive side** — the face that
-pushes against the water, oriented towards the rear of the kayak during a stroke.
-
-### 8.2 Model coordinate system and IMU axis mapping
-
-The OBJ model shaft runs along its X axis (±0.909 m). The `ModelMapping.pde` tab
-defines the correction needed to align the model frame to the IMU world frame:
-
-| Parameter | Value | Meaning |
+| Change | Sketch(es) | Detail |
 |---|---|---|
-| `MAP_CORR_W/X/Y/Z` | `[0, 0, -0.707, 0.707]` | Correction quaternion (verified 2 Jun 2026) |
-| `MAP_SIGN_X` | `-1.0` | Mirror along X to fix handedness |
-| `MAP_SIGN_Y/Z` | `1.0` | No mirror |
-| `MAP_SCALE` | `150.0` | Uniform scale to fit view at camDist=350 |
-
-The full IMU quaternion from the BNO085 is applied via `applyMatrix()` (gimbal-lock-free).
-The compound rotation is `IMU_quat × correction_quat`; correction is applied first (model
-rest pose), then the IMU rotation on top.
-
-**Setup view (T key):** Locks camera to look straight down the Z axis (X right, Y up on
-screen) and uses identity IMU quaternion, so only the correction is visible. Use this to
-verify model orientation when updating `ModelMapping.pde` for a new model.
-
-### 8.3 Camera / viewpoint
-
-Mouse interaction:
-
-| Interaction | Action |
-|---|---|
-| Left-drag | Orbit (azimuth + elevation) |
-| Right-drag / scroll | Zoom |
-| Middle-drag | Pan |
-| `R` key | Reset to default view |
-
-Default view: isometric, paddle horizontal, red (drive) blade facing right, blades fully
-visible.
+| Add `q_w, q_x, q_y, q_z` to `CSV_COLUMNS_REDUCED` | PadDis | Direct quaternion in file replay |
+| `cpm` field: `uint32_t` → `float` | Both | Transmit `hz × 60.0` directly |
+| Remove `hz` field from payload | Both | Redundant; payload 60 → 56 bytes |
+| Add structured serial output line | PadDis | Enables live serial mode |
 
 ---
 
-## 9. Side Panel
-
-The right-hand panel contains, from top to bottom:
-
-1. **Speed slider** — label shows current multiplier (e.g. `2.0×`) or `STEP` at minimum
-2. **Pause / Play button**
-3. **Zoom range** — start time field, end time field, "Full file" reset button
-4. **Strip chart** — full session width
-   - Vertical cursor line = current playback position
-   - Shaded overlay = active zoom window
-   - Up to 3 variables plotted simultaneously (different colours)
-   - Y-axis auto-scales to visible data range
-5. **Variable selector** — click to toggle on/off:
-   `roll`, `pitch`, `yaw`, `cpm`, `stroke_count`, `q_w`, `q_x`, `q_y`, `q_z`
-
----
-
-## 10. HUD Overlay (3D panel)
-
-Displayed in the top-left corner of the 3D panel:
-
-```
-Time:   183.4 s
-CPM:    34.1
-Stroke: 42
-Speed:  2.0×       [file mode only — shows STEP at minimum speed]
-Source: FILE        or  SERIAL
-```
-
----
-
-## 11. Out of Scope
+## 12. Out of Scope
 
 - Stroke detection algorithm changes (PadLog / StrokeDetector)
 - Wireless link modifications
