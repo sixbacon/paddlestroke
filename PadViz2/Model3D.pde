@@ -4,6 +4,7 @@
 // Achieved by: camera with up=(0,0,-1) + scale(-1,1,1).
 // Verified in PadViz3: camera(0,-400,400,...,0,0,-1) + scale(-1,1,1) gives correct axes.
 // Camera default: eye at (0, -camDist*cos(el), camDist*sin(el)) — behind stern, elevated.
+// Deck cam: eye pinned 3.25 m behind stern, rotated by avgYaw, looking at cockpit.
 
 class Model3D {
     PGraphics canvas;
@@ -21,6 +22,8 @@ class Model3D {
     private float dragStartAz, dragStartEl;
     private boolean dragging = false;
 
+    boolean deckCam = false;
+
     static final float S = 150.0f;   // world scale: 1 m = 150 px
 
     Model3D(PApplet app) {
@@ -30,13 +33,13 @@ class Model3D {
     }
 
     // ── Render ────────────────────────────────────────────────────────────────
-    void draw(FrameData fd, float corrX, float corrY, float corrZ) {
+    void draw(FrameData fd, float corrX, float corrY, float corrZ, float avgYaw) {
         canvas.beginDraw();
         canvas.background(20, 24, 32);
         canvas.perspective(PI / 4.0f, (float) VIEW_W / TOTAL_H, 1, 5000);
 
         // Camera in Processing native coords (see conversion at top)
-        setCamera();
+        setCamera(avgYaw);
 
         canvas.lights();
         canvas.ambientLight(60, 60, 60);
@@ -50,8 +53,11 @@ class Model3D {
         // Drawn in user coords (X right, Y into screen, Z up)
         drawAxes(canvas, 60);
 
-        // ── Kayak (fixed, world position) ─────────────────────────────────────
+        // ── Kayak (rotated to average yaw heading) ────────────────────────────
+        canvas.pushMatrix();
+        canvas.rotateZ(radians(avgYaw));
         drawKayak(canvas);
+        canvas.popMatrix();
 
         // ── Paddle ────────────────────────────────────────────────────────────
         canvas.pushMatrix();
@@ -76,16 +82,27 @@ class Model3D {
     }
 
     // ── Camera ────────────────────────────────────────────────────────────────
-    private void setCamera() {
-        float azR = radians(camAz);
-        float elR = radians(camEl);
-        // Eye: behind (−Y) and above (+Z). Orbit azimuth negated to match mirrored X.
-        float ux =  camDist * cos(elR) * sin(-azR);
-        float uy = -camDist * cos(elR) * cos( azR);
-        float uz =  camDist * sin(elR);
-        canvas.camera(ux, uy, uz,   // eye
-                       0,  0,  0,   // centre
-                       0,  0, -1);  // up: -Z is screen-up (verified in PadViz3)
+    private void setCamera(float avgYaw) {
+        if (deckCam) {
+            // Eye pinned 3.25 m behind stern, 0.1 m above deck, looking at cockpit.
+            // Stern rotates with avgYaw; formula derived from user→Processing native coords.
+            float a    = radians(avgYaw);
+            float dist = 3.25f * S;
+            float dz   = -0.4f * S;   // 0.1 m above deck (deck at -0.5 m)
+            canvas.camera(-dist * sin(a), -dist * cos(a), dz,
+                           0, 0, dz,
+                           0, 0, -1);
+        } else {
+            float azR = radians(camAz);
+            float elR = radians(camEl);
+            // Eye: behind (−Y) and above (+Z). Orbit azimuth negated to match mirrored X.
+            float ux =  camDist * cos(elR) * sin(-azR);
+            float uy = -camDist * cos(elR) * cos( azR);
+            float uz =  camDist * sin(elR);
+            canvas.camera(ux, uy, uz,   // eye
+                           0,  0,  0,   // centre
+                           0,  0, -1);  // up: -Z is screen-up (verified in PadViz3)
+        }
     }
 
     void resetCamera() { camAz = 0; camEl = 20.0f; camDist = 560; }

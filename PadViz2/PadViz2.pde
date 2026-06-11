@@ -13,6 +13,7 @@
 //   0            — normal mode (all axes)
 //   -  =         — nudge correction rotation -/+ 5° about current tune axis
 //   A            — cycle tune axis (X → Y → Z) for correction nudge
+//   C            — toggle deck camera (stern-pinned; kayak faces average yaw)
 
 import processing.serial.*;
 
@@ -35,12 +36,17 @@ float   frameFrac = 0;
 boolean liveMode = false;
 int     testMode = 0;   // 0=all, 1=roll only, 2=pitch only, 3=yaw only
 
-// ── Paddle correction (interactive tuning via [ ] keys) ───────────────────────
+// ── Paddle correction (interactive tuning via - = keys) ──────────────────────
 // Applied before IMU rotation so the rest-pose aligns with the world frame.
 // Stored as three Euler angles (degrees) applied Rz→Ry→Rx.
 float corrX = 0, corrY = 0, corrZ = 0;
 int   tuneAxis = 0;   // 0=X, 1=Y, 2=Z
 static final float NUDGE = 5.0f;
+
+// ── Yaw averaging (kayak heading + deck camera) ───────────────────────────────
+static final float YAW_EMA_ALPHA = 0.002f;   // ~5 s time constant at 100 Hz
+float yawEmaSin = 0.0f, yawEmaCos = 1.0f;
+float avgYaw    = 0.0f;
 
 // ── Objects ───────────────────────────────────────────────────────────────────
 DataSource ds;
@@ -72,7 +78,12 @@ void draw() {
     FrameData fd = liveMode ? ds.liveLatest() : ds.frameAt(frameIdx);
     FrameData td = applyTestMode(fd);
 
-    m3d.draw(td, corrX, corrY, corrZ);
+    float yr = radians(fd.yaw);
+    yawEmaSin += YAW_EMA_ALPHA * (sin(yr) - yawEmaSin);
+    yawEmaCos += YAW_EMA_ALPHA * (cos(yr) - yawEmaCos);
+    avgYaw = degrees(atan2(yawEmaSin, yawEmaCos));
+
+    m3d.draw(td, corrX, corrY, corrZ, avgYaw);
     image(m3d.canvas, 0, 0);
 
     panel.draw(ds, frameIdx, fd, playSpeed, playing);
@@ -126,6 +137,9 @@ void drawHudOverlay(FrameData fd) {
     String axName = new String[]{"X","Y","Z"}[tuneAxis];
     text("corr  Rx=" + nf(corrX,0,1) + "  Ry=" + nf(corrY,0,1) + "  Rz=" + nf(corrZ,0,1)
          + "   tune:" + axName + " (A to cycle, -/= to nudge)", x, y);
+    y += dy;
+    fill(m3d.deckCam ? color(100, 220, 100, 200) : color(160, 160, 160, 200));
+    text("cam   " + (m3d.deckCam ? "DECK" : "ORBIT") + "  (C to toggle)", x, y);
 
     if (testMode > 0) {
         y += dy + 4;
@@ -166,6 +180,7 @@ void keyPressed() {
     if (key == 'o' || key == 'O') { selectInput("Select CSV log file", "fileSelected"); return; }
     if (key == 'l' || key == 'L') { toggleLive(); return; }
     if (key == 'a' || key == 'A') { tuneAxis = (tuneAxis + 1) % 3; return; }
+    if (key == 'c' || key == 'C') { m3d.deckCam = !m3d.deckCam; return; }
     if (key == '-' || key == '_') { nudgeCorr(-NUDGE); return; }
     if (key == '=' || key == '+') { nudgeCorr(+NUDGE); return; }
     if (keyCode == RIGHT) { frameIdx = min(frameIdx + 1, max(0, ds.frameCount()-1)); playing = false; }
