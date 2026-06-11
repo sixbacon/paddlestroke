@@ -1,5 +1,5 @@
 // DataSource — CSV loading, serial streaming, frame store
-import processing.serial.*;
+// (import processing.serial.* is in PadViz2.pde — must stay in main tab)
 
 // ── Frame record ──────────────────────────────────────────────────────────────
 class FrameData {
