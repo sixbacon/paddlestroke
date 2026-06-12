@@ -1573,6 +1573,53 @@ arduino-cli upload -p COM6 PadDis/
 
 ---
 
+### T-38 Left-Handed Paddle — Stroke Detection
+
+*Status: PENDING — requires recorded session data.*
+
+**Background:** The current system has been validated only with a right-handed paddle (60° feather, right-wrist control). A left-handed paddle uses the same feather angle but with left-wrist control; the shaft rotation direction during feathering may be reversed relative to the right-handed case. Since the IMU is mounted at the shaft centre, the peak/trough roll sequence seen during a left-handed stroke may be inverted. The amplitude gate (±90°) and rate gate (0.25–2.5 Hz) are symmetric and should be unaffected, but the L/R blade classification (§13.4, `pitch < 0`) and asymmetry bar direction should be verified.
+
+**Pre-condition:** Record a full paddling session using a left-handed paddle with PadDis logging to SD card (full or reduced column CSV).
+
+**Steps:**
+1. Load session CSV into PadViz3 or PadViz4. Confirm roll signal amplitude and shape matches right-handed session (≥ 90° peak-to-trough, consistent cadence).
+2. Check CPM reported on PadDis during the session was stable and plausible.
+3. Apply the pitch classifier (`pitch < 0` → right blade): verify L/R labels are correct or systematically inverted (inverted = expected for left-handed paddle).
+4. Confirm asymmetry bar direction corresponds to actual left/right stroke lengths.
+
+**Pass:** CPM is detected and stable; roll amplitude ≥ 90°. Pitch classifier L/R labels are either correct or consistently inverted (inverted is acceptable — documents the required sign-flip for left-handed mode).
+
+---
+
+### T-39 Variable Feather Angle — Amplitude Gate Sensitivity
+
+*Status: PENDING — requires recorded session data at each feather setting.*
+
+**Background:** The amplitude gate (90°) was set for a 60° feathered paddle. At lower feather angles the roll amplitude seen by the IMU decreases, potentially falling below the gate. At 0° feather (parallel blades) no roll rotation occurs during feathering and the gate will reject all strokes. At 90° feather the roll amplitude increases and the gate margin widens. These tests document the usable range of feather angles for the current gate setting.
+
+**Pre-condition:** Record sessions at each target feather angle. Note the feather angle in the CSV filename or a comment line.
+
+**Feather angles to test:** 0°, 30°, 45°, 60° (baseline), 90°.
+
+**Steps (for each angle):**
+1. Load session CSV into PadViz3. Observe the roll signal peak-to-trough amplitude.
+2. Record: min, max, and median amplitude across all detected cycles.
+3. Note whether PadDis reported CPM continuously, intermittently, or not at all.
+
+**Pass criteria per angle:**
+
+| Feather | Expected roll amplitude | Expected outcome |
+|---|---|---|
+| 0° | ~0° | No CPM output (all cycles rejected by gate) |
+| 30° | ~30–50° | No CPM output (below 90° gate) |
+| 45° | ~45–70° | No CPM output (below 90° gate) |
+| 60° | ~90–120° | CPM output continuous (baseline confirmed) |
+| 90° | ~130–160° | CPM output continuous; amplitude headroom confirmed |
+
+If 45° sessions show intermittent CPM, the amplitude gate value (currently 90°) should be reconsidered in Phase 9.
+
+---
+
 ## 13. Phase 9 — Blade Entry/Exit Detection
 
 *Status: pending — design not started.*
