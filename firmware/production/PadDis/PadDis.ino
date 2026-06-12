@@ -5,7 +5,7 @@
 #include <SD.h>
 
 #define SKETCH_NAME    "PadDis"
-#define SKETCH_VERSION "8.7"
+#define SKETCH_VERSION "8.8"
 
 // ── Payload struct — must match PadLog (PadLog.ino) exactly ──────────────────
 struct __attribute__((packed)) ImuDataPayload {
@@ -40,8 +40,9 @@ static_assert(sizeof(ImuDataPayload) == 60, "Payload size mismatch — check str
 
 // Comment out to log all payload fields; leave defined for the compact fieldset.
 // Reduced set:  timestamp_ms, roll, pitch, yaw, stroke_count, cpm
-// Full set:     seq + all IMU fields + stroke_count + cpm + hz (~180 chars/row)
-#define CSV_COLUMNS_REDUCED
+// Full set:     seq, timestamp_ms, accel_x/y/z, q_w/x/y/z, roll, pitch, yaw, stroke_count, cpm, hz
+// v8.8: full set enabled for PadViz4 position-tracking data collection
+//#define CSV_COLUMNS_REDUCED
 
 // ── CPM display EMA ───────────────────────────────────────────────────────────
 // 10-second time constant at 100 Hz: alpha = 1 - exp(-0.01/10) ≈ 0.001
