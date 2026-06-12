@@ -1,11 +1,11 @@
-# Field data logs — large, not source
-ImuLog*.CSV
+# Field session data logs — large CSVs, keep local only
+data/**/*.CSV
+
+# Instruction and error report working notes — local only
+firmware/instructions/*
+firmware/error_reports/*
+visualisation/instructions/*
+visualisation/error_reports/*
 
 # Editor backups
 *.bak
-
-# Analysis and scratch files
-copilotanalysis.txt
-
-# Screenshots
-screen*.jpg

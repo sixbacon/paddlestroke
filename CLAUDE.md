@@ -4,7 +4,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Kayak paddle cycle-rate monitor. An ESP32 reads roll from a BNO085 IMU mounted at the centre of the paddle shaft and reports cycles per minute over USB serial. See `functional_spec.md` for full requirements.
+Kayak paddle cycle-rate monitor. An ESP32 reads roll from a BNO085 IMU mounted at the centre of the paddle shaft and reports cycles per minute over USB serial. See `firmware/specs/functional_spec.md` for full requirements.
+
+## Repository Layout
+
+| Folder | Contents |
+|--------|----------|
+| `firmware/production/` | PadLog (TX) and PadDis (RX) — currently deployed |
+| `firmware/test/` | Development and validation sketches |
+| `firmware/specs/` | `functional_spec.md`, `sim_test_spec.md` |
+| `firmware/instructions/` | Instruction text files (local only, git-ignored) |
+| `firmware/error_reports/` | Error report text files (local only, git-ignored) |
+| `visualisation/` | PadViz, PadViz2, PadViz3, PadViz4 Processing sketches |
+| `visualisation/specs/` | `simulation_specification.md` |
+| `visualisation/instructions/` | Instruction text files (local only, git-ignored) |
+| `visualisation/error_reports/` | Error report text files (local only, git-ignored) |
+| `data/` | Recorded field session CSVs by date (local only, git-ignored) |
+| `archive/` | Superseded sketches, media, diagnostics |
 
 ## Target Platform
 
@@ -18,16 +34,16 @@ Kayak paddle cycle-rate monitor. An ESP32 reads roll from a BNO085 IMU mounted a
 ### PadLog (TX — LOLIN32 Lite, COM3)
 
 ```bash
-arduino-cli compile PadLog/
-arduino-cli upload -p COM3 PadLog/
+arduino-cli compile firmware/production/PadLog/
+arduino-cli upload -p COM3 firmware/production/PadLog/
 arduino-cli monitor -p COM3 -c baudrate=115200
 ```
 
 ### PadDis (RX — CYD, COM6)
 
 ```bash
-arduino-cli compile PadDis/
-arduino-cli upload -p COM6 PadDis/
+arduino-cli compile firmware/production/PadDis/
+arduino-cli upload -p COM6 firmware/production/PadDis/
 arduino-cli monitor -p COM6 -c baudrate=115200
 ```
 
@@ -36,23 +52,23 @@ arduino-cli monitor -p COM6 -c baudrate=115200
 arduino-cli board list
 ```
 
-The FQBN for PadLog (`esp32:esp32:lolin32-lite`) is set in `PadLog/sketch.yaml`. The FQBN for PadDis (`esp32:esp32:esp32`) is set in `PadDis/sketch.yaml`. The sim test sketch has its own `paddlestroke_sim_test/sketch.yaml` with `esp32:esp32:esp32doit-devkit-v1`.
+The FQBN for PadLog (`esp32:esp32:lolin32-lite`) is set in `firmware/production/PadLog/sketch.yaml`. The FQBN for PadDis (`esp32:esp32:esp32`) is set in `firmware/production/PadDis/sketch.yaml`. The sim test sketch has its own `firmware/test/paddlestroke_sim_test/sketch.yaml` with `esp32:esp32:esp32doit-devkit-v1`.
 
 ## Simulation Test
 
-The `paddlestroke_sim_test/` subdirectory contains a self-contained Arduino sketch that runs all 12 algorithm tests using synthetic roll data — no IMU required. Flash it to an ESP DOIT DEVKIT V1:
+The `firmware/test/paddlestroke_sim_test/` subdirectory contains a self-contained Arduino sketch that runs all 12 algorithm tests using synthetic roll data — no IMU required. Flash it to an ESP DOIT DEVKIT V1:
 
 ```bash
 # Compile
-arduino-cli compile paddlestroke_sim_test/
+arduino-cli compile firmware/test/paddlestroke_sim_test/
 
 # Compile and upload (replace COM3 with actual port)
-arduino-cli compile -u -p COM3 paddlestroke_sim_test/
+arduino-cli compile -u -p COM3 firmware/test/paddlestroke_sim_test/
 ```
 
 Expected output ends with `Results: 20 passed, 0 failed`.
 
-The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `paddlestroke_sim_test/` are copies of those in `PadLog/`. Keep them in sync when changing the algorithm.
+The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `firmware/test/paddlestroke_sim_test/` are copies of those in `firmware/production/PadLog/`. Keep them in sync when changing the algorithm.
 
 ## Development Status
 
@@ -70,8 +86,8 @@ The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `paddlestroke_sim_t
 
 | Sketch | Directory | MCU | Port | FQBN |
 |---|---|---|---|---|
-| PadLog | `PadLog/` | LOLIN32 Lite | COM3 | `esp32:esp32:lolin32-lite` |
-| PadDis | `PadDis/` | CYD ESP32-2432S028 | COM6 | `esp32:esp32:esp32` |
+| PadLog | `firmware/production/PadLog/` | LOLIN32 Lite | COM3 | `esp32:esp32:lolin32-lite` |
+| PadDis | `firmware/production/PadDis/` | CYD ESP32-2432S028 | COM6 | `esp32:esp32:esp32` |
 
 **Version scheme:** `<phase>.<iteration>` — currently **v8.6**. Version shown in serial banner, CYD splash screen, and CSV first line (`# PadDis v8.6`).
 
@@ -122,7 +138,7 @@ Goal: move SD logging from the paddle device to the CYD so the paddle unit can b
 
 **All tests T-23–T-31 passed (6 May 2026). Production integration (Phase 8) can proceed.**
 
-### TX test (`paddlestroke_espnow_tx_test/`) — LOLIN32 Lite, COM3
+### TX test (`firmware/test/paddlestroke_espnow_tx_test/`) — LOLIN32 Lite, COM3
 
 Synthetic 100 Hz transmitter, no IMU needed. Payload (92 bytes, well within 250-byte ESP-NOW limit):
 
@@ -139,12 +155,12 @@ Synthetic 100 Hz transmitter, no IMU needed. Payload (92 bytes, well within 250-
 angle = seq × 2π/200 → one full rotation per 2 s.
 
 ```bash
-arduino-cli compile paddlestroke_espnow_tx_test/
-arduino-cli upload -p COM3 paddlestroke_espnow_tx_test/
+arduino-cli compile firmware/test/paddlestroke_espnow_tx_test/
+arduino-cli upload -p COM3 firmware/test/paddlestroke_espnow_tx_test/
 arduino-cli monitor -p COM3 -c baudrate=115200
 ```
 
-### RX test (`paddlestroke_espnow_rx_sdlog/`) — CYD, COM6
+### RX test (`firmware/test/paddlestroke_espnow_rx_sdlog/`) — CYD, COM6
 
 Receives packets, logs to SD, shows stroke count and signal status on TFT.
 
@@ -155,8 +171,8 @@ Receives packets, logs to SD, shows stroke count and signal status on TFT.
 CSV columns: `seq, timestamp_ms, accel_x/y/z, q_w/x/y/z, roll/pitch/yaw, stroke_count, d_roll/d_pitch/d_yaw (re-derived), roll_err/pitch_err/yaw_err, az_err`
 
 ```bash
-arduino-cli compile paddlestroke_espnow_rx_sdlog/
-arduino-cli upload -p COM6 paddlestroke_espnow_rx_sdlog/
+arduino-cli compile firmware/test/paddlestroke_espnow_rx_sdlog/
+arduino-cli upload -p COM6 firmware/test/paddlestroke_espnow_rx_sdlog/
 arduino-cli monitor -p COM6 -c baudrate=115200
 ```
 

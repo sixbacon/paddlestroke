@@ -1,0 +1,296 @@
+
+Below is a structured, engineering‑grade analysis based entirely on the signals you provided.
+
+1. Are the Cpm values correct?
+Short answer: No — they are systematically too high.
+
+Why?
+Your cpm values increase smoothly from:
+
+48 → 54 → 57 → 64 → 67 → 85 → 86
+
+This is not how real stroke cadence behaves.
+Real cadence changes in steps, not a continuous ramp.
+
+What the data shows
+Looking at the roll signal:
+
+Roll moves from +70° → –30° → +70° in each cycle
+
+A full left+right stroke cycle takes ~1.0–1.2 seconds
+
+That corresponds to 50–60 spm, not 80–120 spm
+
+Your cpm values are roughly double the true cadence.
+
+Root cause
+Your firmware is counting each threshold crossing as a stroke:
+
+One crossing on the right stroke
+
+One crossing on the left stroke
+
+So the device reports:
+
+Code
+Left stroke = 1
+Right stroke = 1
+→ 2 strokes per cycle
+But your intended definition is:
+
+Code
+One full cycle = 1 stroke
+Therefore:
+
+Cpm is off by a factor of 2.
+
+2. Why does Cpm fluctuate more than the real paddling rate?
+Because you are computing instantaneous cadence from single inter‑stroke intervals.
+
+Instantaneous cadence is extremely noisy because:
+
+Small timing jitter → large cadence swings
+
+IMU roll threshold crossing is not perfectly stable
+
+Water entry/exit causes roll “wobble”
+
+The roll peak is not symmetric left/right
+
+The threshold crossing angle changes slightly each stroke
+
+This produces the smooth but unrealistic ramp in your data:
+
+Code
+48 → 54 → 57 → 64 → 67 → 85 → 86
+The fix
+Use a moving average over 3–5 strokes, or compute cadence from:
+
+Code
+(stroke_count difference) / (time difference)
+over a 2–3 second window.
+
+3. Can we detect paddle entry (catch)?
+Yes — very clearly.
+
+The signature
+Just before the paddle enters the water:
+
+Roll is near its maximum positive or negative angle
+
+Accel_x (along shaft) shows a brief deceleration dip
+
+Pitch decreases slightly (paddle tips downward)
+
+Yaw rate increases slightly (boat begins turning momentarily)
+
+Example around timestamp 571400–571450:
+
+Roll transitions from ~+12° → +3° → –5°
+
+Accel_x dips from ~3.5 → 2.0 → 1.0 g
+
+This is the catch — paddle entering water
+
+So yes, the catch is visible.
+
+4. Can we detect paddle exit (release)?
+Yes — also clear.
+
+The signature
+Just after the paddle leaves the water:
+
+Accel_x rises sharply (blade unloads)
+
+Roll accelerates back toward the opposite side
+
+Pitch increases (paddle lifts)
+
+Accel_y often spikes slightly as the blade swings outward
+
+Example around 571500–571550:
+
+Accel_x jumps from ~1.0 → 3.0 → 5.0 g
+
+Roll reverses direction
+
+This is the release — paddle exiting water
+
+5. Can we detect left/right asymmetry?
+Yes — strongly.
+
+What the data shows
+Left and right strokes have different:
+
+Roll peak magnitudes
+
+Roll rate of change
+
+Accel_x impulse shape
+
+Pitch angle at catch
+
+Duration between catch and release
+
+For example:
+
+Right stroke roll peaks around +70°
+
+Left stroke roll peaks around –30° to –40°
+
+This is a large asymmetry, likely due to:
+
+Paddle offset
+
+Seating position
+
+Stronger dominant side
+
+Slight yaw drift of the kayak
+
+How to quantify asymmetry
+You can compute:
+
+Left stroke duration vs right stroke duration
+
+Peak roll angle left vs right
+
+Accel_x impulse magnitude left vs right
+
+Pitch at catch left vs right
+
+All of these are extractable from your dataset.
+
+Summary of answers
+Question	Answer
+1. Are Cpm values correct?	No — they are double the true cadence.
+2. Why do they fluctuate?	Instantaneous cadence from threshold crossings is noisy.
+3. Can we detect paddle entry?	Yes — clear deceleration + roll peak.
+4. Can we detect paddle exit?	Yes — clear acceleration + roll reversal.
+5. Can we detect left/right asymmetry?	Yes — roll, accel, and pitch all show asymmetry.
+
+
+Next step (your choice)
+I can now:
+
+Compute true cadence from this dataset
+
+Plot roll + accel to show catch/release clearly
+
+Design a robust stroke‑detection algorithm for real paddling
+
+Quantify left/right asymmetry numerically
+
+Which direction do you want to go next?
+
+work through theses steps one after another
+See my thinking
+Let’s go step by step, using the reduced file you shared.
+
+1. Are the Cpm values correct?
+From the snippet, Cpm sits at 48, then jumps to 54, 67, 57, 64, 86, 85, etc. For example:
+
+570827,...,roll=69.55811,...,cpm=48  
+571416,...,roll=2.87008,...,cpm=54  
+572335,...,roll=-32.65214,...,cpm=67
+
+These values are in the right order of magnitude for kayak stroke rate, but:
+
+Your earlier 1 Hz test produced 120 Cpm where the true rate should be 60 Cpm—a clean factor-of-two error.
+
+That strongly indicates the algorithm is counting each half-cycle (each blade event) as a “stroke” and then converting directly to strokes/min.
+
+Verdict: the Cpm values are systematically too high by about a factor of 2. They look like blade events per minute, not full left+right stroke cycles per minute.
+
+2. Why do the recorded Cpm values fluctuate so much?
+The fluctuations (48 → 54 → 67 → 57 → 64 → 86 → 85…) are larger than your actual cadence changes. That pattern is exactly what you get when:
+
+Instantaneous period is computed from the last interval only (time between two successive roll threshold crossings).
+
+The roll signal near the threshold is flat-ish and noisy, so the exact crossing time jitters by a few samples.
+
+Any small timing jitter in a ~1 s interval turns into a big change when you do rate = 60 / period.
+
+So the Cpm column is likely based on a single-interval, instantaneous rate from roll threshold crossings, with:
+
+Half-cycle counting (factor-of-two error).
+
+No smoothing (hence large sample-to-sample variation).
+
+Threshold near a plateau in roll, amplifying timing jitter.
+
+Averaging over several strokes (e.g. last 4–8 blade events) or using a sliding window would dramatically calm this down.
+
+3. Can we see when the paddle enters the water (just after max forward reach)?
+Qualitatively, yes—there are usable signatures:
+
+At the top of the reach, roll is near its positive maximum and then starts to decrease. For example:
+
+570827,...,accel_x=10.47,accel_y=4.13,accel_z=2.49,roll=69.56,...
+
+As the blade loads in the water and you pull, you expect:
+
+A sharp change in accel_x (along the shaft) as the paddle “bites”.
+
+A noticeable change in accel_y (normal to the right blade) as hydrodynamic force builds.
+
+In your data, around the start of a stroke, accel_x and accel_y move quickly from one regime to another as roll begins to move away from its extreme. That transition region—just after roll peak, where accel_x/accel_y change fastest—is a good proxy for water entry.
+
+To make this robust, you’d:
+
+Detect roll peaks (max forward reach).
+
+Look a short time window after each peak for a distinct accel_x/accel_y change (e.g. derivative threshold) and mark that as entry.
+
+4. Can we determine when each blade leaves the water?
+Similarly, water exit should correspond to:
+
+The point where blade load drops—so accel_y (normal to blade) and the component of accel_x associated with pulling fall off.
+
+This typically occurs later in the stroke, when roll has moved back toward neutral and then beyond.
+
+In your snippet, toward the end of each roll swing, accel_y and accel_x transition back toward a more “free-swinging” pattern. That drop in load—a decrease in accel_y magnitude and a change in accel_x profile—is a reasonable marker for exit.
+
+Algorithmically:
+
+Within each stroke, search after the entry point for the time where:
+
+accel_y magnitude falls below a fraction of its in-water peak, and
+
+the derivative of accel_x/accel_y changes sign (force release).
+
+Mark that as blade exit.
+
+So yes, the signals contain enough structure to estimate exit, but it needs a bit of signal-processing rather than a single threshold.
+
+5. Can we see left–right asymmetry from these signals?
+You can get at asymmetry in a few ways:
+
+Roll pattern: left vs right strokes correspond to opposite roll directions. In this reduced file, roll stays mostly positive (you’re in one phase of motion), but over a longer recording you’ll see alternating roll swings. Comparing:
+
+Peak roll magnitude,
+
+Time from entry to exit, and
+
+Time between successive entries  
+for alternating swings gives left–right timing and amplitude differences.
+
+Accel_y sign and magnitude: accel_y is defined “normal to the right blade”. When the right blade is in the water, accel_y should have a characteristic sign and magnitude pattern; when the left blade is in, the paddle orientation flips, so the sign and shape of accel_y over the stroke will differ. Alternating cycles of accel_y can therefore be compared for:
+
+Peak magnitude,
+
+Duration above a load threshold,
+
+Timing relative to roll.
+
+Cpm / event timing: once you fix the factor-of-two issue and correctly label blade events, you can:
+
+Measure time between right entries vs time between left entries.
+
+Compare in-water durations for each side.
+
+So yes—there is enough information to quantify left–right asymmetry, but you’ll need to:
+
+Fix the stroke detector (count full cycles or explicitly label left/right blade events).
+
+Use entry/exit times from accel + roll, not just raw Cpm.
