@@ -1,88 +1,98 @@
-// Integrator — double-integration of IMU acceleration to estimate paddle position.
+// Integrator — estimates paddle X position from IMU data.
 //
-// Inputs:  FrameData.accelX/Y/Z (raw sensor body frame, gravity included)
-//          FrameData.qw/qx/qy/qz (orientation quaternion)
-// Outputs: posX, posZ in user coordinates (metres; X right, Z up).
+// Two modes, selected automatically:
 //
-// Method:
-//   1. Rotate raw accel from BNO085 body frame to BNO085 world frame via quaternion.
-//   2. Subtract gravity: world-frame Z reads +9.81 m/s² at rest → subtract (0,0,9.81).
-//   3. Convert to user frame: user_X = −world_X (left→right-hand flip), user_Z = world_Z.
-//   4. Double-integrate: accel → velocity → position.
-//   5. High-pass filter to remove integration drift:
-//        X: τ=10 s  (zero-mean assumption — paddle traces closed path)
-//        Z: τ=30 s  + ±0.5 m hard clamp (bounded stroke height)
+// ACCEL mode (15-col CSV with accelX/Y/Z):
+//   1. Rotate raw accel from BNO085 body frame to world frame via quaternion.
+//   2. Subtract gravity: world Z reads +9.81 m/s² at rest.
+//   3. Convert to user frame: user_X = −world_X (left→right-hand flip).
+//   4. Double-integrate: accel → velX → posX.
+//   5. High-pass drift correction: τ = TAU_X.
 //
-// Accuracy notes:
-//   Integration drift is severe without GPS or periodic resets. The high-pass
-//   filters remove slow drift but attenuate true low-frequency motion.
-//   Works best for short replays (<30 s). For quantitative use, switch the
-//   firmware to SH2_LINEAR_ACCELERATION (gravity already removed by BNO085).
+// ROLL FALLBACK mode (6-col / 10-col CSV without accel):
+//   Estimates X from the roll angle: at the paddle IMU (centre of shaft),
+//   a change in roll corresponds to lateral motion of the paddle ends.
+//   posX ≈ integral of (roll_rate × ARM_LEN).
+//   This is a proxy — useful for visual testing, not quantitative.
+//   ARM_LEN = 0.5 m (approximate half shaft length at IMU).
+//
+// Only X is tracked here. Z (height) is a separate future step.
 
 class Integrator {
 
-    static final float TAU_X   = 10.0f;    // X high-pass time constant (s)
-    static final float TAU_Z   = 30.0f;    // Z high-pass time constant (s)
-    static final float Z_CLAMP = 0.5f;     // ±0.5 m clamp on filtered Z
+    static final float TAU_X   = 10.0f;   // high-pass time constant (s)
+    static final float ARM_LEN = 0.5f;    // roll-fallback arm length (m)
 
     // Public: read after each update()
-    float posX, posZ;
-    float velX, velZ;
+    float   posX;
+    float   velX;
+    boolean usingFallback;   // true when using roll estimate, false when using accel
 
-    private float posXraw, posZraw;
-    private float posXlp,  posZlp;
+    private float posXraw, posXlp;
+    private float prevRoll;
     private long  prevTs;
     private boolean ready;
 
     void reset() {
-        posX = posZ = 0;
-        velX = velZ = 0;
-        posXraw = posZraw = 0;
-        posXlp  = posZlp  = 0;
-        prevTs  = 0;
-        ready   = false;
+        posX     = 0;
+        velX     = 0;
+        posXraw  = 0;
+        posXlp   = 0;
+        prevRoll = 0;
+        prevTs   = 0;
+        ready    = false;
     }
 
-    // Call once per frame in sequence. Does nothing if accelX/Y/Z are all zero
-    // (6-col or 10-col CSV without acceleration data).
     void update(FrameData fd) {
-        if (!ready) { prevTs = fd.ts; ready = true; return; }
+        if (!ready) {
+            prevTs   = fd.ts;
+            prevRoll = fd.roll;
+            ready    = true;
+            return;
+        }
 
-        float dt = (fd.ts - prevTs) / 1000.0f;   // seconds
+        float dt = (fd.ts - prevTs) / 1000.0f;
         prevTs = fd.ts;
-        if (dt <= 0 || dt > 0.5f) return;         // skip bad/large gaps
+        if (dt <= 0 || dt > 0.5f) { prevRoll = fd.roll; return; }
 
-        if (fd.accelX == 0 && fd.accelY == 0 && fd.accelZ == 0) return;  // no accel data
+        boolean hasAccel = (fd.accelX != 0 || fd.accelY != 0 || fd.accelZ != 0);
 
-        // Step 1: rotate raw accel from body frame to BNO085 world frame (left-handed)
-        float[] aw = rotByQuat(fd.accelX, fd.accelY, fd.accelZ,
-                               fd.qw, fd.qx, fd.qy, fd.qz);
+        if (hasAccel) {
+            // ── Accel path ────────────────────────────────────────────────────
+            usingFallback = false;
 
-        // Step 2: subtract gravity (+9.81 on world Z when sensor is level)
-        aw[2] -= 9.81f;
+            float[] aw = rotByQuat(fd.accelX, fd.accelY, fd.accelZ,
+                                   fd.qw, fd.qx, fd.qy, fd.qz);
+            aw[2] -= 9.81f;            // subtract gravity (world Z, +9.81 at rest)
+            float ax = -aw[0];         // flip X: BNO085 left-handed → user right-handed
 
-        // Step 3: convert to user frame — flip X (left-handed → right-handed)
-        float ax = -aw[0];
-        float az =  aw[2];
+            velX    += ax * dt;
+            posXraw += velX * dt;
 
-        // Step 4: integrate
-        velX    += ax * dt;
-        velZ    += az * dt;
-        posXraw += velX * dt;
-        posZraw += velZ * dt;
+        } else {
+            // ── Roll-rate fallback ────────────────────────────────────────────
+            usingFallback = true;
 
-        // Step 5: high-pass filter X
-        float alphaX = dt / (TAU_X + dt);
-        posXlp += alphaX * (posXraw - posXlp);
+            float dRoll = fd.roll - prevRoll;
+            // Wrap-correct across ±180° boundary
+            if (dRoll >  180) dRoll -= 360;
+            if (dRoll < -180) dRoll += 360;
+
+            // X displacement ≈ angular change (rad) × arm length
+            float dx = radians(dRoll) * ARM_LEN;
+            velX     = dx / dt;        // instantaneous velocity estimate
+            posXraw += dx;
+        }
+
+        prevRoll = fd.roll;
+
+        // High-pass filter: removes DC drift (assumes paddle path is zero-mean)
+        float alpha = dt / (TAU_X + dt);
+        posXlp += alpha * (posXraw - posXlp);
         posX    = posXraw - posXlp;
-
-        // Step 5: high-pass filter Z + clamp
-        float alphaZ = dt / (TAU_Z + dt);
-        posZlp += alphaZ * (posZraw - posZlp);
-        posZ    = constrain(posZraw - posZlp, -Z_CLAMP, Z_CLAMP);
     }
 
-    // Rotate vector (vx,vy,vz) by quaternion [qw,qx,qy,qz] using rotation matrix.
+    // Rotate vector (vx,vy,vz) by quaternion [qw,qx,qy,qz].
     private float[] rotByQuat(float vx, float vy, float vz,
                                float qw, float qx, float qy, float qz) {
         float m00 = 1 - 2*(qy*qy + qz*qz);

@@ -48,7 +48,7 @@ float yawEmaSin = 0.0f, yawEmaCos = 1.0f;
 float avgYaw    = 0.0f;
 
 // ── Position tracking ─────────────────────────────────────────────────────────
-boolean posMode = false;
+boolean posMode = true;    // on by default; P key toggles
 
 // ── Objects ───────────────────────────────────────────────────────────────────
 DataSource ds;
@@ -66,6 +66,7 @@ void setup() {
     m3d   = new Model3D(this);
     panel = new SidePanel(VIEW_W, TOTAL_H, PANEL_W);
     integ = new Integrator();
+    integ.reset();
 
     java.io.File sample = new java.io.File(sketchPath("ImuLog0420260521.CSV"));
     if (sample.exists()) ds.loadCSV(sample.getAbsolutePath());
@@ -90,7 +91,7 @@ void draw() {
 
     m3d.draw(td, corrX, corrY, corrZ, avgYaw,
              posMode ? integ.posX : 0,
-             posMode ? integ.posZ : 0,
+             0,        // Z translation deferred
              posMode);
     image(m3d.canvas, 0, 0);
 
@@ -146,9 +147,9 @@ void drawHudOverlay(FrameData fd) {
     if (posMode) {
         y += 4;
         fill(140, 255, 140, 200);
-        text("posX  " + nf(integ.posX, 0, 2) + " m", x, y);  y += dy;
-        text("velX  " + nf(integ.velX, 0, 2) + " m/s", x, y);  y += dy;
-        text("posZ  " + nf(integ.posZ, 0, 2) + " m", x, y);  y += dy;
+        text("posX  " + nf(integ.posX, 0, 3) + " m"
+             + (integ.usingFallback ? "  (roll est.)" : "  (accel)"), x, y);  y += dy;
+        text("velX  " + nf(integ.velX, 0, 3) + " m/s", x, y);  y += dy;
     }
 
     y += 6;
@@ -161,7 +162,7 @@ void drawHudOverlay(FrameData fd) {
     text("cam   " + (m3d.deckCam ? "DECK" : "ORBIT") + "  (C to toggle)", x, y);
     y += dy;
     fill(posMode ? color(140, 255, 140, 200) : color(160, 160, 160, 200));
-    text("pos   " + (posMode ? "ON" : "OFF") + "  (P to toggle; needs 15-col CSV)", x, y);
+    text("pos X " + (posMode ? "ON" : "OFF") + "  (P to toggle)", x, y);
 
     if (testMode > 0) {
         y += dy + 4;

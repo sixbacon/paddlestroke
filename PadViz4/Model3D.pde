@@ -49,7 +49,7 @@ class Model3D {
         canvas.popMatrix();
 
         canvas.pushMatrix();
-        if (posMode) canvas.translate(posX * S, 0, posZ * S);
+        if (posMode) canvas.translate(posX * S, 0, 0);   // X only for now
         float[] qCorr = eulerToQuat(corrX, corrY, corrZ);
         float[] qImu  = { fd.qw, fd.qx, fd.qy, fd.qz };
         float[] q     = quatMul(qCorr, qImu);
