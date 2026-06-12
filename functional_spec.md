@@ -1662,104 +1662,126 @@ Analysis of 20 May 2026 field data (§3.5) identified pitch as a reliable, param
 
 ## 14. Future Hardware Extensions
 
-*Status: under consideration — not yet designed or scheduled.*
-
-This section records proposed hardware additions, their likely analytical value, and known
-integration constraints, as a basis for future design decisions.
+*Status: §14.1 architecture decided (11 Jun 2026). Implementation not yet scheduled.*
 
 ---
 
-### 14.1 GPS Module on CYD (Display Unit)
+### 14.1 Boat Unit — ESP32 Lite + BNO085 + NEO-6M GPS
 
-**What it adds:**
+**Decision (11 Jun 2026):** Adding GPS and a second IMU directly to the CYD display unit
+is not feasible — the CYD-2432S028 has insufficient accessible GPIO once the display
+(HSPI) and SD card (VSPI) SPI buses are allocated. A third dedicated unit fixed to the
+kayak hull is the chosen architecture.
 
-| Data | Rate | Value |
-|------|------|-------|
-| Ground speed (speed over ground) | 1–10 Hz | Directly correlates stroke rate and technique with boat speed — the primary efficiency metric |
-| Course over ground (COG) | 1–10 Hz | Drift-free absolute heading; long-time-constant correction for IMU yaw drift |
-| Position (lat/lon) | 1–10 Hz | Track on water; paddling trajectory |
+#### 14.1.1 Hardware
 
-**Analytical value:**
-The single most useful derived metric from GPS is **boat speed vs. CPM efficiency** — how
-many metres per stroke at a given cadence, and how that changes with technique variations.
-This cannot be computed from the paddle IMU alone.
+| Component | Interface | Notes |
+|-----------|-----------|-------|
+| WEMOS LOLIN32 Lite (ESP32) | — | Same MCU as PadLog; known-good platform |
+| BNO085 IMU | SPI | Kayak body-frame orientation; no SPI conflict (GPS uses UART) |
+| u-blox NEO-6M GPS | UART | NMEA sentences; configure to 5 Hz for better track resolution |
 
-GPS course-over-ground also provides a drift-free yaw reference. The BNO085 heading drifts
-over minutes; GPS COG updated at 1 Hz can be fused as a very slow correction (time constant
-30–60 s) to prevent long-session heading accumulation errors. This directly improves the
-paddle-centre position estimate in PadViz4 (§14.3).
+The boat unit is powered independently (small LiPo) and fixed to the cockpit rim or
+deck. It transmits continuously to the CYD via ESPnow — no USB connection required
+during operation.
 
-**Integration:**
-GPS typically communicates via UART (NMEA sentences at 4800 or 9600 baud). The CYD's
-UART0 is used by USB; UART1 and UART2 are available on free GPIO pins. No SPI or I²C
-bus conflict. GPS is the least invasive hardware addition.
+#### 14.1.2 What it adds
 
-**Logging:** Add `gps_speed_ms, gps_cog_deg, gps_lat, gps_lon` columns to the PadDis CSV,
-written at the GPS update rate (pad with last known value between GPS fixes).
-
----
-
-### 14.2 Second IMU on CYD (Kayak Body Frame)
-
-**What it adds:**
-
-A BNO085 fixed to the CYD / cockpit rim measures the kayak's own orientation
-independently of the paddle. This unlocks **relative motion analysis** — the paddle's
-orientation and motion expressed in the kayak's body frame rather than the world frame.
+**From the BNO085 (kayak IMU):**
 
 | Measurement | How obtained | Value |
 |-------------|--------------|-------|
-| Paddle orientation relative to kayak | `q_paddle × q_kayak⁻¹` | True catch angle, exit angle, feather angle relative to boat — the quantities that define stroke technique |
-| Kayak yaw rate during a stroke | From kayak IMU | A well-executed stroke minimises kayak yaw; excessive yaw indicates unbalanced push-pull |
-| Kayak lean (roll) during stroke | From kayak IMU | Independent of paddle; quantifies stability and edge control |
-| Kayak pitch | From kayak IMU | Forward/aft trim; changes with load and conditions |
+| Paddle orientation relative to kayak | `q_paddle × q_kayak⁻¹` | True catch and exit angles in the boat frame — the quantities a coach cares about |
+| Kayak yaw rate during stroke | kayak IMU | Well-executed stroke minimises yaw; excess yaw indicates unbalanced push-pull |
+| Kayak lean (roll) | kayak IMU | Edge control; independent of paddle |
+| Kayak pitch | kayak IMU | Fore/aft trim; changes with load and conditions |
 
-Without the kayak IMU, all paddle orientation data is in the absolute world frame. This
-is a less meaningful coordinate system for technique analysis — a catch angle of 20° in
-world frame means something different depending on whether the kayak is turning or level.
-The relative frame is the one a coach or athlete actually cares about.
+Without the kayak IMU, all paddle orientation data is expressed in the absolute world
+frame, which is a less meaningful reference for technique analysis — a catch angle of 20°
+in world frame changes meaning as the kayak turns. The relative frame is physically
+invariant to heading.
 
-**Yaw drift correction:** The kayak IMU's yaw also drifts over time, but the relative
-orientation `q_paddle × q_kayak⁻¹` cancels most of the common-mode drift. Both IMUs
-share the same BNO085 ARVR fusion algorithm and similar environmental conditions, so
-their heading errors are correlated and substantially cancel in the relative calculation.
+Yaw drift in the relative quaternion `q_paddle × q_kayak⁻¹` is substantially reduced
+because both BNO085s share the same fusion algorithm and correlated environmental
+conditions — heading errors cancel in the difference.
 
-**Integration — SPI constraint:**
-The BNO085 requires SPI for reliable operation (I²C is unreliable at production data rates).
-The CYD's two hardware SPI peripherals are both in use:
-- HSPI: ILI9341 display (SCK=14, MOSI=13, MISO=12, CS=15)
-- VSPI: SD card (SCK=18, MOSI=23, MISO=19, CS=5)
+**From the NEO-6M GPS:**
 
-Options:
+| Data | Rate | Value |
+|------|------|-------|
+| Ground speed | 1–5 Hz | Metres per stroke at a given CPM — the primary efficiency metric; not obtainable from IMU alone |
+| Course over ground (COG) | 1–5 Hz | Drift-free absolute heading; slow correction for BNO085 yaw drift in both units |
+| Position (lat/lon) | 1–5 Hz | Session track; paddling trajectory |
+| UTC time | 1 Hz | Absolute timestamp — aligns the paddle log and boat log in post-processing |
 
-*Option A — Share VSPI with SD card:* Add a third CS pin on VSPI for the second BNO085.
-Feasible in hardware; requires the ESP32 SD library to release the bus cleanly between
-transactions. SD writes are already buffered (flush every 5 s), so bus contention is low
-in practice, but library-level bus arbitration needs careful implementation.
+GPS COG provides a drift-free yaw reference updated at 1–5 Hz. It can be fused as a
+very slow correction (time constant 30–60 s) to prevent long-session heading accumulation
+in both IMUs. This directly improves the paddle-centre position estimate in PadViz4 (§14.3).
 
-*Option B — Software SPI on free GPIO pins (preferred):* Use software-emulated SPI on
-GPIO pins not currently allocated. The BNO085 needs only 1–4 MHz; software SPI at that
-rate adds modest CPU overhead (estimated 2–4% of one core at 100 Hz polling). The
-dual-core ESP32 can absorb this without impacting display or SD performance.
-The CYD-2432S028 GPIO availability must be checked against the touchscreen and backlight
-pins before finalising pin assignments.
+#### 14.1.3 ESPnow architecture
 
-*Option C — Second ESP32 (cleanest architecture):* Mount a LOLIN32 Lite on the kayak
-to read the kayak IMU and transmit its orientation via ESPnow alongside the existing
-paddle unit. The CYD receives two ESPnow streams (distinguished by MAC address).
-This completely avoids SPI bus constraints on the CYD and keeps each device simple.
-Disadvantage: additional hardware unit to power and mount.
+The CYD already receives one ESPnow stream (from PadLog, the paddle unit). It will
+receive a second stream from the boat unit. The ESPnow receive callback identifies the
+sender by MAC address and routes packets to separate ring buffers.
 
-**Recommended path:** Option C for initial prototyping (no firmware changes to CYD,
-fastest to test). Option B for a production-integrated single-unit solution.
+**Boat unit ESPnow packet (estimated ~52 bytes):**
+```
+seq          uint32    monotonic counter
+timestamp_ms uint32    millis() on boat unit
+gps_utc_sec  uint32    UTC seconds from GPS fix (0 if no fix)
+gps_lat      float     degrees
+gps_lon      float     degrees
+gps_speed_ms float     m/s (speed over ground)
+gps_cog_deg  float     degrees (course over ground)
+gps_fix      uint8     0=none, 1=GPS, 2=DGPS
+kayak_qw     float
+kayak_qx     float
+kayak_qy     float
+kayak_qz     float
+kayak_roll   float     degrees
+kayak_pitch  float     degrees
+kayak_yaw    float     degrees
+```
+Total: ~52 bytes — well within the 250-byte ESPnow limit.
 
-**Logging:** Add `kayak_q_w, kayak_q_x, kayak_q_y, kayak_q_z, kayak_roll, kayak_pitch,
-kayak_yaw` columns to the PadDis CSV. Compute and log relative orientation
-`rel_q_w/x/y/z` for direct use in post-processing and PadViz.
+#### 14.1.4 CYD workload assessment
+
+The CYD (ESP32 dual-core 240 MHz) has ample capacity for the additional stream:
+
+| Load | Current | With boat unit |
+|------|---------|----------------|
+| ESPnow callbacks/s | ~100 | ~200 (+ boat unit at 100 Hz BNO085) |
+| SD write bandwidth | ~15 KB/s (15-col at 100 Hz) | ~25–30 KB/s (two CSV files) |
+| Display | unchanged | unchanged |
+
+SD card minimum throughput is ~1 MB/s; 30 KB/s is 3% of capacity. CPU overhead of 200
+ESPnow callbacks/s at ~10 µs each = 0.2% of one core. No bottleneck in any resource.
+
+Two separate CSV files on the SD card (paddle log and boat log) are recommended over one
+interleaved file. The `gps_utc_sec` field in the boat unit packet provides an absolute
+time reference to align both logs in post-processing — no real-time clock synchronisation
+between the ESP32 units is needed.
+
+#### 14.1.5 NEO-6M configuration
+
+Default baud rate is 9600; reconfigure to 115200 in firmware. Default update rate is 1 Hz;
+configure to 5 Hz by disabling unused NMEA sentences (GGA + RMC sufficient). At kayaking
+speed (4–5 km/h), 5 Hz gives a position fix every ~0.25 m — adequate for stroke-level
+track resolution.
+
+#### 14.1.6 Logging
+
+Two new CSV files written by PadDis to the SD card:
+
+**Paddle log** (existing, unchanged — 15 col):
+`seq, timestamp_ms, accel_x, accel_y, accel_z, q_w, q_x, q_y, q_z, roll, pitch, yaw, stroke_count, cpm, hz`
+
+**Boat log** (new):
+`seq, timestamp_ms, gps_utc_sec, gps_lat, gps_lon, gps_speed_ms, gps_cog_deg, gps_fix, kayak_qw, kayak_qx, kayak_qy, kayak_qz, kayak_roll, kayak_pitch, kayak_yaw`
 
 ---
 
-### 14.3 PadViz4 — Paddle Centre Position Tracking
+### 14.2 PadViz4 — Paddle Centre Position Tracking
 
 *Planned for implementation in Processing (PadViz4 sketch).*
 
@@ -1827,9 +1849,10 @@ algorithm) which is more accurate. Adding this report to PadLog and PadDis (a mi
 firmware change) is the recommended next step once the integration approach is
 validated in PadViz4 using existing data.
 
-**GPS integration (when available):** GPS ground speed can replace the low-frequency
-velocity estimate from integration, dramatically reducing position drift. The GPS
-velocity (at 1–10 Hz) would be used as the baseline; the paddle IMU acceleration
-fills in the high-frequency detail between GPS fixes. This is a standard GNSS/IMU
-loose-coupling architecture and would give significantly more reliable position estimates
-than accelerometer integration alone.
+**GPS integration (when boat unit is available, §14.1):** GPS ground speed from the
+NEO-6M replaces the low-frequency velocity estimate from double-integration, dramatically
+reducing position drift. GPS velocity (at 5 Hz) is used as the baseline; the paddle IMU
+acceleration fills in the high-frequency detail between GPS fixes. This is a standard
+GNSS/IMU loose-coupling architecture and will give significantly more reliable position
+estimates than accelerometer integration alone. The boat unit's `gps_utc_sec` field
+aligns the two logs for this fusion in post-processing.
