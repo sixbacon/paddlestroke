@@ -79,7 +79,7 @@ The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `firmware/test/padd
 - **Phase 5** — ESPnow broadcast of stroke rate: complete (transmit side; receiver is a separate project)
 - **Phase 6** — CYD ESPnow receiver: complete (5 May 2026). LVGL dropped in favour of TFT_eSPI direct. All tests T-19–T-22 passed.
 - **Phase 7** — ESPnow full-IMU data link + CYD SD logging: complete (6 May 2026). All tests T-23–T-31 passed. Bug fixed: yaw wrap at ±180° caused EulerErr=360° (corrected with wrap-aware subtraction in RX sketch).
-- **Phase 8** — Production integration: complete (v8.6 flashed 18 May 2026). v8.1: hardware validated 12 May 2026. v8.2: streak gate, separate rate buffers, asymmetry bar. v8.3: doze/wake bug fixed (accelerometer left active in doze blocked RV wakeup events). v8.4: isRateMature gate + rolling-midpoint asymmetry. Field test 18 May 2026 revealed feather rotation artefacts inflating CPM ~1.7×. v8.5 (PadDis only): CSV_COLUMNS_REDUCED directive; 20-second CPM display EMA. v8.6: AMPLITUDE_GATE_DEG 45°→90°; Option 3 consecutive-event asymmetry; dark display theme.
+- **Phase 8** — Production integration: complete (v8.6 flashed 18 May 2026). v8.1: hardware validated 12 May 2026. v8.2: streak gate, separate rate buffers, asymmetry bar. v8.3: doze/wake bug fixed (accelerometer left active in doze blocked RV wakeup events). v8.4: isRateMature gate + rolling-midpoint asymmetry. Field test 18 May 2026 revealed feather rotation artefacts inflating CPM ~1.7×. v8.5 (PadDis only): CSV_COLUMNS_REDUCED directive; 20-second CPM display EMA. v8.6: AMPLITUDE_GATE_DEG 45°→90°; Option 3 consecutive-event asymmetry; dark display theme. v8.7 (PadDis only): asymmetry bar removed; CPM EMA 20s→10s; yellow SD-absent warning. v8.8 (PadDis only): CSV_COLUMNS_REDUCED commented out — full 15-col CSV for PadViz4 position-tracking data collection.
 - **Phase 9** — Pending: blade entry/exit detection using accel_x/accel_y transients to detect blade catch and release independently of roll oscillation. Design not started.
 
 ## Production Sketches
@@ -89,7 +89,7 @@ The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `firmware/test/padd
 | PadLog | `firmware/production/PadLog/` | LOLIN32 Lite | COM3 | `esp32:esp32:lolin32-lite` |
 | PadDis | `firmware/production/PadDis/` | CYD ESP32-2432S028 | COM6 | `esp32:esp32:esp32` |
 
-**Version scheme:** `<phase>.<iteration>` — currently **v8.6**. Version shown in serial banner, CYD splash screen, and CSV first line (`# PadDis v8.6`).
+**Version scheme:** `<phase>.<iteration>` — PadLog **v8.7**, PadDis **v8.8**. Version shown in serial banner, CYD splash screen, and CSV first line (`# PadDis v8.8`).
 
 **Payload struct** (60 bytes, float — must be identical in both sketches):
 ```
@@ -115,12 +115,12 @@ seq, timestamp_ms, accel_x/y/z, q_w/x/y/z, roll/pitch/yaw, stroke_count, cpm, hz
 
 CSV files auto-numbered `/ImuLog00.CSV` … `/ImuLog99.CSV` on PadDis SD card. Written at 100 Hz; flush every 5 s and on signal loss. SD absence is non-fatal.
 
-**Column sets** (controlled by `#define CSV_COLUMNS_REDUCED` in `PadDis.ino`, enabled by default):
+**Column sets** (controlled by `#define CSV_COLUMNS_REDUCED` in `PadDis.ino`):
 
-- **Reduced** (field use): `timestamp_ms, roll, pitch, yaw, stroke_count, cpm`
-- **Full** (comment out directive): `seq, timestamp_ms, accel_x, accel_y, accel_z, q_w, q_x, q_y, q_z, roll, pitch, yaw, stroke_count, cpm, hz`
+- **Reduced** (re-enable for field use): `timestamp_ms, roll, pitch, yaw, stroke_count, cpm`
+- **Full** (v8.8 default — directive commented out): `seq, timestamp_ms, accel_x, accel_y, accel_z, q_w, q_x, q_y, q_z, roll, pitch, yaw, stroke_count, cpm, hz`
 
-First line of every file: `# PadDis v8.6`. `cpm` column is raw (un-EMAd).
+First line of every file: `# PadDis v8.8`. `cpm` column is raw (un-EMAd).
 
 ## Serial Output Format
 

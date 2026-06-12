@@ -1161,16 +1161,19 @@ If any check fails, the change must be investigated and fixed before the version
 
 **Version numbering:** `<phase>.<iteration>` — e.g., v8.1 is Phase 8, first iteration. The major number increments with each new development phase; the minor number increments for each firmware release within that phase.
 
-Both sketches define:
+Both sketches define `SKETCH_VERSION`. Versions are not required to stay in sync when only one sketch changes.
+
 ```cpp
-#define SKETCH_NAME    "PadLog"   // or "PadDis"
+// PadLog (current):
 #define SKETCH_VERSION "8.7"
+// PadDis (current):
+#define SKETCH_VERSION "8.8"
 ```
 
 The version string appears in:
 - Serial startup banner: `PadLog v8.7 — ready`
-- CYD splash screen (PadDis only)
-- First line of every CSV log file: `# PadDis v8.7`
+- CYD splash screen (PadDis only): `PadDis v8.8`
+- First line of every CSV log file: `# PadDis v8.8`
 
 ---
 
@@ -1284,15 +1287,15 @@ Receives the 60-byte `ImuDataPayload`. Ring buffer stores `ImuDataPayload` entri
 
 Auto-numbered `/ImuLog00.CSV` … `/ImuLog99.CSV`. The first line is a version comment; the second is the column header:
 
-**Full column set:**
+**Full column set** (v8.8 default):
 ```
-# PadDis v8.7
+# PadDis v8.8
 seq,timestamp_ms,accel_x,accel_y,accel_z,q_w,q_x,q_y,q_z,roll,pitch,yaw,stroke_count,cpm,hz
 ```
 
 **Reduced column set** (when `CSV_COLUMNS_REDUCED` is defined — see §12.3.6):
 ```
-# PadDis v8.7
+# PadDis v8.8
 timestamp_ms,roll,pitch,yaw,stroke_count,cpm
 ```
 
@@ -1490,18 +1493,20 @@ displayCpm = alpha × rawCpm + (1 − alpha) × displayCpm
 
 **v8.7 update:** Time constant changed from 20 s to **10 s** (`alpha = 0.001` at 100 Hz). 20 May 2026 data showed true stdev 4.7 CPM and displayed stdev 9.5 CPM at 20 s; 10 s halves the display lag while still smoothing the raw signal significantly.
 
+**v8.8 update (PadDis only):** `CSV_COLUMNS_REDUCED` commented out — full 15-column set is now the default. Re-enable the directive to revert to the compact fieldset for general field use. Change made to capture accel_x/y/z and q_w/q_x/q_y/q_z data required by PadViz4 position tracking (double-integration of IMU accelerometer).
+
 ---
 
 ### 12.4 Build and Flash
 
 ```bash
 # PadLog
-arduino-cli compile PadLog/
-arduino-cli upload -p COM3 PadLog/
+arduino-cli compile firmware/production/PadLog/
+arduino-cli upload -p COM3 firmware/production/PadLog/
 
 # PadDis
-arduino-cli compile PadDis/
-arduino-cli upload -p COM6 PadDis/
+arduino-cli compile firmware/production/PadDis/
+arduino-cli upload -p COM6 firmware/production/PadDis/
 ```
 
 ---
