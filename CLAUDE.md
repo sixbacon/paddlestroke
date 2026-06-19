@@ -39,6 +39,14 @@ arduino-cli upload -p COM3 firmware/production/PadLog/
 arduino-cli monitor -p COM3 -c baudrate=115200
 ```
 
+### BoatLog (hull unit — LOLIN32 Lite, COM3)
+
+```bash
+arduino-cli compile firmware/production/BoatLog/
+arduino-cli upload -p COM3 firmware/production/BoatLog/
+arduino-cli monitor -p COM3 -c baudrate=115200
+```
+
 ### PadDis (RX — CYD, COM6)
 
 ```bash
