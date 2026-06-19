@@ -88,7 +88,7 @@ The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `firmware/test/padd
 |---|---|---|---|---|
 | PadLog | `firmware/production/PadLog/` | LOLIN32 Lite | COM3 | `esp32:esp32:lolin32-lite` |
 | PadDis | `firmware/production/PadDis/` | CYD ESP32-2432S028 | COM6 | `esp32:esp32:esp32` |
-| BoatLog | `firmware/production/BoatLog/` | LOLIN32 Lite | COM? | `esp32:esp32:lolin32-lite` |
+| BoatLog | `firmware/production/BoatLog/` | LOLIN32 Lite | COM3 | `esp32:esp32:lolin32-lite` |
 
 **Version scheme:** `<phase>.<iteration>` — PadLog **v8.7**, PadDis **v8.9**, BoatLog **v1.0**. Versions can diverge when only one sketch changes.
 
