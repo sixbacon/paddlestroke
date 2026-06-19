@@ -1667,7 +1667,7 @@ Analysis of 20 May 2026 field data (§3.5) identified pitch as a reliable, param
 
 ## 14. Future Hardware Extensions
 
-*Status: §14.1 architecture decided (11 Jun 2026). Implementation not yet scheduled.*
+*Status: §14.1 BoatLog v1.0 firmware written and compiled (19 Jun 2026). PadDis v8.9 integrates boat unit. Field testing pending.*
 
 ---
 
@@ -1726,28 +1726,29 @@ in both IMUs. This directly improves the paddle-centre position estimate in PadV
 #### 14.1.3 ESPnow architecture
 
 The CYD already receives one ESPnow stream (from PadLog, the paddle unit). It will
-receive a second stream from the boat unit. The ESPnow receive callback identifies the
-sender by MAC address and routes packets to separate ring buffers.
+receive a second stream from the boat unit. The ESPnow receive callback demuxes by
+packet size: 60 bytes → paddle ring buffer, 58 bytes → boat ring buffer.
 
-**Boat unit ESPnow packet (estimated ~52 bytes):**
+**Boat unit ESPnow packet (58 bytes packed — `static_assert` enforced):**
 ```
-seq          uint32    monotonic counter
-timestamp_ms uint32    millis() on boat unit
-gps_utc_sec  uint32    UTC seconds from GPS fix (0 if no fix)
-gps_lat      float     degrees
-gps_lon      float     degrees
-gps_speed_ms float     m/s (speed over ground)
-gps_cog_deg  float     degrees (course over ground)
-gps_fix      uint8     0=none, 1=GPS, 2=DGPS
-kayak_qw     float
-kayak_qx     float
-kayak_qy     float
-kayak_qz     float
-kayak_roll   float     degrees
-kayak_pitch  float     degrees
-kayak_yaw    float     degrees
+seq            uint32    monotonic counter
+timestamp_ms   uint32    millis() on boat unit
+gps_utc_sec    uint32    UTC seconds since midnight (0 if no fix)
+gps_lat        float     degrees
+gps_lon        float     degrees
+gps_speed_ms   float     m/s (speed over ground)
+gps_cog_deg    float     degrees (course over ground)
+gps_fix        uint8     0=none, 1=valid fix
+gps_uk_offset  uint8     0=GMT, 1=BST (computed from GPS date by BoatLog)
+kayak_qw       float
+kayak_qx       float
+kayak_qy       float
+kayak_qz       float
+kayak_roll     float     degrees
+kayak_pitch    float     degrees
+kayak_yaw      float     degrees
 ```
-Total: ~52 bytes — well within the 250-byte ESPnow limit.
+Total: 58 bytes — well within the 250-byte ESPnow limit.
 
 #### 14.1.4 CYD workload assessment
 
@@ -1778,11 +1779,62 @@ track resolution.
 
 Two new CSV files written by PadDis to the SD card:
 
-**Paddle log** (existing, unchanged — 15 col):
-`seq, timestamp_ms, accel_x, accel_y, accel_z, q_w, q_x, q_y, q_z, roll, pitch, yaw, stroke_count, cpm, hz`
+**Paddle log** (17 col — v8.9 adds GPS time columns):
+`seq, timestamp_ms, accel_x, accel_y, accel_z, q_w, q_x, q_y, q_z, roll, pitch, yaw, stroke_count, cpm, hz, gps_utc_sec, gps_uk_offset`
 
-**Boat log** (new):
-`seq, timestamp_ms, gps_utc_sec, gps_lat, gps_lon, gps_speed_ms, gps_cog_deg, gps_fix, kayak_qw, kayak_qx, kayak_qy, kayak_qz, kayak_roll, kayak_pitch, kayak_yaw`
+`gps_utc_sec` and `gps_uk_offset` are stamped from the most recent valid BoatLog packet; both are 0 when no GPS fix is active. This embeds an absolute time reference directly in the paddle log without requiring post-processing alignment.
+
+**Boat log** (new — 16 col):
+`seq, timestamp_ms, gps_utc_sec, gps_uk_offset, gps_lat, gps_lon, gps_speed_ms, gps_cog_deg, gps_fix, kayak_qw, kayak_qx, kayak_qy, kayak_qz, kayak_roll, kayak_pitch, kayak_yaw`
+
+#### 14.1.7 PadDis v8.9 — Boat Unit Integration
+
+**Wiring (BoatLog — WEMOS LOLIN32 Lite):**
+
+| Signal | GPIO |
+|--------|------|
+| BNO085 CS | 5 |
+| BNO085 INT | 4 |
+| BNO085 RST | 16 |
+| BNO085 SCK | 18 |
+| BNO085 MISO | 19 |
+| BNO085 MOSI | 23 |
+| GPS UART RX (← GPS TX) | 14 |
+| GPS UART TX (→ GPS RX) | 13 |
+
+GPS baud: 9600 (NEO-6M default). Library: TinyGPS++.
+
+**BoatLog serial test output:**
+```
+BoatLog v1.0 — ready
+[TEST 1] BNO085: PASS
+[TEST 2] GPS UART started — waiting for NMEA data...
+[TEST 2] GPS: PASS                         // on first parsed NMEA sentence
+GPS fix: 14:32:01 UK  lat=51.123456 lon=-1.234567  3.42 kn  COG=270.0°  // every 5 s when fix
+```
+
+**Build commands:**
+```bash
+arduino-cli compile firmware/production/BoatLog/
+arduino-cli upload -p <COM?> firmware/production/BoatLog/
+arduino-cli monitor -p <COM?> -c baudrate=115200
+```
+
+**PadDis v8.9 display layout (320 × 240):**
+```
+┌──────────────────────────────────────────┐
+│  HH:MM  (Font 4, top-left — GPS fix)     │ ● ●  ← paddle + boat dots
+│  x.x kn (Font 4, centred — GPS fix)      │
+│                                          │
+│         36 .2  CPM                       │  ← Font 8 integer + Font 4 ".x"
+│                                          │
+│  NO GPS (yellow — boat on, no fix)       │
+└──────────────────────────────────────────┘
+```
+
+- Two signal dots top-right: right = paddle (PadLog), left = boat (BoatLog). Both flash while receiving, grey on 3 s timeout.
+- Time and speed rows only shown when `gps_fix == 1`.
+- CPM changed from integer display to 1 decimal place (change-detection at 0.1 CPM resolution).
 
 ---
 
