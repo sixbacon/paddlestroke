@@ -7,6 +7,10 @@
 #define SKETCH_NAME    "BoatLog"
 #define SKETCH_VERSION "1.0"
 
+// Define to disable ESPnow and echo raw NMEA to serial — for GPS bench testing only.
+// Comment out for normal operation.
+#define GPS_TEST_MODE
+
 // ── Payload struct — must match BoatDataPayload in PadDis exactly ─────────────
 struct __attribute__((packed)) BoatDataPayload {
     uint32_t seq;
@@ -139,14 +143,20 @@ void setup() {
     gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
     Serial.println("[TEST 2] GPS UART started — waiting for NMEA data...");
 
+#ifndef GPS_TEST_MODE
     initESPNow();
+#else
+    Serial.println("GPS_TEST_MODE: ESPnow disabled — NMEA stream will echo to serial");
+#endif
 }
 
 // ── Loop ──────────────────────────────────────────────────────────────────────
 void loop() {
-    // Feed incoming GPS bytes to TinyGPS++; print T2 pass on first parsed sentence
+    // Feed incoming GPS bytes to TinyGPS++ and echo raw NMEA to serial for testing
     while (gpsSerial.available()) {
-        if (gps.encode(gpsSerial.read()) && !gpsPrinted) {
+        char c = (char)gpsSerial.read();
+        Serial.write(c);   // echo raw NMEA stream
+        if (gps.encode(c) && !gpsPrinted) {
             Serial.println("[TEST 2] GPS: PASS");
             gpsPrinted = true;
         }
@@ -163,7 +173,9 @@ void loop() {
     }
 
     if (sensorValue.sensorId != SH2_ARVR_STABILIZED_RV) return;
+#ifndef GPS_TEST_MODE
     if (!espNowReady) return;
+#endif
 
     const sh2_RotationVectorWAcc_t& rv = sensorValue.un.arvrStabilizedRV;
     Euler e = extractEuler(rv);
@@ -218,5 +230,7 @@ void loop() {
     p.kayak_pitch  = e.pitch;
     p.kayak_yaw    = e.yaw;
 
+#ifndef GPS_TEST_MODE
     esp_now_send(broadcast, (uint8_t*)&p, sizeof(p));
+#endif
 }
