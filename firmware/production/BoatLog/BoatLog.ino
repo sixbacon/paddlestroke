@@ -36,8 +36,8 @@ static_assert(sizeof(BoatDataPayload) == 58, "BoatDataPayload size mismatch — 
 #define BNO_MISO 19
 
 // ── GPS UART ──────────────────────────────────────────────────────────────────
-#define GPS_RX_PIN  14   // ESP32 RX ← GPS TX
-#define GPS_TX_PIN  13   // ESP32 TX → GPS RX
+#define GPS_RX_PIN  13   // ESP32 RX ← GPS TX  (physical wire on GPIO13)
+#define GPS_TX_PIN  14   // ESP32 TX → GPS RX  (physical wire on GPIO14)
 #define GPS_BAUD  9600
 
 // ── Timing ───────────────────────────────────────────────────────────────────
@@ -125,6 +125,7 @@ void setup() {
                   (unsigned)sizeof(BoatDataPayload), STARTUP_PAUSE_MS / 1000UL);
     delay(STARTUP_PAUSE_MS);
 
+#ifndef GPS_TEST_MODE
     // BNO085 via VSPI
     vspi.begin(BNO_SCK, BNO_MISO, BNO_MOSI, BNO_CS);
     pinMode(BNO_INT, INPUT);
@@ -138,6 +139,9 @@ void setup() {
     }
     enableReports();
     Serial.println("[TEST 1] BNO085: PASS");
+#else
+    Serial.println("GPS_TEST_MODE: BNO085 disabled");
+#endif
 
     // GPS UART
     gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
@@ -152,18 +156,33 @@ void setup() {
 
 // ── Loop ──────────────────────────────────────────────────────────────────────
 void loop() {
-    // Feed incoming GPS bytes to TinyGPS++ and echo raw NMEA to serial for testing
+    // Buffer complete NMEA sentences and print each one as a whole line
+    static char nmeaBuf[100];
+    static int  nmeaLen = 0;
     while (gpsSerial.available()) {
         char c = (char)gpsSerial.read();
-        Serial.write(c);   // echo raw NMEA stream
-        if (gps.encode(c) && !gpsPrinted) {
-            Serial.println("[TEST 2] GPS: PASS");
-            gpsPrinted = true;
+        gps.encode(c);
+        if (c == '\n') {
+            if (nmeaLen > 0) {
+                nmeaBuf[nmeaLen] = '\0';
+                Serial.println(nmeaBuf);
+                if (!gpsPrinted) {
+                    Serial.println("[TEST 2] GPS: PASS");
+                    gpsPrinted = true;
+                }
+            }
+            nmeaLen = 0;
+        } else if (c != '\r' && nmeaLen < (int)sizeof(nmeaBuf) - 1) {
+            nmeaBuf[nmeaLen++] = c;
         }
     }
 
+#ifndef GPS_TEST_MODE
     if (bno.wasReset()) enableReports();
     if (!bno.getSensorEvent(&sensorValue)) return;
+#else
+    return;   // GPS_TEST_MODE: skip BNO085 and ESPnow entirely
+#endif
 
     if (sensorValue.sensorId == SH2_ACCELEROMETER) {
         g_accel_x = sensorValue.un.accelerometer.x;
