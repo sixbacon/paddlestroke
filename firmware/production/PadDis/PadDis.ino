@@ -24,13 +24,13 @@ static_assert(sizeof(ImuDataPayload) == 60, "ImuDataPayload size mismatch — ch
 struct __attribute__((packed)) BoatDataPayload {
     uint32_t seq;
     uint32_t timestamp_ms;
-    uint32_t gps_utc_sec;    // seconds since midnight UTC; 0 if no fix
+    uint32_t gps_utc_sec;
     float    gps_lat;
     float    gps_lon;
-    float    gps_speed_ms;   // m/s
-    float    gps_cog_deg;    // course over ground, degrees
-    uint8_t  gps_fix;        // 0 = none, 1 = valid fix
-    uint8_t  gps_uk_offset;  // 0 (GMT) or 1 (BST)
+    float    gps_speed_ms;
+    float    gps_cog_deg;
+    uint8_t  gps_fix;
+    uint8_t  gps_uk_offset;
     float    kayak_qw, kayak_qx, kayak_qy, kayak_qz;
     float    kayak_roll, kayak_pitch, kayak_yaw;
 };
@@ -50,26 +50,21 @@ static_assert(sizeof(BoatDataPayload) == 58, "BoatDataPayload size mismatch — 
 #define ICON_R              10
 #define GREY  ((uint16_t)0x9492)
 
-// Horizontal layout: two signal dots on the right; content area to the left.
-// iconCx and boatIconCx are set in setup(); USABLE_W is the content width.
-#define USABLE_W  256   // 320 - 64 reserved for two dots
-
-// Vertical strips (pixels from top)
-#define TOP_STRIP_H   30   // time HH:MM row
-#define SPEED_STRIP_H 28   // speed row
-#define RATE_TOP      (TOP_STRIP_H + SPEED_STRIP_H)   // 58 — CPM area starts here
+// Three-line layout: top line Font 4 (26 px); speed + CPM Font 4 ×2 (52 px)
+#define LINE_H    26                               // Font 4 size 1
+#define LINE_H_LG 52                               // Font 4 size 2
+#define LINE_PAD  10
+#define LINE1_Y    6                               // time + signal circles
+#define LINE2_Y   (LINE1_Y + LINE_H    + LINE_PAD) // speed  (= 42)
+#define LINE3_Y   (LINE2_Y + LINE_H_LG + LINE_PAD) // CPM    (= 104)
 
 // ── SD logging ────────────────────────────────────────────────────────────────
 #define FLUSH_INTERVAL_MS 5000UL
 
-// Comment out to log all paddle payload fields; leave defined for the compact fieldset.
-// Reduced:  timestamp_ms, roll, pitch, yaw, stroke_count, cpm
-// Full:     seq, timestamp_ms, accel_x/y/z, q_w/x/y/z, roll, pitch, yaw, stroke_count, cpm, hz
-// v8.8/8.9: full set enabled for PadViz4 position-tracking data collection
+// v8.8/8.9: full column set for PadViz4 position-tracking data collection
 //#define CSV_COLUMNS_REDUCED
 
-// ── CPM display EMA ───────────────────────────────────────────────────────────
-// 10-second time constant at 100 Hz: alpha = 1 - exp(-0.01/10) ≈ 0.001
+// ── CPM display EMA — 10-second time constant at 100 Hz ──────────────────────
 #define CPM_EMA_ALPHA 0.001f
 
 // ── Ring buffers (WiFi task Core 0 → loop Core 1) ────────────────────────────
@@ -95,23 +90,25 @@ static File   logFile;
 static File   boatLogFile;
 
 static bool          hasReceived     = false;
-static int           displayedCpmX10 = -1;    // x10 for 0.1 CPM change-detection
+static int           displayedCpmX10 = -1;
 static unsigned long lastRxMs        = 0;
-static int           iconCx, iconCy;
-static int           boatIconCx, boatIconCy;
 
-static bool          boatReceived   = false;
-static unsigned long lastBoatRxMs   = 0;
-static bool          boatIconFilled = true;
-static unsigned long lastBoatFlash  = 0;
+static bool          boatReceived = false;
+static unsigned long lastBoatRxMs = 0;
 
 // ── CPM EMA state ─────────────────────────────────────────────────────────────
 static float cpmEma    = 0.0f;
 static bool  cpmSeeded = false;
 
-// ── Last-known GPS time from BoatLog (updated each valid boat packet) ─────────
-static uint32_t g_gps_utc_sec   = 0;   // 0 = no fix
+// ── Last-known GPS time (updated from boat packets) ───────────────────────────
+static uint32_t g_gps_utc_sec   = 0;
 static uint8_t  g_gps_uk_offset = 0;
+
+// ── Top-line shared state (time + both circles) ───────────────────────────────
+static int  g_iconCx, g_boatIconCx, g_iconCy;
+static int  g_timeH = -1, g_timeM = -1;   // -1 = no valid time
+static bool g_padReceiving  = false, g_padFilled  = true;
+static bool g_boatReceiving = false, g_boatFilled = true;
 
 // ── ESPnow callback — demux by packet size ────────────────────────────────────
 void onReceive(const esp_now_recv_info *info, const uint8_t *data, int len) {
@@ -138,100 +135,62 @@ static void clearAllPixels() {
     tft.setRotation(2);
 }
 
-// CPM: integer part in Font 8, ".x" decimal in Font 4 baseline-aligned beside it
-static void drawRate(float cpm, bool active) {
-    uint16_t col   = active ? TFT_WHITE : GREY;
-    int      rateH = tft.height() - RATE_TOP;
+// Redraws the entire top line: time (left) + boat circle + paddle circle (right)
+static void drawTopLine() {
+    tft.fillRect(0, 0, tft.width(), LINE1_Y + LINE_H + 2, TFT_BLACK);
 
-    tft.fillRect(0, RATE_TOP, USABLE_W, rateH, TFT_BLACK);
-
-    int    cpmX10  = (int)(cpm * 10.0f + 0.5f);
-    int    intPart = cpmX10 / 10;
-    int    decPart = cpmX10 % 10;
-    String sInt    = hasReceived ? String(intPart) : "--";
-    String sDec    = hasReceived ? ("." + String(decPart)) : "";
-
-    tft.setTextFont(8);
-    int intW = tft.textWidth(sInt);
-    int intH = tft.fontHeight(8);
-
-    tft.setTextFont(4);
-    int decW   = hasReceived ? tft.textWidth(sDec) : 0;
-    int decH   = tft.fontHeight(4);
-
-    int totalW = intW + decW;
-    int totalH = intH + 4 + decH;   // number + gap + "CPM" label
-    int startX = (USABLE_W - totalW) / 2;
-    int startY = RATE_TOP + (rateH - totalH) / 2;
-
-    tft.setTextFont(8);
-    tft.setTextColor(col, TFT_BLACK);
-    tft.setCursor(startX, startY);
-    tft.print(sInt);
-
-    if (hasReceived) {
-        tft.setTextFont(4);
-        tft.setTextColor(col, TFT_BLACK);
-        // Align bottom of ".x" with bottom of Font 8 numeral
-        tft.setCursor(startX + intW, startY + intH - decH);
-        tft.print(sDec);
-    }
-
-    tft.setTextFont(4);
-    tft.setTextColor(col, TFT_BLACK);
-    String label = "CPM";
-    tft.setCursor((USABLE_W - tft.textWidth(label)) / 2, startY + intH + 4);
-    tft.print(label);
-}
-
-static void drawIcon(bool receiving, bool filled) {
-    tft.fillRect(iconCx - ICON_R - 2, 0, (ICON_R + 2) * 2, iconCy + ICON_R + 4, TFT_BLACK);
-    if (receiving && filled)  tft.fillCircle(iconCx, iconCy, ICON_R, TFT_WHITE);
-    else if (receiving)       tft.drawCircle(iconCx, iconCy, ICON_R, TFT_WHITE);
-    else                      tft.drawCircle(iconCx, iconCy, ICON_R, GREY);
-}
-
-static void drawBoatIcon(bool receiving, bool filled) {
-    tft.fillRect(boatIconCx - ICON_R - 2, 0, (ICON_R + 2) * 2, boatIconCy + ICON_R + 4, TFT_BLACK);
-    if (receiving && filled)  tft.fillCircle(boatIconCx, boatIconCy, ICON_R, TFT_WHITE);
-    else if (receiving)       tft.drawCircle(boatIconCx, boatIconCy, ICON_R, TFT_WHITE);
-    else                      tft.drawCircle(boatIconCx, boatIconCy, ICON_R, GREY);
-}
-
-static void drawTime(int localH, int localM, bool valid) {
-    tft.fillRect(0, 0, 90, TOP_STRIP_H, TFT_BLACK);
-    if (!valid) return;
-    char buf[6];
-    snprintf(buf, sizeof(buf), "%02d:%02d", localH, localM);
     tft.setTextFont(4);
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.setCursor(4, (TOP_STRIP_H - tft.fontHeight(4)) / 2);
-    tft.print(buf);
+    if (g_timeH >= 0) {
+        char buf[6];
+        snprintf(buf, sizeof(buf), "%02d:%02d", g_timeH, g_timeM);
+        tft.setCursor(4, LINE1_Y);
+        tft.print(buf);
+    }
+
+    // Boat circle (left of paddle circle)
+    if (g_boatReceiving && g_boatFilled)
+        tft.fillCircle(g_boatIconCx, g_iconCy, ICON_R, TFT_WHITE);
+    else
+        tft.drawCircle(g_boatIconCx, g_iconCy, ICON_R,
+                       g_boatReceiving ? TFT_WHITE : GREY);
+
+    // Paddle circle (rightmost)
+    if (g_padReceiving && g_padFilled)
+        tft.fillCircle(g_iconCx, g_iconCy, ICON_R, TFT_WHITE);
+    else
+        tft.drawCircle(g_iconCx, g_iconCy, ICON_R,
+                       g_padReceiving ? TFT_WHITE : GREY);
 }
 
 static void drawSpeed(float speed_ms, bool show) {
-    tft.fillRect(0, TOP_STRIP_H, USABLE_W, SPEED_STRIP_H, TFT_BLACK);
+    tft.fillRect(0, LINE2_Y, tft.width(), LINE_H_LG + 2, TFT_BLACK);
     if (!show) return;
-    float knots = speed_ms * 1.94384f;
-    char  buf[12];
-    snprintf(buf, sizeof(buf), "%.1f kn", (double)knots);
+    char buf[12];
+    snprintf(buf, sizeof(buf), "%.1f kn", (double)(speed_ms * 1.94384f));
     tft.setTextFont(4);
+    tft.setTextSize(2);
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.setCursor((USABLE_W - tft.textWidth(buf)) / 2,
-                  TOP_STRIP_H + (SPEED_STRIP_H - tft.fontHeight(4)) / 2);
+    tft.setCursor((tft.width() - tft.textWidth(buf)) / 2, LINE2_Y);
     tft.print(buf);
+    tft.setTextSize(1);
 }
 
-static void drawGpsWarning(bool show) {
-    int warnH = 20;
-    int warnY = tft.height() - warnH;
-    tft.fillRect(0, warnY, USABLE_W, warnH, TFT_BLACK);
-    if (!show) return;
-    const char *warn = "NO GPS";
-    tft.setTextFont(2);
-    tft.setTextColor(0x07FF, TFT_BLACK);   // yellow on BGR ILI9341
-    tft.setCursor((USABLE_W - tft.textWidth(warn)) / 2, warnY + 2);
-    tft.print(warn);
+static void drawCpm(float cpm, bool active) {
+    tft.fillRect(0, LINE3_Y, tft.width(), LINE_H_LG + 2, TFT_BLACK);
+    tft.setTextFont(4);
+    tft.setTextSize(2);
+    tft.setTextColor(active ? TFT_WHITE : GREY, TFT_BLACK);
+    char buf[16];
+    if (!hasReceived) {
+        snprintf(buf, sizeof(buf), "-- cpm");
+    } else {
+        int cpmX10 = (int)(cpm * 10.0f + 0.5f);
+        snprintf(buf, sizeof(buf), "%d.%d cpm", cpmX10 / 10, cpmX10 % 10);
+    }
+    tft.setCursor((tft.width() - tft.textWidth(buf)) / 2, LINE3_Y);
+    tft.print(buf);
+    tft.setTextSize(1);
 }
 
 static void fatalError(const char *msg) {
@@ -254,16 +213,16 @@ void setup() {
     digitalWrite(TFT_BL_PIN, HIGH);
     clearAllPixels();
 
-    // Paddle dot (right), boat dot (left of paddle)
-    iconCx     = tft.width()  - ICON_R - 8;
-    iconCy     = ICON_R + 8;
-    boatIconCx = iconCx - (ICON_R * 2 + 8);
-    boatIconCy = iconCy;
+    // Circle positions: paddle rightmost, boat to its left
+    g_iconCx     = tft.width() - ICON_R - 8;
+    g_iconCy     = LINE1_Y + LINE_H / 2;
+    g_boatIconCx = g_iconCx - (ICON_R * 2 + 8);
 
+    // Splash
     tft.setTextFont(4);
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
     const char *splash = SKETCH_NAME " v" SKETCH_VERSION;
-    int splashY = (tft.height() - tft.fontHeight(4)) / 2;
+    int splashY = (tft.height() - LINE_H) / 2;
     tft.setCursor((tft.width() - tft.textWidth(splash)) / 2, splashY);
     tft.print(splash);
 
@@ -321,15 +280,13 @@ void setup() {
     }
 
     if (!sdReady) {
-        const char *warn = "NO SD CARD — logging disabled";
         tft.setTextFont(2);
         tft.setTextColor(0x07FF, TFT_BLACK);
-        tft.setCursor((tft.width() - tft.textWidth(warn)) / 2,
-                      splashY + tft.fontHeight(4) + 10);
+        const char *warn = "NO SD CARD — logging disabled";
+        tft.setCursor((tft.width() - tft.textWidth(warn)) / 2, splashY + LINE_H + 10);
         tft.print(warn);
     }
 
-    // ESPnow
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
     if (esp_now_init() != ESP_OK) fatalError("ESPnow init FAILED");
@@ -338,9 +295,9 @@ void setup() {
     delay(SPLASH_MS);
 
     tft.fillScreen(TFT_BLACK);
-    drawRate(0.0f, false);
-    drawIcon(false, false);
-    drawBoatIcon(false, false);
+    drawTopLine();
+    drawSpeed(0.0f, false);
+    drawCpm(0.0f, false);
 }
 
 // ── Loop ──────────────────────────────────────────────────────────────────────
@@ -385,7 +342,6 @@ void loop() {
             logFile.write((const uint8_t*)row, n);
         }
 
-        // CPM EMA — pre-seed to first value; reset immediately on inactivity
         if (pkt.cpm == 0) {
             cpmEma    = 0.0f;
             cpmSeeded = false;
@@ -401,7 +357,7 @@ void loop() {
 
         if (showCpmX10 != displayedCpmX10) {
             displayedCpmX10 = showCpmX10;
-            drawRate(showCpmF, true);
+            drawCpm(showCpmF, true);
             Serial.printf("CPM: %.1f (raw %u)  (%.2f Hz)  stroke=%u\n",
                           (double)cpmEma, pkt.cpm, (double)pkt.hz, pkt.stroke_count);
         }
@@ -439,7 +395,6 @@ void loop() {
             boatLogFile.write((const uint8_t*)row, n);
         }
 
-        // Keep last-known GPS time for paddle CSV stamping
         if (bpkt.gps_fix) {
             g_gps_utc_sec   = bpkt.gps_utc_sec;
             g_gps_uk_offset = bpkt.gps_uk_offset;
@@ -448,7 +403,6 @@ void loop() {
             g_gps_uk_offset = 0;
         }
 
-        // Update time and speed display; track fix state for transition handling
         static bool prevFixActive = false;
         bool thisFixActive = (bpkt.gps_fix != 0);
 
@@ -460,7 +414,8 @@ void loop() {
             static int prevH = -1, prevM = -1;
             if (localH != prevH || localM != prevM) {
                 prevH = localH; prevM = localM;
-                drawTime(localH, localM, true);
+                g_timeH = localH; g_timeM = localM;
+                drawTopLine();
             }
 
             static int prevSpeedX10 = -1;
@@ -470,13 +425,12 @@ void loop() {
                 drawSpeed(bpkt.gps_speed_ms, true);
             }
 
-            drawGpsWarning(false);
             prevFixActive = true;
         } else {
             if (prevFixActive) {
-                drawTime(0, 0, false);
+                g_timeH = -1; g_timeM = -1;
+                drawTopLine();
                 drawSpeed(0.0f, false);
-                drawGpsWarning(true);
             }
             prevFixActive = false;
         }
@@ -498,41 +452,49 @@ void loop() {
 
     if (receiving != prevReceiving) {
         if (!receiving) {
-            cpmSeeded = false;
-            drawRate(cpmEma, false);
-            drawIcon(false, false);
+            cpmSeeded      = false;
+            g_padReceiving = false;
+            drawTopLine();
+            drawCpm(cpmEma, false);
             Serial.println("Paddle signal lost");
             if (sdReady) logFile.flush();
         } else {
-            iconFilled = true;
-            lastFlash  = now;
-            drawIcon(true, true);
+            iconFilled     = true;
+            lastFlash      = now;
+            g_padReceiving = true;
+            g_padFilled    = true;
+            drawTopLine();
         }
         prevReceiving = receiving;
     }
 
     if (receiving && (now - lastFlash >= FLASH_MS)) {
-        lastFlash  = now;
-        iconFilled = !iconFilled;
-        drawIcon(true, iconFilled);
+        lastFlash   = now;
+        iconFilled  = !iconFilled;
+        g_padFilled = iconFilled;
+        drawTopLine();
     }
 
     // ── Boat signal state ─────────────────────────────────────────────────────
     bool boatActive = boatReceived && (now - lastBoatRxMs < SIGNAL_TIMEOUT);
-    static bool prevBoatActive = false;
+    static bool          prevBoatActive = false;
+    static bool          boatIconFilled = true;
+    static unsigned long lastBoatFlash  = 0;
 
     if (boatActive != prevBoatActive) {
         if (!boatActive) {
-            drawBoatIcon(false, false);
-            drawTime(0, 0, false);
+            g_boatReceiving = false;
+            g_timeH = -1; g_timeM = -1;
+            drawTopLine();
             drawSpeed(0.0f, false);
-            drawGpsWarning(false);
             Serial.println("Boat signal lost");
             if (boatSdReady) boatLogFile.flush();
         } else {
-            boatIconFilled = true;
-            lastBoatFlash  = now;
-            drawBoatIcon(true, true);
+            boatIconFilled  = true;
+            lastBoatFlash   = now;
+            g_boatReceiving = true;
+            g_boatFilled    = true;
+            drawTopLine();
         }
         prevBoatActive = boatActive;
     }
@@ -540,6 +502,7 @@ void loop() {
     if (boatActive && (now - lastBoatFlash >= FLASH_MS)) {
         lastBoatFlash  = now;
         boatIconFilled = !boatIconFilled;
-        drawBoatIcon(true, boatIconFilled);
+        g_boatFilled   = boatIconFilled;
+        drawTopLine();
     }
 }

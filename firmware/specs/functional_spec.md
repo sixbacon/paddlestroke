@@ -361,7 +361,7 @@ The following are excluded from the current implementation. Items marked with a 
 | **5** | Transmit stroke rate via ESPnow broadcast. Transmit side complete and tested (T-18a–T-18c). Receiver/display is a separate project. BLE and mobile app deferred. *(Complete)* |
 | **6** | CYD ESPnow receiver with TFT display. LVGL dropped in favour of TFT_eSPI direct. Tests T-19–T-22 passed. *(Complete — 5 May 2026)* |
 | **7** | ESPnow full-IMU data link — transmit raw IMU data from paddle device to CYD at 100 Hz; log to CYD SD card. Enables sealed paddle device. All tests T-23–T-31 passed (6 May 2026). *(Complete)* |
-| **8** | Production integration — full-IMU ESPnow payload in PadLog; SD logging in PadDis; SD card removed from paddle device. Sketches renamed PadLog / PadDis with version scheme phase.iteration. v8.1: hardware validated 12 May 2026 (63 min session, 100 Hz, <0.03% loss, 51–76 CPM). v8.2: streak gate, separate rate buffers, asymmetry bar. v8.3: doze/wake bug fixed — accelerometer left active in doze mode was consuming all wakeup events, blocking RV data; fix disables accelerometer on doze entry. Full cycle validated 14 May 2026. v8.4: `isRateMature()` gate prevents post-wake CPM spike; rolling-midpoint asymmetry replaces `pitch >= 0` classifier. Field test 18 May 2026 revealed feather rotation artefacts inflating CPM 1.7× at 45° gate. v8.5 (PadDis only): CSV column selector (`CSV_COLUMNS_REDUCED`) reduces SD write volume 72%; 20-second EMA on displayed CPM (raw CSV unchanged). v8.6: `AMPLITUDE_GATE_DEG` raised 45°→90° (PadLog + sim_test) — rejects feather rotation events; Option 3 consecutive-event asymmetry replaces v8.4 rolling-midpoint EMA; dark display theme (black background, white text). v8.7 (PadDis only): asymmetry bar and all related state removed (timing asymmetry is structural — see §3.5); CPM display EMA 20 s→10 s; yellow NO SD CARD warning on splash screen. *(Complete — v8.7 flashed and validated 20 May 2026)* v8.8 (both sketches, planned): (1) payload `cpm` field changed `uint32_t`→`float`, computed as `hz × 60.0` on TX side; (2) payload `hz` field removed — redundant once `cpm` is float; payload shrinks 60→56 bytes, `static_assert` updated; (3) CPM displayed and logged to CSV with 1 decimal place (e.g. 32.2); (4) `q_w/q_x/q_y/q_z` added to `CSV_COLUMNS_REDUCED` for PadViz file replay. *(Planned)* |
+| **8** | Production integration — full-IMU ESPnow payload in PadLog; SD logging in PadDis; SD card removed from paddle device. Sketches renamed PadLog / PadDis with version scheme phase.iteration. v8.1: hardware validated 12 May 2026 (63 min session, 100 Hz, <0.03% loss, 51–76 CPM). v8.2: streak gate, separate rate buffers, asymmetry bar. v8.3: doze/wake bug fixed — accelerometer left active in doze mode was consuming all wakeup events, blocking RV data; fix disables accelerometer on doze entry. Full cycle validated 14 May 2026. v8.4: `isRateMature()` gate prevents post-wake CPM spike; rolling-midpoint asymmetry replaces `pitch >= 0` classifier. Field test 18 May 2026 revealed feather rotation artefacts inflating CPM 1.7× at 45° gate. v8.5 (PadDis only): CSV column selector (`CSV_COLUMNS_REDUCED`) reduces SD write volume 72%; 20-second EMA on displayed CPM (raw CSV unchanged). v8.6: `AMPLITUDE_GATE_DEG` raised 45°→90° (PadLog + sim_test) — rejects feather rotation events; Option 3 consecutive-event asymmetry replaces v8.4 rolling-midpoint EMA; dark display theme (black background, white text). v8.7 (PadDis only): asymmetry bar and all related state removed (timing asymmetry is structural — see §3.5); CPM display EMA 20 s→10 s; yellow NO SD CARD warning on splash screen. *(Complete — v8.7 flashed and validated 20 May 2026)* v8.8 (PadDis only): `CSV_COLUMNS_REDUCED` commented out — full 15-column set default for PadViz4 data collection. v8.9 (PadDis only): boat unit ESPnow integration (BoatLog v1.0); CPM 1 dp display; speed in knots; GPS time stamped into paddle CSV; display rewritten to three-line layout (Font 4 throughout — time+dots line 1, speed line 2 size 2 centred, CPM line 3 size 2 centred). *(Complete — v8.9 flashed 30 Jun 2026; BoatLog T1+T2 PASS 30 Jun 2026)* |
 | **9** | Blade entry/exit detection — use `accel_x`/`accel_y` transients to detect blade catch and release independently of roll oscillation. Enables stroke quality metrics (catch angle, release timing). *(Pending — design not started)* |
 
 ---
@@ -1820,21 +1820,20 @@ arduino-cli upload -p <COM?> firmware/production/BoatLog/
 arduino-cli monitor -p <COM?> -c baudrate=115200
 ```
 
-**PadDis v8.9 display layout (320 × 240):**
+**PadDis v8.9 display layout (320 × 240) — all Font 4, black background:**
 ```
 ┌──────────────────────────────────────────┐
-│  HH:MM  (Font 4, top-left — GPS fix)     │ ● ●  ← paddle + boat dots
-│  x.x kn (Font 4, centred — GPS fix)      │
-│                                          │
-│         36 .2  CPM                       │  ← Font 8 integer + Font 4 ".x"
-│                                          │
-│  NO GPS (yellow — boat on, no fix)       │
+│  HH:MM  (size 1, top-left — GPS fix)  ● ●│  ← paddle + boat signal dots
+│           x.x kn  (size 2, centred)      │  ← GPS fix only
+│          36.2 cpm  (size 2, centred)     │  ← grey when signal lost
 └──────────────────────────────────────────┘
 ```
 
-- Two signal dots top-right: right = paddle (PadLog), left = boat (BoatLog). Both flash while receiving, grey on 3 s timeout.
-- Time and speed rows only shown when `gps_fix == 1`.
-- CPM changed from integer display to 1 decimal place (change-detection at 0.1 CPM resolution).
+- All text Font 4 (TFT_eSPI built-in). Top line size 1 (26 px); speed and CPM size 2 (52 px).
+- Two signal dots top-right of line 1: right = paddle (PadLog), left = boat (BoatLog). Filled and flashing while receiving; outline-only (grey) on 3 s timeout.
+- Time and speed rows shown only when `gps_fix == 1`; cleared when fix lost or boat signal lost.
+- CPM displayed to 1 decimal place (change-detection at 0.1 CPM resolution). Shows `-- cpm` before first paddle packet.
+- No GPS warning text or other elements drawn.
 
 ---
 

@@ -9,7 +9,7 @@
 
 // Define to disable ESPnow and echo raw NMEA to serial — for GPS bench testing only.
 // Comment out for normal operation.
-#define GPS_TEST_MODE
+// #define GPS_TEST_MODE
 
 // ── Payload struct — must match BoatDataPayload in PadDis exactly ─────────────
 struct __attribute__((packed)) BoatDataPayload {

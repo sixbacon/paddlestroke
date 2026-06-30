@@ -105,11 +105,11 @@ The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `firmware/test/padd
 seq, timestamp_ms, accel_x/y/z, q_w/x/y/z, roll/pitch/yaw, stroke_count, cpm, hz
 ```
 
-**Key display findings (5 May 2026):**
+**Key display findings (5 May 2026 / updated 30 Jun 2026):**
 - `setRotation(2)` gives correct landscape orientation on this unit (not rotation 1)
 - At startup, call `fillScreen(TFT_BLACK)` in all four rotations before settling on rotation 2 — this clears noise pixels in the display area outside the active window
-- TFT_eSPI Font 8 (75 px 7-segment style) is readable and sufficient — no custom font needed
 - `User_Setup.h` must be in the sketch directory with `#define USER_SETUP_LOADED`
+- v8.9 display: Font 4 throughout — line 1 (time + signal dots) size 1, lines 2–3 (speed, CPM) size 2 (52 px), centred. `setTextSize(2)` scales Font 4; reset to `setTextSize(1)` after each draw call.
 
 ## Key Constraints
 
