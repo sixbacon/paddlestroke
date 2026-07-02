@@ -22,6 +22,9 @@ struct __attribute__((packed)) ImuDataPayload {
 };
 static_assert(sizeof(ImuDataPayload) == 60, "Payload size mismatch — check struct");
 
+// ── Temporary diagnostic flags ────────────────────────────────────────────────
+#define DOZE_DISABLED       // comment out to restore doze mode
+
 // ── Timing constants ──────────────────────────────────────────────────────────
 #define DOZE_TIMEOUT_MS  (3UL * 60UL * 1000UL)
 #define DOZE_REPORT_US   500000
@@ -30,6 +33,9 @@ static_assert(sizeof(ImuDataPayload) == 60, "Payload size mismatch — check str
 // 20-second pause before WiFi init — keeps CH340 USB stable for reprogramming
 // at 100 Hz ESPnow. Upload firmware during this window after each power cycle.
 #define STARTUP_PAUSE_MS 20000UL
+
+// ── LED ───────────────────────────────────────────────────────────────────────
+#define LED_PIN 22          // LOLIN32 Lite onboard LED, active LOW
 
 // ── BNO085 pins (VSPI) ────────────────────────────────────────────────────────
 #define BNO_CS   5
@@ -49,6 +55,9 @@ static bool               inDozeMode      = false;
 static bool               espNowReady     = false;
 static float              dozeFirstRoll   = NAN;
 static unsigned long      inactiveStartMs = 0;
+
+static bool               g_ledOn         = false;
+static unsigned long      g_ledTickMs     = 0;
 
 static uint32_t           g_seq           = 0;
 static uint32_t           g_strokeCount   = 0;
@@ -160,6 +169,9 @@ static void exitDozeMode() {
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 void setup() {
+    pinMode(LED_PIN, OUTPUT);
+    digitalWrite(LED_PIN, HIGH);   // off (active LOW)
+
     Serial.begin(115200);
     Serial.println(SKETCH_NAME " v" SKETCH_VERSION " — ready");
     Serial.printf("Payload: %u bytes  |  USB window: %lu s — upload firmware now if needed\n",
@@ -184,11 +196,27 @@ void setup() {
 
 // ── Loop ──────────────────────────────────────────────────────────────────────
 void loop() {
+    // LED heartbeat — flash once every 2 s
+    {
+        unsigned long ms = millis();
+        if (!g_ledOn && ms - g_ledTickMs >= 2000UL) {
+            digitalWrite(LED_PIN, LOW);   // on
+            g_ledOn     = true;
+            g_ledTickMs = ms;
+        } else if (g_ledOn && ms - g_ledTickMs >= 50UL) {
+            digitalWrite(LED_PIN, HIGH);  // off
+            g_ledOn = false;
+        }
+    }
+
+#ifndef DOZE_DISABLED
     if (!inDozeMode && timeoutActive &&
         millis() - inactiveStartMs >= DOZE_TIMEOUT_MS) {
         enterDozeMode();
     }
+#endif
 
+#ifndef DOZE_DISABLED
     if (inDozeMode) {
         esp_light_sleep_start();
         // Drain events looking for an RV packet — accelerometer disabled in doze
@@ -216,6 +244,7 @@ void loop() {
         armDozeWakeup();
         return;
     }
+#endif
 
     if (bno.wasReset()) enableNormalReports();
 
