@@ -242,7 +242,7 @@ void setup() {
         if (!logFile) {
             Serial.println("Paddle log open failed");
         } else {
-            logFile.println("# " SKETCH_NAME " v" SKETCH_VERSION);
+            logFile.println("# " SKETCH_NAME " v" SKETCH_VERSION " paddle");
 #ifdef CSV_COLUMNS_REDUCED
             logFile.println("timestamp_ms,roll,pitch,yaw,stroke_count,cpm,"
                             "gps_utc_sec,gps_uk_offset");
@@ -251,7 +251,7 @@ void setup() {
                             "accel_x,accel_y,accel_z,"
                             "q_w,q_x,q_y,q_z,"
                             "roll,pitch,yaw,"
-                            "stroke_count,cpm,hz,"
+                            "stroke_count,cpm,"
                             "gps_utc_sec,gps_uk_offset");
 #endif
             Serial.print("Paddle logging to "); Serial.println(fname);
@@ -329,14 +329,14 @@ void loop() {
                 pkt.stroke_count, pkt.cpm,
                 g_gps_utc_sec, (uint32_t)g_gps_uk_offset);
 #else
-            char row[208];
+            char row[200];
             int n = snprintf(row, sizeof(row),
-                "%u,%u,%.5f,%.5f,%.5f,%.8f,%.8f,%.8f,%.8f,%.5f,%.5f,%.5f,%u,%u,%.3f,%u,%u\n",
+                "%u,%u,%.5f,%.5f,%.5f,%.8f,%.8f,%.8f,%.8f,%.5f,%.5f,%.5f,%u,%u,%u,%u\n",
                 pkt.seq, pkt.timestamp_ms,
                 pkt.accel_x, pkt.accel_y, pkt.accel_z,
                 pkt.q_w, pkt.q_x, pkt.q_y, pkt.q_z,
                 pkt.roll, pkt.pitch, pkt.yaw,
-                pkt.stroke_count, pkt.cpm, pkt.hz,
+                pkt.stroke_count, pkt.cpm,
                 g_gps_utc_sec, (uint32_t)g_gps_uk_offset);
 #endif
             logFile.write((const uint8_t*)row, n);
