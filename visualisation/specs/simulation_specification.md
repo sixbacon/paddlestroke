@@ -1,8 +1,8 @@
 # PadViz — Paddle Visualisation Specification
 
-**Version:** 0.7
-**Date:** 2026-07-03
-**Status:** PadViz complete (Phase 3, 2 Jun 2026). PadViz2 complete (11 Jun 2026). PadViz3 complete (11 Jun 2026). PadViz4 complete (11 Jun 2026). PadViz5 complete (3 Jul 2026) — dual-log visualiser with synchronisation, bottom graph panel, and export. Phase 2 firmware (v8.8) still pending.
+**Version:** 0.8
+**Date:** 2026-07-04
+**Status:** PadViz complete (Phase 3, 2 Jun 2026). PadViz2 complete (11 Jun 2026). PadViz3 complete (11 Jun 2026). PadViz4 complete (11 Jun 2026). PadViz5 complete (3 Jul 2026) — dual-log visualiser with synchronisation, bottom graph panel, and export. Boat sensor mounting orientation determined from 3 Jul 2026 field data (4 Jul 2026) — see §6.2.1. Phase 2 firmware (v8.8) still pending.
 
 ---
 
@@ -174,6 +174,40 @@ seq, timestamp_ms, gps_utc_sec, gps_uk_offset, gps_lat, gps_lon, gps_speed_ms, g
 kayak_qw, kayak_qx, kayak_qy, kayak_qz, kayak_roll, kayak_pitch, kayak_yaw
 ```
 First line `# PadDis vX.Y boat` and column-name header are skipped.
+
+The Euler angles are derived from the quaternion using the BNO085 ZYX convention (see §6.2.1):
+```c
+yaw   = atan2(2*(qx*qy + qz*qw),  qx²  − qy² − qz² + qw²)   × 180/π
+pitch = asin(−2*(qx*qz − qy*qw))                               × 180/π
+roll  = atan2(2*(qy*qz + qx*qw), −qx² − qy² + qz² + qw²)     × 180/π
+```
+
+### 6.2.1 Boat sensor mounting orientation
+
+**Required mounting (for correct quaternion output):**
+
+| Axis | Direction |
+|------|-----------|
+| X | Starboard (+ve toward right when facing bow) |
+| Y | Forward (+ve toward bow) |
+| Z | Up (+ve away from water) |
+
+The BNO085 mounting plate must face upward. The chip silk-screen arrow (Y axis marker) must point toward the bow.
+
+**Post-processing correction (3 Jul 2026 data only):**
+
+The sensor in the 3 Jul 2026 session was installed **upside-down with Y pointing aft**: X=starboard, Y=aft, Z=down. Orientation was determined by testing all four possible horizontal axis arrangements against GPS COG; the correct option was the only one giving |yaw − COG_signed| < 2° (the 1.8° residual is magnetic declination for Carlisle, UK).
+
+The correction is a 180° rotation about the sensor X (starboard) axis:
+```
+Q_corrected = Q_sensor ⊗ (0, 1, 0, 0)
+→ qw_c = −qx,  qx_c = qw,  qy_c = qz,  qz_c = −qy
+```
+Effect: roll −177° → +3° (near-level); pitch and yaw unchanged. Corrected file: `BoatLog20260703r_corrected.csv`.
+
+Load the `_corrected` file in PadViz5 to obtain a right-side-up kayak in the 3D view.
+
+**Summary of observed roll (corrected file):** mean +1.6°, std 3.6° — consistent with gentle paddle-stroke roll.
 
 ### 6.3 Live serial (L key)
 
@@ -409,6 +443,10 @@ kayak_roll, kayak_pitch, kayak_yaw
 When a BoatLog is loaded, the kayak model is rotated by the full `kayak_qw/qx/qy/qz`
 quaternion from the matched boat frame (replaces the paddle avgYaw-only fallback used in
 PadViz3/4). The deck-camera heading also follows the boat yaw when boat data is present.
+
+**Important:** The quaternion assumes the boat sensor is mounted with X=starboard, Y=forward,
+Z=up (see §6.2.1). If the sensor was mounted incorrectly (as in the 3 Jul 2026 session),
+load the `_corrected` CSV instead of the raw BoatLog.
 
 ---
 
