@@ -22,6 +22,9 @@ class GraphPanel {
         {1,0},{1,1},{1,2},{1,3},{1,4}
     };
 
+    // Dropdown item list: item 0 = "— none —" (fi=-1), items 1..13 = fields 0..12
+    static final int DD_ITEM_COUNT = N_FIELDS + 1;
+
     static final int N_SLOTS = 3;
     final int[] SLOT_COLS = {color(255, 100, 100), color(100, 220, 100), color(100, 160, 255)};
     int[] slotField = {0, 2, 3};   // default: roll, yaw, CPM
@@ -38,6 +41,7 @@ class GraphPanel {
     // ── Dropdown state ────────────────────────────────────────────────────────
     int  dropdownSlot    = -1;   // which slot is open (-1 = none)
     int  dropdownX, dropdownY;
+    int  dropdownScroll  = 0;   // first visible item index (0-based)
 
     // ── Drag state ────────────────────────────────────────────────────────────
     boolean zoomDrag  = false;
@@ -87,15 +91,16 @@ class GraphPanel {
         int x = MARGIN, y = MARGIN;
 
         fill(50);  textSize(10);  textAlign(LEFT, TOP);
-        fill(150);  text("Fields  (click slot to change)", x, y);
+        fill(150);  text("Fields  (click to change, scroll dropdown)", x, y);
         y += 14;
 
         for (int s = 0; s < N_SLOTS; s++) {
             int fi = slotField[s];
-            fill(SLOT_COLS[s]);  noStroke();
+            boolean active = (fi >= 0 && fi < N_FIELDS);
+            fill(active ? SLOT_COLS[s] : color(55, 58, 70));  noStroke();
             rect(x, y, SEL_W - MARGIN, BTN_H, 3);
-            fill(20);  textSize(11);  textAlign(LEFT, CENTER);
-            String lbl = (fi >= 0 && fi < N_FIELDS) ? FIELD_NAMES[fi] : "— none —";
+            fill(active ? 20 : 140);  textSize(11);  textAlign(LEFT, CENTER);
+            String lbl = active ? FIELD_NAMES[fi] : "— none —";
             text(lbl, x + 6, y + BTN_H / 2);
             y += BTN_H + 4;
         }
@@ -191,18 +196,39 @@ class GraphPanel {
 
     // ── Dropdown ─────────────────────────────────────────────────────────────
     void drawDropdown() {
-        int x = MARGIN, y = dropdownY;
-        int w = SEL_W - MARGIN, rh = ROW_H;
-        fill(45, 48, 60);  stroke(90);  strokeWeight(1);
-        rect(x, y, w, N_FIELDS * rh + 4, 3);
+        int x  = MARGIN;
+        int y  = dropdownY;
+        int w  = SEL_W - MARGIN;
 
-        for (int fi = 0; fi < N_FIELDS; fi++) {
-            int ry = y + 2 + fi * rh;
-            boolean sel = slotField[dropdownSlot] == fi;
+        // Rows that fit in remaining panel height
+        int maxRows = max(4, (gh - y - 6) / ROW_H);
+        int visRows = min(maxRows, DD_ITEM_COUNT);
+        int pxH     = visRows * ROW_H + 4;
+
+        fill(45, 48, 60);  stroke(90);  strokeWeight(1);
+        rect(x, y, w, pxH, 3);
+
+        for (int vi = 0; vi < visRows; vi++) {
+            int itemIdx = dropdownScroll + vi;
+            if (itemIdx >= DD_ITEM_COUNT) break;
+            int fi  = itemIdx - 1;          // -1 = none, 0..12 = field
+            int ry  = y + 2 + vi * ROW_H;
+            boolean sel = (slotField[dropdownSlot] == fi);
             fill(sel ? SLOT_COLS[dropdownSlot] : color(55, 58, 72));
-            noStroke();  rect(x + 2, ry, w - 4, rh - 2, 2);
+            noStroke();  rect(x + 2, ry, w - 4, ROW_H - 2, 2);
             fill(sel ? 20 : 200);  textSize(10);  textAlign(LEFT, CENTER);
-            text(FIELD_NAMES[fi], x + 8, ry + rh / 2);
+            text(fi < 0 ? "— none —" : FIELD_NAMES[fi], x + 8, ry + ROW_H / 2);
+        }
+
+        // Scroll arrows when list is taller than viewport
+        textAlign(RIGHT, CENTER);  textSize(11);
+        if (dropdownScroll > 0) {
+            fill(100, 180, 255);
+            text("▲", x + w - 4, y + 2 + ROW_H / 2);
+        }
+        if (dropdownScroll + visRows < DD_ITEM_COUNT) {
+            fill(100, 180, 255);
+            text("▼", x + w - 4, y + pxH - ROW_H / 2);
         }
     }
 
@@ -237,7 +263,6 @@ class GraphPanel {
                     + nf(bfd.speedMs,0,4) + "," + nf(bfd.cogDeg,0,2) + ","
                     + nf(bfd.kayakRoll,0,5) + "," + nf(bfd.kayakPitch,0,5) + "," + nf(bfd.kayakYaw,0,5));
             } else {
-                // No boat data for this paddle frame
                 pw.println(pi + "," + fd.ts + ","
                     + nf(fd.roll,0,5) + "," + nf(fd.pitch,0,5) + "," + nf(fd.yaw,0,5) + ","
                     + nf(fd.cpm,0,3) + "," + fd.strokeCount + ","
@@ -253,11 +278,15 @@ class GraphPanel {
     void mousePressed(int mx, int my, DataSource ds) {
         // Close dropdown on any click
         if (dropdownSlot >= 0) {
-            // Check if clicking inside the dropdown
-            if (mx >= MARGIN && mx <= SEL_W && my >= dropdownY) {
-                int fi = (my - dropdownY - 2) / ROW_H;
-                if (fi >= 0 && fi < N_FIELDS) {
-                    slotField[dropdownSlot] = fi;
+            if (mx >= MARGIN && mx <= SEL_W) {
+                int maxRows = max(4, (gh - dropdownY - 6) / ROW_H);
+                int visRows = min(maxRows, DD_ITEM_COUNT);
+                int vi = (my - dropdownY - 2) / ROW_H;
+                if (vi >= 0 && vi < visRows) {
+                    int itemIdx = dropdownScroll + vi;
+                    if (itemIdx < DD_ITEM_COUNT) {
+                        slotField[dropdownSlot] = itemIdx - 1;  // -1 = none
+                    }
                 }
             }
             dropdownSlot = -1;
@@ -269,9 +298,10 @@ class GraphPanel {
         for (int s = 0; s < N_SLOTS; s++) {
             if (mx >= MARGIN && mx <= SEL_W - MARGIN
                 && my >= sy && my < sy + BTN_H) {
-                dropdownSlot = s;
-                dropdownX    = MARGIN;
-                dropdownY    = sy + BTN_H + 2;
+                dropdownSlot   = s;
+                dropdownX      = MARGIN;
+                dropdownY      = sy + BTN_H + 2;
+                dropdownScroll = 0;
                 return;
             }
             sy += BTN_H + 4;
@@ -316,6 +346,14 @@ class GraphPanel {
     void mouseReleased() {
         zoomDrag = false;
         seekDrag = false;
+    }
+
+    void mouseWheel(int count) {
+        if (dropdownSlot >= 0) {
+            int maxRows = max(4, (gh - dropdownY - 6) / ROW_H);
+            int visRows = min(maxRows, DD_ITEM_COUNT);
+            dropdownScroll = constrain(dropdownScroll + count, 0, max(0, DD_ITEM_COUNT - visRows));
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

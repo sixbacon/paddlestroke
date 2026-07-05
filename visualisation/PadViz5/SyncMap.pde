@@ -31,11 +31,14 @@ class SyncMap {
                 continue;
             }
 
-            // Advance bi while the next boat frame is closer
+            // Advance bi while the next boat frame is closer.
+            // Use d1 <= d0 (not strict <) so bi advances through runs of frames
+            // that share the same gpsUtcSec (100 Hz log, 1 Hz GPS updates).
             while (bi + 1 < bLen) {
                 long d0 = Math.abs(bFrames.get(bi).gpsUtcSec     - pSec);
+                if (d0 == 0) break;   // perfect match — stop here
                 long d1 = Math.abs(bFrames.get(bi + 1).gpsUtcSec - pSec);
-                if (d1 < d0) bi++;
+                if (d1 <= d0) bi++;
                 else break;
             }
 

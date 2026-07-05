@@ -60,7 +60,7 @@ class Model3D {
         applyQuat(canvas, q);
         canvas.scale(S);
         if (paddle != null) {
-            canvas.shape(paddle, 0, 0);
+            canvas.shape(paddle);
         } else {
             canvas.fill(180, 180, 200);  canvas.noStroke();
             canvas.box(1.8f, 0.02f, 0.02f);

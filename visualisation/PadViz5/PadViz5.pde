@@ -233,7 +233,8 @@ void mouseReleased() {
     m3d.mouseReleased();
 }
 void mouseWheel(MouseEvent e) {
-    if (mouseX < VIEW_W && mouseY < TOP_H) m3d.mouseWheel(e.getCount());
+    if (mouseY >= TOP_H) { graph.mouseWheel(e.getCount()); return; }
+    if (mouseX < VIEW_W) m3d.mouseWheel(e.getCount());
 }
 
 // ── File callbacks ────────────────────────────────────────────────────────────
