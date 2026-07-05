@@ -49,7 +49,7 @@ float yawEmaSin = 0.0f, yawEmaCos = 1.0f;
 float avgYaw    = 0.0f;
 
 // ── Position tracking ─────────────────────────────────────────────────────────
-boolean posMode = true;
+boolean posMode = false;
 
 // ── Objects ───────────────────────────────────────────────────────────────────
 DataSource ds;

@@ -21,7 +21,7 @@ class Model3D {
     Model3D(PApplet app) {
         canvas = app.createGraphics(VIEW_W, TOP_H, P3D);
         paddle = app.loadShape("paddle60.obj");
-        if (paddle == null) println("Warning: paddle60.obj not found — using placeholder box");
+        if (paddle == null) println("Warning: paddle60.obj not found");
     }
 
     void draw(FrameData fd, BoatFrameData bfd,
@@ -60,10 +60,10 @@ class Model3D {
         applyQuat(canvas, q);
         canvas.scale(S);
         if (paddle != null) {
-            canvas.shape(paddle);
+            canvas.shape(paddle, 0, 0);
         } else {
             canvas.fill(180, 180, 200);  canvas.noStroke();
-            canvas.box(1.8f, 0.02f, 0.02f);
+            canvas.box(1.8f, 0.04f, 0.04f);
         }
         canvas.popMatrix();
 
