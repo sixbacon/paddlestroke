@@ -290,7 +290,7 @@ class GraphPanel {
             if (n < 2) return;
             int viewA = (zoomA >= 0 && zoomB > zoomA) ? zoomA : 0;
             int viewB = (zoomB >  0 && zoomB > zoomA) ? zoomB : n - 1;
-            float curT   = (float)(frameIdx() - viewA) / max(1, viewB - viewA);
+            float curT   = (float)(frameIdx - viewA) / max(1, viewB - viewA);
             int   cursorX = chartX + (int)(curT * chartW);
             if (abs(mx - cursorX) <= 6) {
                 seekDrag = true;
