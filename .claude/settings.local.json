@@ -14,7 +14,9 @@
       "Bash(git add *)",
       "Bash(git commit *)",
       "Bash(python *)",
-      "Read(//c/Users/billg/AppData/Local/Temp/claude/C--Users-billg-billAI-paddlestroke/466bc6ef-8ded-40d4-a565-d73be55d2e22/tasks/**)"
+      "Read(//c/Users/billg/AppData/Local/Temp/claude/C--Users-billg-billAI-paddlestroke/466bc6ef-8ded-40d4-a565-d73be55d2e22/tasks/**)",
+      "Bash(wait *)",
+      "Bash(awk *)"
     ]
   }
 }

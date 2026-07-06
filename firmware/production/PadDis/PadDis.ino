@@ -5,7 +5,13 @@
 #include <SD.h>
 
 #define SKETCH_NAME    "PadDis"
-#define SKETCH_VERSION "8.9"
+#define SKETCH_VERSION "8.10"
+
+// v8.10: add rx_ms column (CYD-side receive timestamp, captured in ESPnow
+// callback) to both paddle and boat CSVs. rx_ms uses the SAME CYD millis()
+// clock for both streams, so post-processing sync = match rows by nearest
+// rx_ms — typically < 5 ms accuracy, dominated by ESPnow send-side jitter.
+// Old ±5-second gps_utc_sec sync remains as a cross-check / absolute time ref.
 
 // ── Paddle payload — must match PadLog exactly ────────────────────────────────
 struct __attribute__((packed)) ImuDataPayload {
@@ -71,13 +77,19 @@ static_assert(sizeof(BoatDataPayload) == 58, "BoatDataPayload size mismatch — 
 #define RING_SIZE      32
 #define BOAT_RING_SIZE 32
 
-static ImuDataPayload  rxRing[RING_SIZE];
-static volatile int    rxHead = 0;
-static volatile int    rxTail = 0;
+// Each ring entry pairs the received payload with the CYD-side millis()
+// captured inside the ESPnow receive callback. Same clock domain for both
+// paddle and boat entries → common time reference for sync.
+struct PadRxEntry  { ImuDataPayload  p; uint32_t rx_ms; };
+struct BoatRxEntry { BoatDataPayload p; uint32_t rx_ms; };
 
-static BoatDataPayload boatRing[BOAT_RING_SIZE];
-static volatile int    boatHead = 0;
-static volatile int    boatTail = 0;
+static PadRxEntry     rxRing[RING_SIZE];
+static volatile int   rxHead = 0;
+static volatile int   rxTail = 0;
+
+static BoatRxEntry    boatRing[BOAT_RING_SIZE];
+static volatile int   boatHead = 0;
+static volatile int   boatTail = 0;
 
 portMUX_TYPE rxMux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -111,20 +123,31 @@ static bool g_padReceiving  = false, g_padFilled  = true;
 static bool g_boatReceiving = false, g_boatFilled = true;
 
 // ── ESPnow callback — demux by packet size ────────────────────────────────────
+// Capture millis() first so rx_ms reflects reception time on the CYD, not the
+// time this callback finished processing.
 void onReceive(const esp_now_recv_info *info, const uint8_t *data, int len) {
+    uint32_t rx_ms = millis();
     if (len == (int)sizeof(ImuDataPayload)) {
         ImuDataPayload p;
         memcpy(&p, data, sizeof(p));
         portENTER_CRITICAL(&rxMux);
         int next = (rxHead + 1) % RING_SIZE;
-        if (next != rxTail) { rxRing[rxHead] = p; rxHead = next; }
+        if (next != rxTail) {
+            rxRing[rxHead].p     = p;
+            rxRing[rxHead].rx_ms = rx_ms;
+            rxHead               = next;
+        }
         portEXIT_CRITICAL(&rxMux);
     } else if (len == (int)sizeof(BoatDataPayload)) {
         BoatDataPayload p;
         memcpy(&p, data, sizeof(p));
         portENTER_CRITICAL(&rxMux);
         int next = (boatHead + 1) % BOAT_RING_SIZE;
-        if (next != boatTail) { boatRing[boatHead] = p; boatHead = next; }
+        if (next != boatTail) {
+            boatRing[boatHead].p     = p;
+            boatRing[boatHead].rx_ms = rx_ms;
+            boatHead                 = next;
+        }
         portEXIT_CRITICAL(&rxMux);
     }
 }
@@ -245,14 +268,14 @@ void setup() {
             logFile.println("# " SKETCH_NAME " v" SKETCH_VERSION " paddle");
 #ifdef CSV_COLUMNS_REDUCED
             logFile.println("timestamp_ms,roll,pitch,yaw,stroke_count,cpm,"
-                            "gps_utc_sec,gps_uk_offset");
+                            "gps_utc_sec,gps_uk_offset,rx_ms");
 #else
             logFile.println("seq,timestamp_ms,"
                             "accel_x,accel_y,accel_z,"
                             "q_w,q_x,q_y,q_z,"
                             "roll,pitch,yaw,"
                             "stroke_count,cpm,"
-                            "gps_utc_sec,gps_uk_offset");
+                            "gps_utc_sec,gps_uk_offset,rx_ms");
 #endif
             Serial.print("Paddle logging to "); Serial.println(fname);
             sdReady = true;
@@ -273,7 +296,7 @@ void setup() {
             boatLogFile.println("seq,timestamp_ms,gps_utc_sec,gps_uk_offset,"
                                 "gps_lat,gps_lon,gps_speed_ms,gps_cog_deg,gps_fix,"
                                 "kayak_qw,kayak_qx,kayak_qy,kayak_qz,"
-                                "kayak_roll,kayak_pitch,kayak_yaw");
+                                "kayak_roll,kayak_pitch,kayak_yaw,rx_ms");
             Serial.print("Boat logging to "); Serial.println(bfname);
             boatSdReady = true;
         }
@@ -306,12 +329,14 @@ void loop() {
 
     // ── Paddle packet ─────────────────────────────────────────────────────────
     ImuDataPayload pkt;
+    uint32_t       pktRxMs = 0;
     bool got = false;
     portENTER_CRITICAL(&rxMux);
     if (rxHead != rxTail) {
-        pkt    = rxRing[rxTail];
-        rxTail = (rxTail + 1) % RING_SIZE;
-        got    = true;
+        pkt     = rxRing[rxTail].p;
+        pktRxMs = rxRing[rxTail].rx_ms;
+        rxTail  = (rxTail + 1) % RING_SIZE;
+        got     = true;
     }
     portEXIT_CRITICAL(&rxMux);
 
@@ -323,21 +348,23 @@ void loop() {
 #ifdef CSV_COLUMNS_REDUCED
             char row[96];
             int n = snprintf(row, sizeof(row),
-                "%u,%.5f,%.5f,%.5f,%u,%u,%u,%u\n",
+                "%u,%.5f,%.5f,%.5f,%u,%u,%u,%u,%u\n",
                 pkt.timestamp_ms,
                 pkt.roll, pkt.pitch, pkt.yaw,
                 pkt.stroke_count, pkt.cpm,
-                g_gps_utc_sec, (uint32_t)g_gps_uk_offset);
+                g_gps_utc_sec, (uint32_t)g_gps_uk_offset,
+                pktRxMs);
 #else
-            char row[200];
+            char row[220];
             int n = snprintf(row, sizeof(row),
-                "%u,%u,%.5f,%.5f,%.5f,%.8f,%.8f,%.8f,%.8f,%.5f,%.5f,%.5f,%u,%u,%u,%u\n",
+                "%u,%u,%.5f,%.5f,%.5f,%.8f,%.8f,%.8f,%.8f,%.5f,%.5f,%.5f,%u,%u,%u,%u,%u\n",
                 pkt.seq, pkt.timestamp_ms,
                 pkt.accel_x, pkt.accel_y, pkt.accel_z,
                 pkt.q_w, pkt.q_x, pkt.q_y, pkt.q_z,
                 pkt.roll, pkt.pitch, pkt.yaw,
                 pkt.stroke_count, pkt.cpm,
-                g_gps_utc_sec, (uint32_t)g_gps_uk_offset);
+                g_gps_utc_sec, (uint32_t)g_gps_uk_offset,
+                pktRxMs);
 #endif
             logFile.write((const uint8_t*)row, n);
         }
@@ -365,10 +392,12 @@ void loop() {
 
     // ── Boat packet ───────────────────────────────────────────────────────────
     BoatDataPayload bpkt;
+    uint32_t        bpktRxMs = 0;
     bool gotBoat = false;
     portENTER_CRITICAL(&rxMux);
     if (boatHead != boatTail) {
-        bpkt     = boatRing[boatTail];
+        bpkt     = boatRing[boatTail].p;
+        bpktRxMs = boatRing[boatTail].rx_ms;
         boatTail = (boatTail + 1) % BOAT_RING_SIZE;
         gotBoat  = true;
     }
@@ -379,10 +408,10 @@ void loop() {
         lastBoatRxMs = now;
 
         if (boatSdReady) {
-            char row[200];
+            char row[220];
             int n = snprintf(row, sizeof(row),
                 "%u,%u,%u,%u,%.6f,%.6f,%.4f,%.2f,%u,"
-                "%.8f,%.8f,%.8f,%.8f,%.5f,%.5f,%.5f\n",
+                "%.8f,%.8f,%.8f,%.8f,%.5f,%.5f,%.5f,%u\n",
                 bpkt.seq, bpkt.timestamp_ms,
                 bpkt.gps_utc_sec, (uint32_t)bpkt.gps_uk_offset,
                 (double)bpkt.gps_lat, (double)bpkt.gps_lon,
@@ -391,7 +420,8 @@ void loop() {
                 (double)bpkt.kayak_qw, (double)bpkt.kayak_qx,
                 (double)bpkt.kayak_qy, (double)bpkt.kayak_qz,
                 (double)bpkt.kayak_roll, (double)bpkt.kayak_pitch,
-                (double)bpkt.kayak_yaw);
+                (double)bpkt.kayak_yaw,
+                bpktRxMs);
             boatLogFile.write((const uint8_t*)row, n);
         }
 

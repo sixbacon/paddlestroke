@@ -39,7 +39,10 @@ float   frameFrac = 0;
 int     testMode = 0;
 
 // ── Paddle correction ─────────────────────────────────────────────────────────
-float corrX = 0, corrY = 0, corrZ = 0;
+// Rotation applied on top of the IMU quaternion to align the OBJ model with the
+// paddle sensor axes (X=shaft-to-right-blade, Y=blade-normal, Z=in-blade-plane).
+// Starting guess: 90° roll about the shaft — adjust with A + -/=.
+float corrX = 90, corrY = 0, corrZ = 0;
 int   tuneAxis = 0;
 static final float NUDGE = 5.0f;
 
