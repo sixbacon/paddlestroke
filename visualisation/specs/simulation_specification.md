@@ -1,8 +1,8 @@
 # PadViz — Paddle Visualisation Specification
 
-**Version:** 0.8
-**Date:** 2026-07-04
-**Status:** PadViz complete (Phase 3, 2 Jun 2026). PadViz2 complete (11 Jun 2026). PadViz3 complete (11 Jun 2026). PadViz4 complete (11 Jun 2026). PadViz5 complete (3 Jul 2026) — dual-log visualiser with synchronisation, bottom graph panel, and export. Boat sensor mounting orientation determined from 3 Jul 2026 field data (4 Jul 2026) — see §6.2.1. Phase 2 firmware (v8.8) still pending.
+**Version:** 0.9
+**Date:** 2026-07-07
+**Status:** PadViz complete (Phase 3, 2 Jun 2026). PadViz2 complete (11 Jun 2026). PadViz3 complete (11 Jun 2026). PadViz4 complete (11 Jun 2026). PadViz5 **superseded** (abandoned 6 Jul 2026 — orientation model unable to reconcile paddle vs. boat frames; kept in tree for reference only). PadViz5b complete (6 Jul 2026) — rebuilt from PadViz4 in six additive slices; consumes v8.10 `rx_ms` sync column. PadViz6 **planned** (approved 6 Jul 2026) — fresh sketch under disciplined "no empirical corrections" rules; see `padviz6_spec.md`. Paddle OBJ model updated 7 Jul 2026: left blade material split from Red into new Yellow material for orientation debugging (see §15). Boat sensor mounting orientation determined from 3 Jul 2026 field data (4 Jul 2026) — see §6.2.1.
 
 ---
 
@@ -21,8 +21,7 @@ Intended for:
 
 ## 2. Sketch Versions
 
-Five Processing 4.x sketches exist. **PadViz5 is the current tool for field session analysis.**
-Earlier sketches are retained for reference.
+Seven Processing 4.x sketches exist. **PadViz5b is the current tool for field session analysis. PadViz6 is planned.** Earlier sketches are retained for reference.
 
 | Sketch | Folder | Rotation approach | Status |
 |---|---|---|---|
@@ -30,10 +29,19 @@ Earlier sketches are retained for reference.
 | PadViz2 | `PadViz2/` | Euler angles: rotateZ/Y/X chain | Complete (11 Jun 2026) |
 | PadViz3 | `PadViz3/` | Quaternion: quatMul + applyMatrix | Complete (11 Jun 2026) |
 | PadViz4 | `PadViz4/` | PadViz3 + IMU double-integration position tracking | Complete (11 Jun 2026) |
-| PadViz5 | `PadViz5/` | PadViz4 + dual-log (ImuLog + BoatLog), graph panel, export | Complete (3 Jul 2026) |
+| PadViz5 | `PadViz5/` | PadViz4 + dual-log; abandoned world-frame post-rotation model | **Superseded** (6 Jul 2026) |
+| PadViz5b | `PadViz5b/` | PadViz4 + BoatLog + bottom graph + rx_ms sync + merged CSV export | Complete (6 Jul 2026) |
+| PadViz6 | `PadViz6/` (planned) | Disciplined handedness bridge `scale(1,1,-1)`; no empirical corrections | **Planned** (approved 6 Jul 2026) |
 
-PadViz5 extends PadViz4 with simultaneous loading of an ImuLog (paddle) and BoatLog (hull unit)
-CSV, synchronisation on GPS time, a full-width bottom graph panel, and merged CSV export.
+PadViz5b extends PadViz4 with simultaneous loading of an ImuLog (paddle) and BoatLog (hull unit)
+CSV, sub-10 ms synchronisation via `rx_ms` (v8.10+) with `gps_utc_sec` fallback, a full-width
+bottom graph panel with dropdown field selection (13 fields, up to 3 slots), drag-to-zoom, and
+merged CSV export. See §14. PadViz5 was abandoned because its world-frame post-rotation model
+could not reconcile paddle-vs-boat orientation — the mirror symptoms observed in 3 Jul 2026
+field data have determinant −1 and are not fixable by any rotation (see §16). PadViz6 (see the
+separate `padviz6_spec.md`) restarts from first principles: a single handedness flip between
+the left-handed sensor/model frame and Processing's right-handed world, and no empirical
+corrections without a documented physical reason.
 
 ---
 
@@ -164,16 +172,36 @@ seq, timestamp_ms, accel_x, accel_y, accel_z, q_w, q_x, q_y, q_z, roll, pitch, y
 seq, timestamp_ms, accel_x, accel_y, accel_z, q_w, q_x, q_y, q_z, roll, pitch, yaw, stroke_count, cpm, gps_utc_sec, gps_uk_offset
 ```
 
+**17-col (full, no hz, with rx_ms — PadDis v8.10 from 6 Jul 2026):**
+```
+seq, timestamp_ms, accel_x, accel_y, accel_z, q_w, q_x, q_y, q_z, roll, pitch, yaw, stroke_count, cpm, gps_utc_sec, gps_uk_offset, rx_ms
+```
+
+The two 17-col layouts are disambiguated by the CSV header row: presence of the token `rx_ms`
+selects the v8.10 parser branch, otherwise fall back to the with-hz layout.
+
 First line `# PadDis vX.Y [paddle]` and column-name header rows are skipped.
-`gps_utc_sec` is used for synchronisation with BoatLog when available (17-col and 16-col only).
+`gps_utc_sec` is used for synchronisation with BoatLog when available (17-col, 16-col).
+`rx_ms` (v8.10+) is the CYD-side ESPnow reception timestamp — same clock domain as the boat
+log's `rx_ms`, enabling < 10 ms sync via nearest-`rx_ms` match (see §13.3).
 
-### 6.2 BoatLog (hull CSV) — B key (PadViz5 only)
+### 6.2 BoatLog (hull CSV) — B key (PadViz5 / PadViz5b only)
 
+**16-col (pre-v8.10):**
 ```
 seq, timestamp_ms, gps_utc_sec, gps_uk_offset, gps_lat, gps_lon, gps_speed_ms, gps_cog_deg, gps_fix,
 kayak_qw, kayak_qx, kayak_qy, kayak_qz, kayak_roll, kayak_pitch, kayak_yaw
 ```
-First line `# PadDis vX.Y boat` and column-name header are skipped.
+
+**17-col (PadDis v8.10 from 6 Jul 2026):** trailing `rx_ms` column added — same clock domain
+as the paddle log's `rx_ms`.
+```
+seq, timestamp_ms, gps_utc_sec, gps_uk_offset, gps_lat, gps_lon, gps_speed_ms, gps_cog_deg, gps_fix,
+kayak_qw, kayak_qx, kayak_qy, kayak_qz, kayak_roll, kayak_pitch, kayak_yaw, rx_ms
+```
+
+First line `# PadDis vX.Y boat` and column-name header are skipped. Header token `rx_ms`
+selects the v8.10 parser branch.
 
 The Euler angles are derived from the quaternion using the BNO085 ZYX convention (see §6.2.1):
 ```c
@@ -397,11 +425,10 @@ Window: 1200 × 1000 px. 3D view: 900 × 700 px. Side panel: 300 × 700 px. Grap
 Both files are synchronised on `gps_utc_sec` (integer GPS UTC seconds). A two-pointer sweep
 in `SyncMap.build()` maps each paddle frame to the nearest boat frame within ±5 seconds.
 
-**Current limitation:** GPS time has 1-second resolution; many paddle frames share the same
-boat frame. Boat-source traces on the graph appear as step functions at ~1 Hz.
-
-**Planned improvement:** Use `timestamp_ms` linear clock-offset model (GPS tick pairs as
-anchors) to achieve sub-10 ms sync accuracy. See `SyncMap.pde` for implementation point.
+**Limitation:** GPS time has 1-second resolution; many paddle frames share the same
+boat frame. Boat-source traces on the graph appear as step functions at ~1 Hz. PadViz5 is
+superseded by PadViz5b (see §14), which resolves this via the `rx_ms` column added in
+PadDis v8.10.
 
 ### 13.4 Graph Panel
 
@@ -450,7 +477,148 @@ load the `_corrected` CSV instead of the raw BoatLog.
 
 ---
 
-## 14. Out of Scope
+## 14. PadViz5b — Dual-Log Visualiser (current)
+
+`visualisation/PadViz5b/`. Created 6 Jul 2026 after PadViz5 was abandoned (see §16). Rebuilt
+from PadViz4 in six additive slices — none of PadViz5's world-frame post-rotation code was
+carried over.
+
+### 14.1 Files
+
+`PadViz5b.pde` (main), `Model3D.pde`, `DataSource.pde`, `BoatSource.pde`, `SyncMap.pde`,
+`GraphPanel.pde`, `SidePanel.pde`, `Integrator.pde`. Data: `data/paddle60.obj` + `.mtl`.
+
+### 14.2 Layout
+
+Window 1400 × 1000 px. Top 900 × 700 = 3D view (kayak + paddle). Right 500 × 700 = side
+panel (`Paddle:` / `Boat:` filenames, Load Paddle CSV / Load Boat CSV buttons, play/pause,
+speed slider). Bottom 1400 × 300 = graph panel (three colour-coded slots + dropdown
+selectors + drag-to-zoom + Full/Export buttons).
+
+### 14.3 Keys
+
+`O` = open paddle CSV, `B` = open boat CSV, `E` = export merged CSV, `K` = toggle kayak
+(deck) camera, `P` = paddle position track (roll-rate fallback available), `A` = cycle
+correction tune axis, `-`/`=` = nudge ±5°, `0/1/2/3` = test-isolate axes, `R` = reset
+camera, `Space` = play/pause, arrows = step.
+
+**Note on nudge keys:** the correction keys (`A`, `-`, `=`) are retained for backwards
+compatibility with PadViz4 tuning but are **not** the intended interaction model going
+forward — see PadViz6 and §17 (no empirical corrections).
+
+### 14.4 Synchronisation
+
+`SyncMap.build()` chooses one of two paths at load time based on the CSV header:
+
+- **rx_ms path (preferred):** both CSVs carry `rx_ms` (v8.10+). Nearest-`rx_ms` match with
+  ±500 ms guard. Sub-10 ms typical accuracy (dominated by ESPnow send-side jitter).
+- **gps_utc_sec path (fallback):** older CSVs use whole-second GPS UTC time with ±5 s guard.
+
+Diagnostic flag `SyncMap.usedRxMs` records which path fired.
+
+### 14.5 Graph Panel
+
+Thirteen selectable fields across colour-coded slots (drop-downs):
+
+- **Paddle:** `roll`, `pitch`, `yaw`, `CPM`, `strokeCount`, `accel_x`, `accel_y`, `accel_z`
+- **Boat:** `kayak_roll`, `kayak_pitch`, `kayak_yaw`, `speed_ms`, `cog_deg`
+
+Boat-field traces are sync-aware — pixels where sync = −1 are skipped rather than
+interpolated.
+
+Drag on chart area = zoom window. Click on chart = seek. Full button resets zoom.
+Export button writes merged CSV over the zoomed range.
+
+### 14.6 Kayak Render
+
+Uses the full boat quaternion when a boat frame is available for the current paddle frame;
+falls back to `rotateZ(radians(avgYaw))` (paddle-derived heading) when boat CSV not loaded.
+Deck camera uses boat yaw when available.
+
+### 14.7 Not Done (Pending)
+
+- Live-capture / retrospective "rest-pose calibration" workflow to derive per-session
+  mount correction quaternion automatically.
+- Add `rx_ms` columns to the merged-CSV export in `GraphPanel.exportMerged()` (currently
+  omitted from the exported columns).
+
+---
+
+## 15. Paddle Model — Blade Colour Convention (7 Jul 2026)
+
+`data/paddle60.mtl` gained a new `Yellow` material (`Kd 0.800 0.800 0.020`) alongside the
+existing `Red`. `data/paddle60.obj` was edited to split its single `usemtl Red` block into
+two — faces with mean X < 0 (the **left** blade, per paddle spec +X = right blade — see
+CLAUDE.md paddle IMU mounting) were reassigned to `usemtl Yellow`; faces with mean X > 0
+kept `usemtl Red`.
+
+**Purpose:** visible left/right identity in the 3D view. Enables orientation debugging
+without geometry changes — the paddle's left side is unambiguous on screen.
+
+**Applied to:** all six sketch data folders (`PadViz`, `PadViz2`, `PadViz3`, `PadViz4`,
+`PadViz5`, `PadViz5b`). All copies are byte-identical.
+
+**Verified 7 Jul 2026 in PadViz5b:** left blade renders yellow, right blade renders red —
+confirming the negative-X side of the model corresponds to the physical left blade, as the
+paddle IMU spec asserts.
+
+---
+
+## 16. PadViz5 — Superseded
+
+Rationale for abandonment (recorded here for cross-reference from §2):
+
+PadViz5 rendered the paddle as `quatMul(qCorr, qImu)` — a **world-frame** post-rotation where
+`qCorr` was intended to compose a fixed camera-frame correction with the sensor's world-frame
+quaternion. The 3 Jul 2026 field data exhibited symptoms that could not be reconciled with
+this model:
+
+- The paddle motion appeared **time-reversed** (peak/trough phase inverted relative to expected
+  stroke direction);
+- The **left and right blades were swapped** (visible blade at each stroke apex belonged to
+  the wrong side).
+
+Together these are a **mirror-symmetric** transformation of the expected motion. A mirror has
+determinant −1, so it cannot be represented by any rotation (which has determinant +1). No
+value of `qCorr` — chosen in either world-frame or body-frame convention — can transform the
+observed data into the expected motion.
+
+Root cause candidates (order of likelihood):
+
+1. Physical paddle sensor mount inverted between the 21 May 2026 known-good session and the
+   3 Jul 2026 session (mirror occurs in the sensor-to-shaft mapping);
+2. Missing handedness bridge between the left-handed sensor/model frame and Processing's
+   right-handed world (the `scale(-1,1,1)` copied from PadViz3/4 may have been the wrong axis
+   and/or applied in the wrong order relative to the correction quaternion).
+
+PadViz5 is retained on disk for reference. PadViz5b resolves the ambient rendering, sync, and
+graph features by rebuilding on PadViz4's known-good model. PadViz6 (planned) restarts the
+orientation model from first principles under the discipline documented in §17.
+
+---
+
+## 17. Orientation Discipline (from 6 Jul 2026)
+
+For all new visualiser work:
+
+1. Both IMU sensor frames and the paddle `.obj` are **left-handed** by project convention.
+   Processing's world is **right-handed**.
+2. A handedness change is a mirror (determinant −1) and cannot be a rotation. The single
+   permitted mirror is `scale(1, 1, -1)` (flip Z, keep X and Y) applied as the outermost
+   transform in the render tree.
+3. Every quaternion multiplication in the code has a comment naming the two frames it
+   converts between (`// worldRH ← paddleLH`).
+4. No axis-cycle keys, no nudge-by-N° keys, no hard-coded correction angles in production
+   render paths. Per-session mount corrections live in a sidecar `.json` next to the data
+   file, derived from a documented rest-pose calibration frame.
+5. If orientation looks wrong, suspect in order: (a) missing handedness flip; (b) missing
+   documented mount rotation; (c) physical remount between sessions. Do not reach for a fudge.
+
+Full plan for the compliant sketch: see `padviz6_spec.md`.
+
+---
+
+## 18. Out of Scope
 
 - Stroke detection algorithm changes (PadLog / StrokeDetector)
 - Wireless link modifications

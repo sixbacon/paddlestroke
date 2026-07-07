@@ -1289,19 +1289,21 @@ Receives the 60-byte `ImuDataPayload`. Ring buffer stores `ImuDataPayload` entri
 
 Auto-numbered `/ImuLog00.CSV` … `/ImuLog99.CSV`. The first line is a version comment; the second is the column header:
 
-**Full column set** (v8.8 default):
+**Full column set** (v8.10 default — directive commented out; `hz` removed in v8.9, `gps_utc_sec` + `gps_uk_offset` added in v8.9, `rx_ms` added in v8.10):
 ```
-# PadDis v8.8
-seq,timestamp_ms,accel_x,accel_y,accel_z,q_w,q_x,q_y,q_z,roll,pitch,yaw,stroke_count,cpm,hz
+# PadDis v8.10
+seq,timestamp_ms,accel_x,accel_y,accel_z,q_w,q_x,q_y,q_z,roll,pitch,yaw,stroke_count,cpm,gps_utc_sec,gps_uk_offset,rx_ms
 ```
 
 **Reduced column set** (when `CSV_COLUMNS_REDUCED` is defined — see §12.3.6):
 ```
-# PadDis v8.8
-timestamp_ms,roll,pitch,yaw,stroke_count,cpm
+# PadDis v8.10
+timestamp_ms,roll,pitch,yaw,stroke_count,cpm,gps_utc_sec,gps_uk_offset,rx_ms
 ```
 
-Every received packet is written as one CSV row. The file is flushed every 5 s and on signal loss. SD absence is non-fatal.
+`rx_ms` is CYD `millis()` captured **inside the ESPnow receive callback** — same clock domain as the boat log's `rx_ms`, so post-processing sync is a nearest-`rx_ms` match (< 10 ms typical accuracy, dominated by send-side jitter). See §14.1.8.
+
+`cpm` is the raw un-EMAd value. `gps_utc_sec` and `gps_uk_offset` are 0 when no GPS fix is active. Every received packet is written as one CSV row. The file is flushed every 5 s and on signal loss. SD absence is non-fatal.
 
 #### 12.3.3 Display
 
@@ -1781,13 +1783,13 @@ track resolution.
 
 Two new CSV files written by PadDis to the SD card:
 
-**Paddle log** (17 col — v8.9 adds GPS time columns):
-`seq, timestamp_ms, accel_x, accel_y, accel_z, q_w, q_x, q_y, q_z, roll, pitch, yaw, stroke_count, cpm, hz, gps_utc_sec, gps_uk_offset`
+**Paddle log** (17 col — v8.9 dropped `hz` and added GPS time; v8.10 appends `rx_ms`):
+`seq, timestamp_ms, accel_x, accel_y, accel_z, q_w, q_x, q_y, q_z, roll, pitch, yaw, stroke_count, cpm, gps_utc_sec, gps_uk_offset, rx_ms`
 
-`gps_utc_sec` and `gps_uk_offset` are stamped from the most recent valid BoatLog packet; both are 0 when no GPS fix is active. This embeds an absolute time reference directly in the paddle log without requiring post-processing alignment.
+`gps_utc_sec` and `gps_uk_offset` are stamped from the most recent valid BoatLog packet; both are 0 when no GPS fix is active. This embeds an absolute time reference directly in the paddle log without requiring post-processing alignment. `rx_ms` is the CYD-side reception timestamp — see §14.1.8.
 
-**Boat log** (new — 16 col):
-`seq, timestamp_ms, gps_utc_sec, gps_uk_offset, gps_lat, gps_lon, gps_speed_ms, gps_cog_deg, gps_fix, kayak_qw, kayak_qx, kayak_qy, kayak_qz, kayak_roll, kayak_pitch, kayak_yaw`
+**Boat log** (v8.10 — 17 col with `rx_ms`):
+`seq, timestamp_ms, gps_utc_sec, gps_uk_offset, gps_lat, gps_lon, gps_speed_ms, gps_cog_deg, gps_fix, kayak_qw, kayak_qx, kayak_qy, kayak_qz, kayak_roll, kayak_pitch, kayak_yaw, rx_ms`
 
 #### 14.1.7 PadDis v8.9 — Boat Unit Integration
 
@@ -1836,6 +1838,30 @@ arduino-cli monitor -p <COM?> -c baudrate=115200
 - Time and speed rows shown only when `gps_fix == 1`; cleared when fix lost or boat signal lost.
 - CPM displayed to 1 decimal place (change-detection at 0.1 CPM resolution). Shows `-- cpm` before first paddle packet.
 - No GPS warning text or other elements drawn.
+
+#### 14.1.8 PadDis v8.10 — rx_ms cross-device sync
+
+**Motivation.** The v8.9 paddle log embeds GPS UTC seconds, but GPS resolution is 1 s — coarser than a stroke and useless for aligning inter-packet detail between the paddle and boat streams. A finer common clock is needed to correlate the two streams in post-processing (e.g. `PadViz5b` bottom-graph traces from both sources).
+
+**Change.** In `PadDis.ino`, the ESPnow receive callback captures `millis()` **before** any parsing or ring-buffer work, and the ring-buffer entry now wraps the payload plus that timestamp:
+
+```cpp
+struct PadRxEntry  { ImuDataPayload  p; uint32_t rx_ms; };
+struct BoatRxEntry { BoatDataPayload p; uint32_t rx_ms; };
+
+void onReceive(const esp_now_recv_info *info, const uint8_t *data, int len) {
+    uint32_t rx_ms = millis();
+    // …memcpy payload, push {p, rx_ms} to the appropriate ring…
+}
+```
+
+The value is written as the trailing column of both paddle and boat CSV rows.
+
+**Why the callback and not the CSV-writing loop.** `millis()` in the writing loop drifts by the ring-buffer depth (up to ~320 ms). Capturing at callback fire time locks the timestamp to physical arrival.
+
+**Sync accuracy.** Same CYD clock domain for both streams → nearest-`rx_ms` match is < 10 ms typical, dominated by ESPnow send-side jitter (paddle radio ready vs. boat radio ready). The old `gps_utc_sec` column is retained as an absolute-time cross-check and for cross-day file merges.
+
+**Client side.** PadViz5b `SyncMap.build()` uses the `rx_ms` path (±500 ms guard) when both CSVs carry the column, and falls back to `gps_utc_sec` (±5 s) for older files. Path selected at load time from the CSV header line.
 
 ---
 
