@@ -1,8 +1,8 @@
 # PadViz6 — Disciplined Orientation Specification
 
-**Version:** 0.2
+**Version:** 0.3
 **Date:** 2026-07-07
-**Status:** **Planned.** Approved 6 Jul 2026. Amended 7 Jul 2026 to add Slice 0 (paddle-model calibration) and export-all-fields option. No files created yet — folder `visualisation/PadViz6/` will be initialised at the start of Slice 0.
+**Status:** **Slices 0, A, B implemented and validated** on 7 Jul 2026 against the `ImuLog20260706-1.CSV` + `BoatLog20260706-1.CSV` calibration recording. Slice C (combined) and the graph/export panels are pending. Files in `visualisation/PadViz6/`. See §12 (implementation status) for the current file list and what each slice does.
 
 ---
 
@@ -458,3 +458,67 @@ orientation review only.
 - Automatic derivation of the model calibration triple from the OBJ file. Slice 0 is
   interactive by design — the operator's judgment of "the model matches the reference
   wireframe" is the acceptance criterion.
+
+---
+
+## 12. Implementation Status (7 Jul 2026)
+
+### 12.1 Files present
+
+| File | Purpose |
+|---|---|
+| `PadViz6.pde` | Main sketch — slice/view state, key routing, HUD, playback |
+| `Calibration.pde` | Cal triple + JSON I/O + Slice 0 key bindings |
+| `Model3D.pde` | Paddle OBJ loader, `applyQuat`, procedural kayak |
+| `DataSource.pde` | Paddle CSV parser (v8.10 + v8.9), `meanQuat` window helper |
+| `BoatSource.pde` | Boat CSV parser (v8.10 + v8.9), `meanQuat` window helper |
+| `data/paddle60.obj`+`.mtl` | Copied from PadViz5b (post 7 Jul 2026 blade split) |
+| `data/model_calibration.json` | Slice 0 output — currently `{0, 0, 0}` (see §12.3) |
+
+Not present (planned for Slice C and beyond): `SyncMap.pde`, `GraphPanel.pde`, `SidePanel.pde`, `Integrator.pde`.
+
+### 12.2 What each slice does
+
+**Slice 0 — DONE.** Interactive calibration tool. World sensor-axis reference (RGB lines) drawn at origin. Paddle drawn under handedness bridge + current calibration triple, no data quaternion. Fixed cameras (side and top-down, `V` toggles). Key bindings `y/Y P/p R/r` nudge yaw/pitch/roll by ± step; `[`/`]` change step; `Z` zero; `S` save JSON; `L` list to console.
+
+**Slice A — DONE.** Loads a paddle CSV (`O` key; PadDis v8.10 17-col with `rx_ms` preferred, v8.9 16-col fallback). Draws paddle under handedness bridge + calibration + data quaternion. Independent frame index with Space / arrows / `,`/`.` / Home / End playback. **Reference subtraction (K/U):** `K` captures the mean quaternion over ±50 frames around the current frame; while active, each frame renders as `qRef⁻¹ * q_current` so the captured pose appears at Slice 0 identity. `U` clears. HUD shows current frame, timestamp, `rx_ms`, quat, Euler, and reference state.
+
+**Slice B — DONE.** Loads a boat CSV (`B` key). Draws procedural kayak (see §12.4) driven by `kayak_qw..qz` through the same pipeline. Independent frame index, independent K/U reference (separate `qRefBoat`). HUD adds a GPS line (fix / speed / COG / UTC). Axis legend switches to boat conventions (+X starboard, +Y bow, +Z deck).
+
+### 12.3 Calibration result
+
+For the paddle60.obj in the repo, the calibration triple is `(model_yaw_deg = 0, model_pitch_deg = 0, model_roll_deg = 0)`. Vertex extents confirm the OBJ was drawn in the paddle-IMU convention: X ±0.909 m (shaft), Y ±0.08 m (blade normal, thin), Z ±0.09 m (in-blade, wider). No rotation is needed to map Blender frame → sensor frame.
+
+### 12.4 Kayak model
+
+Octagonal cross-section (eight vertices at deck level, eight at hull level), tapered to points at bow (+Y = 2.75 m) and stern (−Y = 2.75 m), widest at midship (±0.275 m). Deck at Z = +0.075 m, hull at Z = −0.075 m. Shape reused from PadViz5b `drawKayak`; Z sign inverted vs. PadViz5b because PadViz6 uses +Z = up whereas PadViz5b drew the kayak below the XY plane. Blue deck, grey hull, darker sides, dark cockpit rectangle centred on Y = 0, and a bright red bow triangle at the +Y tip for unambiguous forward indication.
+
+### 12.5 Camera conventions (Processing P3D)
+
+| View | `camera()` call | On-screen axes |
+|---|---|---|
+| Side (`viewMode = 0`) | `camera(0, -1200, 0,  0, 0, 0,  0, 0, 1)` | +X right, +Z up, +Y into screen |
+| Top-down (`viewMode = 1`) | `camera(0, 0, -1200,  0, 0, 0,  0, -1, 0)` | +X right, +Y up, +Z out of screen |
+
+**P3D gotcha:** the camera `up` vector actually specifies the screen-**down** direction (Y-inverted from OpenGL to match 2D). That's why the `up` vectors above look like they point down. Verified empirically 7 Jul 2026 across two rounds of camera tuning.
+
+The side view uses camera along −Y, which is a good side profile for the paddle (long axis along X) but shows the kayak stern-on (kayak long axis along Y). For Slice B use the top-down view for orientation review; a starboard-side camera can be added later if a side profile of the kayak is wanted.
+
+### 12.6 Reference subtraction (K/U) — validation aid
+
+Slices A and B each carry an independent reference quaternion (`qRefPad`, `qRefBoat`), initially identity. `K` captures the mean quaternion of ±50 frames around the current frame index into the active-slice reference; subsequent frames render `qRef⁻¹ * q_current` instead of the raw quat, so the captured pose appears at Slice 0 identity. `U` clears the active-slice reference.
+
+This is a **view alignment**, not a data correction, and it is deliberately per-source and non-persistent. It exists because BNO085 quaternions are expressed in a magnetically-referenced world frame — absolute yaw does not align with paddler-forward without either magnetometer calibration or a per-session body-frame reference. The validation-time subtraction here is the same math that Slice C will use via a per-session sidecar JSON (§7).
+
+### 12.7 Physical facts captured
+
+- **Calibration Rest A window** (`ImuLog20260706-1.CSV`, t = 22 – 38 s, frames ≈ 2200–3800): paddle held horizontal, right blade face vertical, sensor +Y toward kayak bow. Mean roll = 0° ± 2°, pitch ≈ −2.5° ± 3°, yaw ≈ 55° ± 1°. Accel `≈ (0.25, −0.4, +9.85)` confirms sensor +Z is physically up.
+- **Boat mean orientation during the same window** (`BoatLog20260706-1.CSV`): kayak roll ≈ +5.9°, pitch ≈ −4°, yaw ≈ 50°, speed = 0. Boat stationary throughout the session, so the COG-mapping acceptance test (§4.2 test 2) is not possible on this file — needs an under-way session.
+
+### 12.8 Not done
+
+- **Slice C** — combined paddle + kayak with `rx_ms` sync from `SyncMap.pde` (byte-for-byte port from PadViz5b) and per-session paddle-vs-kayak yaw sidecar JSON.
+- **Bottom graph panel** (`GraphPanel.pde`) with dropdown field selection, drag-to-zoom, and merged CSV export (curated + all-fields modes per §9).
+- **Side panel** (`SidePanel.pde`) — filenames, load buttons, play/pause, speed slider.
+- **Adaptive side view** for Slice B (starboard-side camera) if desired.
+- **Under-way GPS COG mapping test** for Slice B acceptance — needs a new field session.

@@ -1,8 +1,8 @@
 # PadViz — Paddle Visualisation Specification
 
-**Version:** 0.9
+**Version:** 1.0
 **Date:** 2026-07-07
-**Status:** PadViz complete (Phase 3, 2 Jun 2026). PadViz2 complete (11 Jun 2026). PadViz3 complete (11 Jun 2026). PadViz4 complete (11 Jun 2026). PadViz5 **superseded** (abandoned 6 Jul 2026 — orientation model unable to reconcile paddle vs. boat frames; kept in tree for reference only). PadViz5b complete (6 Jul 2026) — rebuilt from PadViz4 in six additive slices; consumes v8.10 `rx_ms` sync column. PadViz6 **planned** (approved 6 Jul 2026) — fresh sketch under disciplined "no empirical corrections" rules; see `padviz6_spec.md`. Paddle OBJ model updated 7 Jul 2026: left blade material split from Red into new Yellow material for orientation debugging (see §15). Boat sensor mounting orientation determined from 3 Jul 2026 field data (4 Jul 2026) — see §6.2.1.
+**Status:** PadViz complete (Phase 3, 2 Jun 2026). PadViz2 complete (11 Jun 2026). PadViz3 complete (11 Jun 2026). PadViz4 complete (11 Jun 2026). PadViz5 **superseded** (abandoned 6 Jul 2026 — orientation model unable to reconcile paddle vs. boat frames; kept in tree for reference only). PadViz5b complete (6 Jul 2026) — rebuilt from PadViz4 in six additive slices; consumes v8.10 `rx_ms` sync column. **PadViz6 Slices 0 / A / B DONE (7 Jul 2026)**; Slice C combined view and graph/export panels pending. See `padviz6_spec.md` v0.3. Paddle OBJ model updated 7 Jul 2026: left blade material split from Red into new Yellow material for orientation debugging (see §15). Boat sensor mounting orientation determined from 3 Jul 2026 field data (4 Jul 2026) — see §6.2.1.
 
 ---
 
@@ -31,7 +31,7 @@ Seven Processing 4.x sketches exist. **PadViz5b is the current tool for field se
 | PadViz4 | `PadViz4/` | PadViz3 + IMU double-integration position tracking | Complete (11 Jun 2026) |
 | PadViz5 | `PadViz5/` | PadViz4 + dual-log; abandoned world-frame post-rotation model | **Superseded** (6 Jul 2026) |
 | PadViz5b | `PadViz5b/` | PadViz4 + BoatLog + bottom graph + rx_ms sync + merged CSV export | Complete (6 Jul 2026) |
-| PadViz6 | `PadViz6/` (planned) | Disciplined handedness bridge `scale(1,1,-1)`; no empirical corrections | **Planned** (approved 6 Jul 2026) |
+| PadViz6 | `PadViz6/` | Disciplined handedness bridge `scale(1,1,-1)`; Slices 0 (cal) / A (paddle) / B (kayak) built | **Slices 0/A/B DONE** (7 Jul 2026); Slice C pending |
 
 PadViz5b extends PadViz4 with simultaneous loading of an ImuLog (paddle) and BoatLog (hull unit)
 CSV, sub-10 ms synchronisation via `rx_ms` (v8.10+) with `gps_utc_sec` fallback, a full-width

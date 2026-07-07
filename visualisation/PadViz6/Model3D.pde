@@ -27,51 +27,90 @@ class Model3D {
 
     // Procedural kayak in the boat-IMU frame:
     //   +X = starboard, +Y = bow (forward), +Z = up (deck).
-    // Simple hull as a stretched box with a coloured deck patch and a
-    // bright bow marker so orientation is unambiguous under any rotation.
+    // Octagonal cross-section tapered to points at bow and stern (shape
+    // reused from PadViz5b). Deck (blue) sits at +Z, hull (grey) at -Z.
+    // Cockpit centred on Y = 0. Bright red bow marker at +Y tip.
     void drawKayak() {
-        final float S    = 300;      // px per metre (matches paddle scale)
-        final float LEN  = 4.5 * S;  // Y extent (bow-stern)
-        final float WID  = 0.55 * S; // X extent (port-starboard)
-        final float DEP  = 0.35 * S; // Z extent (deck-hull)
+        final float S  = 300;       // px per metre (matches paddle scale)
+        final float zt = +0.075f;   // deck top, above origin
+        final float zb = -0.075f;   // hull bottom, below origin
 
-        // Hull — grey box centred at origin.
-        pushStyle();
-        strokeWeight(1);
-        stroke(80);
-        fill(140);
-        box(WID, LEN, DEP);
-        popStyle();
+        // Octagonal cross-section vertices — bow at +Y, stern at -Y.
+        // Widths taper from 0 at both ends to +/-0.275 at midship.
+        float[][] top = {
+            { 0.000f,  2.75f, zt}, {-0.200f,  1.50f, zt},
+            {-0.275f,  0.00f, zt}, {-0.200f, -1.50f, zt},
+            { 0.000f, -2.75f, zt}, { 0.200f, -1.50f, zt},
+            { 0.275f,  0.00f, zt}, { 0.200f,  1.50f, zt}
+        };
+        float[][] bot = {
+            { 0.000f,  2.75f, zb}, {-0.200f,  1.50f, zb},
+            {-0.275f,  0.00f, zb}, {-0.200f, -1.50f, zb},
+            { 0.000f, -2.75f, zb}, { 0.200f, -1.50f, zb},
+            { 0.275f,  0.00f, zb}, { 0.200f,  1.50f, zb}
+        };
+        int n = top.length;
 
-        // Deck patch — thin blue plate sitting on the +Z face.
-        pushMatrix();
-        translate(0, 0, DEP / 2 + 2);
-        pushStyle();
-        noStroke();
-        fill(60, 100, 200);
-        box(WID * 0.85, LEN * 0.95, 4);
-        popStyle();
-        popMatrix();
-
-        // Bow marker — bright red block at the +Y end, on top of the deck.
-        pushMatrix();
-        translate(0, LEN / 2 - 0.15 * S, DEP / 2 + 8);
         pushStyle();
         noStroke();
-        fill(220, 60, 60);
-        box(WID * 0.5, 0.3 * S, 8);
-        popStyle();
-        popMatrix();
 
-        // Cockpit — small dark rectangle just aft of centre on the deck.
-        pushMatrix();
-        translate(0, -0.4 * S, DEP / 2 + 4);
-        pushStyle();
-        noStroke();
-        fill(20);
-        box(WID * 0.55, 0.5 * S, 4);
+        // Deck — blue, on +Z face
+        fill(0, 50, 200);
+        beginShape(TRIANGLES);
+        for (int i = 1; i < n - 1; i++) {
+            vertex(top[0]  [0]*S, top[0]  [1]*S, top[0]  [2]*S);
+            vertex(top[i]  [0]*S, top[i]  [1]*S, top[i]  [2]*S);
+            vertex(top[i+1][0]*S, top[i+1][1]*S, top[i+1][2]*S);
+        }
+        endShape();
+
+        // Hull bottom — grey, on -Z face
+        fill(160);
+        beginShape(TRIANGLES);
+        for (int i = n - 2; i > 0; i--) {
+            vertex(bot[n-1][0]*S, bot[n-1][1]*S, bot[n-1][2]*S);
+            vertex(bot[i]  [0]*S, bot[i]  [1]*S, bot[i]  [2]*S);
+            vertex(bot[i-1][0]*S, bot[i-1][1]*S, bot[i-1][2]*S);
+        }
+        endShape();
+
+        // Side walls — darker grey
+        fill(120, 125, 135);
+        beginShape(TRIANGLES);
+        for (int i = 0; i < n; i++) {
+            int j = (i + 1) % n;
+            vertex(top[i][0]*S, top[i][1]*S, top[i][2]*S);
+            vertex(bot[i][0]*S, bot[i][1]*S, bot[i][2]*S);
+            vertex(top[j][0]*S, top[j][1]*S, top[j][2]*S);
+            vertex(bot[i][0]*S, bot[i][1]*S, bot[i][2]*S);
+            vertex(bot[j][0]*S, bot[j][1]*S, bot[j][2]*S);
+            vertex(top[j][0]*S, top[j][1]*S, top[j][2]*S);
+        }
+        endShape();
+
+        // Cockpit — dark rectangle centred on Y = 0, on the deck.
+        // Sits a hair above the deck plane so depth test wins.
+        fill(30, 32, 40);
+        float zC = (zt + 0.003f) * S;
+        beginShape(TRIANGLES);
+        vertex(-0.225f*S,  0.40f*S, zC);
+        vertex( 0.225f*S,  0.40f*S, zC);
+        vertex( 0.225f*S, -0.40f*S, zC);
+        vertex(-0.225f*S,  0.40f*S, zC);
+        vertex( 0.225f*S, -0.40f*S, zC);
+        vertex(-0.225f*S, -0.40f*S, zC);
+        endShape();
+
+        // Bow marker — bright red triangle at the +Y tip, on the deck.
+        fill(230, 40, 40);
+        float zM = (zt + 0.006f) * S;
+        beginShape(TRIANGLES);
+        vertex( 0.000f*S, 2.75f*S, zM);   // bow tip
+        vertex(-0.100f*S, 2.45f*S, zM);
+        vertex( 0.100f*S, 2.45f*S, zM);
+        endShape();
+
         popStyle();
-        popMatrix();
     }
 
     // Applies a Hamilton quaternion (w, x, y, z) as the current-matrix
