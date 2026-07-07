@@ -1,8 +1,8 @@
 # PadViz6 — Disciplined Orientation Specification
 
-**Version:** 0.1
+**Version:** 0.2
 **Date:** 2026-07-07
-**Status:** **Planned.** Approved 6 Jul 2026. No files created yet — folder `visualisation/PadViz6/` will be initialised at the start of Slice A.
+**Status:** **Planned.** Approved 6 Jul 2026. Amended 7 Jul 2026 to add Slice 0 (paddle-model calibration) and export-all-fields option. No files created yet — folder `visualisation/PadViz6/` will be initialised at the start of Slice 0.
 
 ---
 
@@ -14,7 +14,22 @@ documented frame-conversion discipline. PadViz4/5/5b accumulated empirical corre
 orientation "look right." The 3 Jul 2026 field data revealed that the residual symptoms
 were mirror-symmetric — determinant −1 — and cannot be represented by any rotation. All
 prior tuning was chasing the wrong model. PadViz6 restarts the orientation model from first
-principles and enforces one hard rule: **no correction without a physical reason.**
+principles and enforces one hard rule: **no correction without a documented physical reason.**
+
+**Two documented physical reasons are recognised:**
+
+1. **Frame chirality mismatch.** Sensor and OBJ model are left-handed; Processing world
+   is right-handed. Requires a single fixed mirror (see §3).
+2. **OBJ drawing convention.** The paddle `.obj` was drawn in Blender by a human, and its
+   rest pose in Blender's own local coordinates may not align with the paddle-IMU axis
+   convention (§2). This is a fact about the artwork, not the physics of paddling. It
+   requires a **one-time static** yaw/pitch/roll offset baked into the model at load time,
+   determined interactively against a calibration data set and captured to a config file
+   (see §4). Once captured, the values do not change between sessions and are not
+   adjustable at runtime.
+
+Both corrections are load-time only. Per-session runtime tweaking — the failure mode of
+PadViz3/4/5/5b — remains prohibited (see §9).
 
 This spec supersedes the "PadViz5" flow in the main visualisation spec (§16) for all new
 orientation code. PadViz5b remains the current tool for graph/export work until PadViz6 is
@@ -41,16 +56,20 @@ sets — as observed in PadViz3 through PadViz5b.
 
 ---
 
-## 3. The One Legitimate Correction
+## 3. The Two Fixed Corrections
 
-The handedness bridge is **the only pre-rotation permitted in production render paths.** It
-is chosen once and named in code:
+Two pre-rotations are permitted in the production render path. Both are fixed at build
+time (values live in config, not in variables that runtime input can mutate). Both are
+applied outermost-inward, before any quaternion rotation.
+
+### 3.1 Handedness bridge (§2 chirality mismatch)
 
 ```java
 pushMatrix();
 scale(1, 1, -1);          // ← handedness bridge: worldRH ← paddleLH  (flip Z, keep X, Y)
-// … apply quaternion rotation here …
-// … draw model here …
+// … model calibration rotation next …
+// … then apply data quaternion …
+// … then draw model …
 popMatrix();
 ```
 
@@ -61,6 +80,32 @@ mental model. `(1, 1, -1)` was locked in on 6 Jul 2026 because it leaves both ho
 axes untouched, so on-screen +X remains starboard/right-blade and on-screen +Y remains
 forward/blade-normal without further reasoning.
 
+### 3.2 Paddle model calibration (§1 OBJ drawing convention)
+
+An intrinsic ZYX Euler triple `(modelYaw, modelPitch, modelRoll)` in degrees, applied to
+the OBJ model *after* the handedness flip and *before* the data quaternion:
+
+```java
+pushMatrix();
+scale(1, 1, -1);                                 // handedness bridge
+rotateZ(radians(modelYaw));                      // model calibration ZYX ─┐
+rotateY(radians(modelPitch));                    //                        ├─ Blender→sensor
+rotateX(radians(modelRoll));                     //                        ┘
+applyQuat(canvas, qImu);                         // sensor data
+drawPaddle();
+popMatrix();
+```
+
+Values come from the file `data/model_calibration.json`, loaded once at sketch start.
+They are determined interactively in **Slice 0 — Paddle Model Calibration** (§4) using
+a designated calibration data set, then written to the JSON. After Slice 0 has run once
+and produced a validated triple, that triple is treated as an immutable model constant.
+
+**Rule.** All three components live in the config file, not in code constants. If the
+model file is ever re-exported from Blender with a different rest pose, Slice 0 is re-run
+and the JSON is updated. No PadViz3-style axis-cycle key ever appears in production render
+mode.
+
 **Rule.** The scale is applied **outside** the quaternion rotation. Never inside. Never
 combined into a modified quaternion at load time (this hides the mirror in the data
 pipeline and makes the frame convention invisible to anyone reading `Model3D.pde`).
@@ -69,10 +114,93 @@ pipeline and makes the frame convention invisible to anyone reading `Model3D.pde
 
 ## 4. Slices
 
-Slices are built in order. Each passes its rest-pose test before the next begins. **A slice
-that fails its rest-pose test is not fixed by adding rotations to the sketch** — it is
-diagnosed as either a missing mount rotation (documented, added, and named) or a physical
-mounting issue in the source data.
+Slices are built in order. Each passes its acceptance test before the next begins. **A
+slice that fails its acceptance test is not fixed by adding rotations to the sketch** — it
+is diagnosed as one of: missing/wrong model calibration (fixed once by re-running Slice 0),
+missing documented mount rotation (fixed by adding it at load with a source comment), or a
+physical mounting issue in the source data (fixed by remounting, not in software).
+
+### 4.0 Slice 0 — Paddle Model Calibration (must run first)
+
+Slice 0 is a **one-time interactive tool**, run against a designated calibration data set,
+that produces the model-calibration Euler triple used by Slices A/B/C. Once its output is
+written to `data/model_calibration.json`, Slice 0 is not run again unless the OBJ file is
+re-exported from Blender.
+
+**Camera.** Fixed side-on. Camera at `(0, +D, 0)` in Processing world coords (looking along
+`-Y` toward the origin), at the same Z altitude as the geometric centre of the paddle
+model (Z = 0 after handedness flip if the OBJ centre is at model origin). Distance `D` is
+chosen so the whole paddle is visible with margin. No mouse orbit, no zoom, no camera keys
+active in calibration mode — the camera is deliberately fixed so that the visual reference
+frame is unambiguous.
+
+**What is drawn.**
+
+1. World axes at the origin (X = red, Y = green, Z = blue, length ~1.5 × paddle half-length).
+   Labels `+X`, `+Y`, `+Z` at the axis tips.
+2. The handedness-flip block applied.
+3. The current `(modelYaw, modelPitch, modelRoll)` applied to the model.
+4. **No data quaternion applied** — the model is drawn in its calibration rest pose.
+5. The paddle model, with the 7 Jul 2026 blade colour split (yellow left, red right).
+6. A reference "expected" wireframe in a distinct colour (cyan, for example) at a fixed
+   pose corresponding to how the paddle should look for the loaded calibration frame:
+   shaft along +X, blade normals along +Y, in-blade direction +Z. This is the target the
+   Slice 0 operator matches the paddle to.
+
+**Data source.** A calibration CSV recorded specifically for this purpose: the paddle
+held in a known rest pose (e.g. shaft horizontal along starboard, blades vertical,
+paddle-IMU Y axis pointing to the sky). The mean quaternion over a stable window is
+computed and stored in the JSON as `calibration_pose_quat`. During Slice 0 rendering,
+that mean quaternion is **not** applied — the model is shown at the identity, and the
+operator's task is to align the OBJ mesh (in its Blender frame) with the sensor axes.
+
+**Interactive controls (Slice 0 mode only).**
+
+| Key | Action |
+|-----|--------|
+| `Y` / `Shift+Y` | Adjust `modelYaw` by +5° / −5° |
+| `P` / `Shift+P` | Adjust `modelPitch` by +5° / −5° |
+| `R` / `Shift+R` | Adjust `modelRoll` by +5° / −5° |
+| `[` / `]` | Fine adjust: change step size ÷2 / ×2 (default step 5°, min 0.1°, max 45°) |
+| `Z` | Zero all three (reset to `0, 0, 0`) |
+| `S` | Save current triple to `data/model_calibration.json` |
+| `L` | Print current settings to the console in a paste-ready block (see below) |
+
+**HUD (Slice 0 mode).**
+
+```
+SLICE 0 — MODEL CALIBRATION
+calibration file:  <path>
+current pose:      modelYaw =  90.0°   modelPitch =   0.0°   modelRoll = 180.0°
+step size:         5.0°
+save target:       data/model_calibration.json
+[Y/P/R] adjust  [[/]] step size  [Z] zero  [S] save  [L] print block
+```
+
+**Console listing on `L`.**
+
+```
+// PadViz6 paddle model calibration — 2026-07-15
+// Source: data/PaddleCal_20260715.csv, frames 250–450
+{
+  "model_yaw_deg":   90.0,
+  "model_pitch_deg":  0.0,
+  "model_roll_deg": 180.0
+}
+```
+
+**Acceptance test.** With the operator satisfied that the yellow blade is on the −X side
+of the world axes, the red blade on the +X side, blade normals along +Y, and the shaft
+lying in the XY plane at the same Z as the world origin, the current triple is saved
+with `S`. Slice A is then run against the same calibration CSV: with the mean calibration
+quaternion applied to the model at rest, the paddle should render identical to the Slice 0
+target pose. If not, Slice 0 is re-opened and the triple refined.
+
+**Discipline note.** The `Y`/`P`/`R` keys are the *only* runtime-mutable rotation keys in
+PadViz6, and they are active only in Slice 0 mode. In Slices A/B/C the same keys are
+either unbound or bound to non-rotation actions (see §6). This is the one carve-out from
+the "no runtime tweaking" rule, justified by the one-time calibration nature and the
+config-file capture.
 
 ### 4.1 Slice A — paddle only
 
@@ -154,46 +282,78 @@ To be created under `visualisation/PadViz6/`:
 
 | File | Role |
 |------|------|
-| `PadViz6.pde` | Main: setup, draw, key/mouse routing, HUD |
-| `Model3D.pde` | Handedness-flip block, quaternion applier, paddle + kayak draw |
+| `PadViz6.pde` | Main: setup, draw, key/mouse routing, HUD, slice-mode state machine |
+| `Model3D.pde` | Handedness flip + model calibration + quaternion applier + draw |
+| `Calibration.pde` | Slice 0 tool: reference wireframe, key handlers, JSON writer |
 | `DataSource.pde` | Paddle CSV parser (skeleton copied from PadViz5b; no correction code) |
 | `BoatSource.pde` | Boat CSV parser (skeleton copied from PadViz5b) |
 | `SyncMap.pde` | Reused from PadViz5b unchanged (rx_ms + gps_utc dual path) |
+| `GraphPanel.pde` | Bottom graph strip (ported from PadViz5b) + export-all-fields dialog |
+| `SidePanel.pde` | Filenames + Load buttons + play/pause + speed slider |
 | `data/paddle60.obj` + `.mtl` | Copied from PadViz5b (post 7 Jul 2026 blade split) |
+| `data/model_calibration.json` | Output of Slice 0; input to Slices A/B/C |
 
 Nothing else is carried over from PadViz3/4/5/5b. In particular: **no `corrX`, `corrY`,
-`corrZ`** variables; **no `tuneAxis`**; **no `A`, `-`, `=`** keys; **no `scale(-1, 1, 1)`**
-anywhere.
+`corrZ`** variables (values live in `model_calibration.json`, not code); **no `tuneAxis`**;
+**no `A`, `-`, `=`** keys; **no `scale(-1, 1, 1)`** anywhere.
 
 ---
 
 ## 6. Keyboard
 
+Keys are context-sensitive on the active slice. Keys not listed for a given slice are
+inactive in that slice.
+
+**Global (all slices):**
+
 | Key | Action |
 |-----|--------|
-| `1` | Slice A view (paddle only) |
-| `2` | Slice B view (kayak only) |
-| `3` | Slice C view (combined) |
+| `0` | Enter Slice 0 (model calibration mode) |
+| `1` | Enter Slice A view (paddle only) |
+| `2` | Enter Slice B view (kayak only) |
+| `3` | Enter Slice C view (combined) |
 | `O` | Open paddle CSV |
 | `B` | Open boat CSV |
+
+**Slice 0 (model calibration) — see §4.0 for full listing:**
+
+`Y` / `Shift+Y` yaw ± step; `P` / `Shift+P` pitch ± step; `R` / `Shift+R` roll ± step;
+`[` / `]` step size ÷2 / ×2; `Z` zero triple; `S` save JSON; `L` print console block.
+No playback keys (no `Space`, no arrows) — Slice 0 shows only the rest-pose frame.
+
+**Slices A / B / C (playback and review):**
+
+| Key | Action |
+|-----|--------|
 | `Space` | Play / pause |
 | `←` / `→` | Step one frame |
 | `Home` / `End` | Jump to start / end |
-| `R` | Reset camera to default |
+| `R` | Reset camera to default (has no rotation-editing effect) |
+| `E` | Export current graph selection (see §9) |
 
-Deliberately **omitted** (from PadViz3/4/5b):
+Deliberately **omitted** in Slices A/B/C (present in PadViz3/4/5b):
 
 - `A` (cycle tune axis)
 - `-` / `=` (nudge correction ±5°)
-- `0` (normal mode) / `1..3` when overloaded for axis-isolation test modes
+- Overloaded `0`/`1..3` for axis-isolation test modes (in PadViz6 these are slice-select
+  keys and never mutate rotations)
 - Any key that mutates a correction quaternion at runtime
+
+`Y`, `P`, `R` in Slices A/B/C are unbound (or, if reused, must be for non-rotation
+actions). This ensures a user cannot accidentally leave Slice 0 with rotation keys still
+live in a review session.
 
 Test-mode axis isolation, if needed for debugging, must be gated behind a debug flag in
 source and not bindable at runtime.
 
 ---
 
-## 7. Rest-Pose Calibration Sidecar (Slice C prerequisite)
+## 7. Per-Session Rest-Pose Sidecar (Slice C prerequisite)
+
+*Distinct from the Slice 0 model calibration (§4.0). The model calibration is a one-time
+per-OBJ constant; the rest-pose sidecar below is a per-session paddle-vs-kayak yaw
+alignment captured at the start of each recording.*
+
 
 Sidecar file next to the paddle CSV: `<basename>.rest.json`.
 
@@ -225,26 +385,63 @@ applying a stale correction.
 ## 8. Discipline Rules (enforced in code review)
 
 1. Every quaternion multiplication has a `// <targetFrame> ← <sourceFrame>` comment.
-2. No `corrX`, `corrY`, `corrZ` variables.
-3. No key that mutates a correction quaternion.
-4. Per-session offsets live in sidecar JSON, applied at load, never at render.
-5. Any handedness change other than the one `scale(1, 1, -1)` in Slice A/B/C is prohibited.
-6. If a slice fails its rest-pose test, the fix is a documented mount rotation added at
-   load, or a physical-mounting incident report — never a runtime tweak.
+2. No `corrX`, `corrY`, `corrZ` variables in Slices A/B/C. Model calibration values live
+   in `data/model_calibration.json`, loaded at sketch start, held in read-only fields.
+3. No key that mutates a correction quaternion in Slices A/B/C. Rotation-editing keys
+   (`Y`, `P`, `R`) are legal *only* in Slice 0 mode.
+4. Per-session offsets live in sidecar JSON alongside the CSV, applied at load, never at
+   render.
+5. Any handedness change other than the one `scale(1, 1, -1)` documented in §3.1 is
+   prohibited.
+6. If a slice fails its acceptance test, the fix is: (a) re-run Slice 0 if the model
+   calibration is wrong, (b) add a documented mount rotation at load with a source
+   comment, or (c) file a physical-mounting incident report. Never a runtime tweak in
+   Slices A/B/C.
+7. Slice 0 is a build-time tool. Its output (`model_calibration.json`) is committed to
+   the repo. Its interactive keys are physically inaccessible from Slices A/B/C.
 
 ---
 
-## 9. Success Criteria
+## 9. Export
+
+The bottom graph panel (ported from PadViz5b, §14) supports zoom-window export via `E` or
+the `Export` button. The export dialog offers two column sets:
+
+- **Curated (default)** — the PadViz5b column set:
+  `pad_seq, pad_ts, pad_roll, pad_pitch, pad_yaw, pad_cpm, pad_stroke, pad_accel_x,
+   pad_accel_y, pad_accel_z, pad_rx_ms, pad_gps_utc, boat_ts, boat_rx_ms, boat_gps_utc,
+   boat_lat, boat_lon, boat_speed_ms, boat_cog, kayak_qw, kayak_qx, kayak_qy, kayak_qz,
+   kayak_roll, kayak_pitch, kayak_yaw`.
+  `pad_rx_ms` and `boat_rx_ms` are additions vs. PadViz5b (which currently omits them —
+  see PadViz5b spec §14.7).
+- **All fields (new option)** — every column present in both loaded CSVs, unfiltered.
+  Paddle columns first (all 17 columns of the v8.10 paddle log if loaded, or whichever
+  subset the loaded file provides), then all boat columns (all 17 of the v8.10 boat log
+  or subset). Rows outside the sync range have empty boat cells; rows with no boat file
+  loaded omit boat columns entirely.
+
+Dialog is a simple two-radio-button selector when `E` is pressed or `Export` is clicked;
+choice is remembered per session (defaults to Curated on sketch start).
+
+Header row of the exported file names every included column. First line comment records
+which slice was active, which CSVs were loaded, and the sync path used
+(`# rx_ms path` or `# gps_utc path`).
+
+---
+
+## 10. Success Criteria
 
 PadViz6 replaces PadViz5b as the current tool when:
 
-1. Slice A passes its rest-pose test on both the known-good 21 May 2026 session and a
-   post-7 Jul 2026 session.
-2. Slice B passes its rest-pose test and the COG mapping is documented.
-3. Slice C passes its rest-pose test on a session that includes a rest-pose window and
+1. Slice 0 has produced a validated `model_calibration.json` committed to the repo.
+2. Slice A passes its acceptance test on both the known-good 21 May 2026 session and a
+   post-7 Jul 2026 session, using the Slice 0 calibration.
+3. Slice B passes its acceptance test and the COG mapping is documented.
+4. Slice C passes its acceptance test on a session that includes a rest-pose window and
    sidecar.
-4. All PadViz5b features that are still wanted (bottom graph panel, dropdown fields,
-   drag-to-zoom, merged CSV export, side panel filenames + Load buttons, boat quat for
+5. Export supports both Curated and All-fields modes and preserves `rx_ms` columns.
+6. All PadViz5b features that are still wanted (bottom graph panel, dropdown fields,
+   drag-to-zoom, merged CSV export, side-panel filenames + Load buttons, boat quat for
    kayak) are present under the discipline rules of §8.
 
 Until then, use PadViz5b for graph/export work and PadViz6 (as it is built) for
@@ -252,9 +449,12 @@ orientation review only.
 
 ---
 
-## 10. Out of Scope
+## 11. Out of Scope
 
 - Any change to firmware, ESPnow link, or CSV column layout.
 - Any change to `SyncMap.pde` beyond copying it byte-for-byte from PadViz5b.
 - Any attempt to auto-diagnose a physical mount inversion from data alone. The rest-pose
   calibration is user-initiated; if not captured, the session is uncorrected.
+- Automatic derivation of the model calibration triple from the OBJ file. Slice 0 is
+  interactive by design — the operator's judgment of "the model matches the reference
+  wireframe" is the acceptance criterion.
