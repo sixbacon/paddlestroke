@@ -15,6 +15,7 @@ DataSource  paddleData;   // null until user loads a paddle CSV
 BoatSource  boatData;     // null until user loads a boat CSV
 SyncMap     sync;         // paddle-frame -> boat-frame lookup; rebuilt on load
 GraphPanel  graph;        // bottom strip; visible when a paddle CSV is loaded
+Checklist   checklist;    // bottom strip; visible while no paddle CSV is loaded
 Sidecar     sidecar;      // per-session calibration; null until built or loaded
 
 // Height of the graph panel at the bottom of the window (px).
@@ -70,8 +71,9 @@ void setup() {
     model3D = new Model3D();
     model3D.loadPaddle("paddle60.obj");
 
-    sync  = new SyncMap();
-    graph = new GraphPanel(0, height - GRAPH_H, width, GRAPH_H);
+    sync      = new SyncMap();
+    graph     = new GraphPanel(0, height - GRAPH_H, width, GRAPH_H);
+    checklist = new Checklist(0, height - GRAPH_H, width, GRAPH_H);
 
     surface.setResizable(true);
     surface.setTitle("PadViz6");
@@ -83,9 +85,10 @@ void setup() {
 
 void draw() {
     background(20);
-    // Keep graph bounds locked to the window each frame so full-screen /
-    // resize immediately re-lays out the bottom strip. Cheap; four assigns.
-    if (graph != null) graph.setBounds(0, height - GRAPH_H, width, GRAPH_H);
+    // Keep the bottom strip bounds locked to the window each frame so
+    // resize immediately re-lays out whichever strip is showing.
+    if (graph     != null) graph    .setBounds(0, height - GRAPH_H, width, GRAPH_H);
+    if (checklist != null) checklist.setBounds(0, height - GRAPH_H, width, GRAPH_H);
     stepPlayback();
     drawScene3D();
 
@@ -94,7 +97,11 @@ void draw() {
     hint(DISABLE_DEPTH_TEST);
     drawHUD();
     drawAxisCompass();
-    if (isGraphVisible()) graph.draw(paddleData, boatData, sync, paddleFrameIdx);
+    // Checklist takes priority over the graph while onboarding is incomplete
+    // (so the user can watch rows auto-tick). Once all three rows are done
+    // the graph replaces it for regular analysis use.
+    if      (isChecklistVisible()) checklist.draw();
+    else if (isGraphVisible())     graph.draw(paddleData, boatData, sync, paddleFrameIdx);
     drawRefFlash();
     hint(ENABLE_DEPTH_TEST);
 }
@@ -106,6 +113,14 @@ boolean isGraphVisible() {
         && sliceMode >= 1
         && paddleData != null
         && paddleData.frameCount() > 0;
+}
+
+// Startup checklist takes the bottom strip until all three onboarding steps
+// are done (paddle CSV loaded, boat CSV loaded, session sidecar built), and
+// then for a further ~2.5 s so the user can see the final tick land before
+// the graph replaces it (see Checklist.shouldStayVisible).
+boolean isChecklistVisible() {
+    return checklist != null && checklist.shouldStayVisible();
 }
 
 // ── 3D scene ──────────────────────────────────────────────────────────────────
@@ -284,7 +299,9 @@ void getCameraBasis(float[] eye, float[] fwd, float[] right, float[] up) {
 // to the screen render as a disc-in-ring (out of screen) or an X (into
 // screen); those with meaningful projected length render as coloured lines.
 void drawAxisCompass() {
-    int bottom = isGraphVisible() ? (height - GRAPH_H) : height;
+    // Bottom of the 3D area — above whichever bottom strip is showing.
+    boolean stripVisible = isGraphVisible() || isChecklistVisible();
+    int bottom = stripVisible ? (height - GRAPH_H) : height;
     int ox = 92;
     int oy = bottom - 30;
     int L  = 80;
@@ -876,13 +893,25 @@ void setPlaying(boolean p) {
 // everything above it is the 3D scene, where left-drag orbits the camera and
 // the mouse wheel zooms.
 
+boolean pointerInBottomStrip() {
+    return mouseY >= (height - GRAPH_H)
+        && (isGraphVisible() || isChecklistVisible());
+}
+
 boolean pointerInGraph() {
     return isGraphVisible() && mouseY >= (height - GRAPH_H);
 }
 
 void mousePressed() {
-    if (pointerInGraph()) {
-        graph.mousePressed(mouseX, mouseY - (height - GRAPH_H), paddleData, mouseButton);
+    if (pointerInBottomStrip()) {
+        int localY = mouseY - (height - GRAPH_H);
+        // Same priority as draw() — checklist wins over graph while
+        // onboarding is incomplete.
+        if (isChecklistVisible()) {
+            checklist.mousePressed(mouseX, localY);
+        } else if (isGraphVisible()) {
+            graph.mousePressed(mouseX, localY, paddleData, mouseButton);
+        }
         return;
     }
     // 3D scene — left-drag orbits.
@@ -929,10 +958,11 @@ void exportFileSelected(File out) {
 //
 // C key: run the rest-window detector on the currently loaded paddle CSV,
 // compute mount offsets from mean roll/pitch and (if a synced boat CSV is
-// available) yaw datum from paddle-vs-boat mean yaw, then open a save
-// dialog. On successful build we also seed qRefPad / qRefBoat with the rest
-// window mean quats so the visual correction is immediate — the archived
-// JSON keeps the decomposed values for post-processing.
+// available) yaw datum from paddle-vs-boat mean yaw, then save the result
+// automatically to `<paddle-basename>.session.json` next to the paddle CSV.
+// No dialog — spec §7.5 fixes the path. Also seeds qRefPad / qRefBoat with
+// the rest-window means so the visual correction shows immediately; the
+// archived JSON keeps the decomposed values for post-processing.
 
 void buildAndSaveSidecar() {
     if (paddleData == null || paddleData.frameCount() == 0) {
@@ -972,14 +1002,28 @@ void buildAndSaveSidecar() {
         refFrameBoat = (built.restBoatStart + built.restBoatEnd) / 2;
     }
 
-    triggerRefFlash("SIDECAR BUILT  (" + built.confidence
-                    + ", " + nf(built.restDurationS, 0, 1) + " s rest)");
-    selectOutput("Save session sidecar as", "sidecarSaveSelected");
+    // Auto-save to <paddle-basename>.session.json in the paddle CSV's folder.
+    String savePath = deriveSidecarPath(paddleData.sourcePath());
+    try {
+        sidecar.save(savePath);
+        println("Sidecar saved to " + savePath);
+        // Trim to filename for the on-screen flash.
+        int cut = max(savePath.lastIndexOf('\\'), savePath.lastIndexOf('/'));
+        String leaf = (cut >= 0) ? savePath.substring(cut + 1) : savePath;
+        triggerRefFlash("SIDECAR BUILT + SAVED  (" + built.confidence + ")  →  " + leaf);
+    } catch (Exception e) {
+        println("Sidecar save FAILED: " + e.getMessage() + "   path=" + savePath);
+        triggerRefFlash("SIDECAR BUILT but save failed — see console");
+    }
 }
 
-void sidecarSaveSelected(File out) {
-    if (out == null || sidecar == null) return;
-    sidecar.save(out.getAbsolutePath());
-    println("Sidecar saved to " + out.getAbsolutePath());
-    triggerRefFlash("SIDECAR SAVED");
+// Given a paddle CSV path, return the sibling `.session.json` path.
+// Strips the last extension (case-insensitive) and appends the sidecar suffix.
+// Fallback: append `.session.json` verbatim if there's no visible extension.
+String deriveSidecarPath(String csvPath) {
+    if (csvPath == null || csvPath.length() == 0) return "session.json";
+    int slash = max(csvPath.lastIndexOf('\\'), csvPath.lastIndexOf('/'));
+    int dot   = csvPath.lastIndexOf('.');
+    String base = (dot > slash) ? csvPath.substring(0, dot) : csvPath;
+    return base + ".session.json";
 }

@@ -1,8 +1,8 @@
 # PadViz6 — Disciplined Orientation Specification
 
-**Version:** 0.10
+**Version:** 0.11
 **Date:** 2026-07-08
-**Status:** Slices 0–C + bottom GraphPanel with two-click zoom (right-click), double-right-click revert, `S`-key zoom reset, and merged CSV export (curated + all-fields). Corner axis compass (2D, ~1/3 the old on-screen size) with a `P`/`K`/`W` frame letter that also acts as the slice-switch shortcut. §7 expanded (v0.7) from single yaw-alignment rotation to a three-offset per-session procedure — sensor-mount roll/pitch (from accel) + magnetic-yaw datum (from mean quats) — with pre-session magnetometer figure-8 and DCD save. Requires three firmware additions listed in §7.8 (formalised in firmware spec §15, v2.7). v0.8: the three 8 Jul 2026 field-use notes (§12.10) are now DONE — `k`/`u` HUD flash, Slice B hint to `W`, and Backspace/`-` back-slice ping-pong. v0.9: free-orbit camera — left-drag orbits, wheel zooms, V snaps to side/top preset; 2D axis compass now rotates in step with the 3D camera basis. v0.10: first-pass session sidecar builder (`Sidecar.pde`, C key) — rest-window detector + mean-based mount offsets + yaw datum + JSON save per §7.5. Slice-switch letter shortcuts P/K/W dropped (Caps-Lock case ambiguity); digits 0/1/2/3 only.
+**Status:** Slices 0–C + bottom GraphPanel with two-click zoom (right-click), double-right-click revert, `S`-key zoom reset, and merged CSV export (curated + all-fields). Corner axis compass (2D, ~1/3 the old on-screen size) with a `P`/`K`/`W` frame letter that also acts as the slice-switch shortcut. §7 expanded (v0.7) from single yaw-alignment rotation to a three-offset per-session procedure — sensor-mount roll/pitch (from accel) + magnetic-yaw datum (from mean quats) — with pre-session magnetometer figure-8 and DCD save. Requires three firmware additions listed in §7.8 (formalised in firmware spec §15, v2.7). v0.8: the three 8 Jul 2026 field-use notes (§12.10) are now DONE — `k`/`u` HUD flash, Slice B hint to `W`, and Backspace/`-` back-slice ping-pong. v0.9: free-orbit camera — left-drag orbits, wheel zooms, V snaps to side/top preset; 2D axis compass now rotates in step with the 3D camera basis. v0.10: first-pass session sidecar builder (`Sidecar.pde`, C key) — rest-window detector + mean-based mount offsets + yaw datum + JSON save per §7.5. Slice-switch letter shortcuts P/K/W dropped (Caps-Lock case ambiguity); digits 0/1/2/3 only. v0.11: startup onboarding checklist (`Checklist.pde`) in the bottom strip when no paddle CSV is loaded — three rows auto-ticked and clickable.
 
 ---
 
@@ -611,6 +611,8 @@ orientation review only.
 | `BoatSource.pde` | Boat CSV parser (v8.10 + v8.9), `meanQuat` window helper |
 | `SyncMap.pde` | Paddle→boat frame lookup; `rx_ms` (±500 ms guard) or `gps_utc_sec` (±5 s) |
 | `GraphPanel.pde` | Bottom strip — 3 traces from any paddle/boat field, drag-zoom, seek, merged CSV export |
+| `Sidecar.pde` | Session sidecar builder (rest-window detector + mount offsets + yaw datum + JSON I/O) |
+| `Checklist.pde` | Startup onboarding strip — three clickable rows that auto-tick from live state |
 | `data/paddle60.obj`+`.mtl` | Copied from PadViz5b (post 7 Jul 2026 blade split) |
 | `data/model_calibration.json` | Slice 0 output — currently `{0, 0, 0}` (see §12.3) |
 
@@ -697,7 +699,11 @@ First line of every exported file is a comment recording mode + sync path, e.g. 
 - **Slice C field validation.** Runnable on the 6 Jul 2026 file (calibration rest at rows 1 – ~5000, then paddling under way from row ~15000 onward at 2.2 – 2.6 m/s with COG stable). Also runnable on the longer paddling session the user has on hand if it turns out to be more useful. Test per §4.3.
 - **Per-session rest-pose sidecar** (§7). Currently the K/U keys serve as the interactive equivalent; the offline sidecar workflow (compute mean-of-window paddle-vs-kayak offset from a marked rest window in the CSV, write `<basename>.rest.json`, auto-load at CSV-load time) is not yet implemented.
 - **Side panel** (`SidePanel.pde`) — filenames, load buttons, play/pause, speed slider.
-- **Startup onboarding checklist** (deferred behind sidecar work, 8 Jul 2026). Fill the bottom strip when the graph is not yet visible with a short checklist that auto-ticks from live state: `☐ Load paddle CSV [p]`, `☐ Load boat CSV [b]`, `☐ Find rest window`, `☐ Capture reference pose [k]`. Clickable rows as an alternative to the letter keys. Disappears the moment the graph becomes visible. Add `☐ Mag cal M3` row once Phase 10 firmware lands.
+- ~~**Startup onboarding checklist**~~ — **DONE (v0.11).** `Checklist.pde` fills the bottom strip whenever no paddle CSV is loaded. Three rows, each auto-ticking from live state and each clickable as an alternative to the shortcut key:
+  1. `Load paddle CSV [p]` — ticks when `paddleData` is populated.
+  2. `Load boat CSV [b]` — ticks when `boatData` is populated. Dimmed until step 1 done.
+  3. `Build session sidecar [C]` — ticks when `sidecar.valid`. Dimmed until step 1 done.
+  Disappears the moment the paddle CSV loads (graph replaces it). Add a `☐ Mag cal M3` row once Phase 10 firmware lands.
 - ~~**Adaptive side view** for Slice B (starboard-side camera).~~ — no longer needed; free-orbit camera (§12.5, v0.9) makes any angle reachable.
 - **Under-way GPS COG mapping test** for Slice B acceptance — needs a new field session.
 
