@@ -8,10 +8,29 @@
 
 class FrameData {
     long  ts;
+    float accelX, accelY, accelZ;
     float qw = 1, qx, qy, qz;
     float roll, pitch, yaw;
+    int   strokeCount;
+    float cpm;
     long  gpsUtcSec;
     long  rxMs;
+
+    // Field indices — mirror GraphPanel FIELD_NAMES order (paddle side).
+    // 0=roll 1=pitch 2=yaw 3=cpm 4=strokeCount 5=accelX 6=accelY 7=accelZ
+    float field(int f) {
+        switch (f) {
+            case 0: return roll;
+            case 1: return pitch;
+            case 2: return yaw;
+            case 3: return cpm;
+            case 4: return (float) strokeCount;
+            case 5: return accelX;
+            case 6: return accelY;
+            case 7: return accelZ;
+            default: return 0;
+        }
+    }
 }
 
 class DataSource {
@@ -53,17 +72,22 @@ class DataSource {
     // v8.9  16-col:  seq, ts, ax, ay, az, qw, qx, qy, qz, roll, pitch, yaw, sc, cpm, gps_utc, gps_uk
     private FrameData parseLine(String line) {
         String[] t = split(line, ',');
-        if (t.length < 12) return null;
+        if (t.length < 14) return null;
         FrameData fd = new FrameData();
         try {
-            fd.ts    = Long.parseLong(trim(t[1]));
-            fd.qw    = float(trim(t[5]));
-            fd.qx    = float(trim(t[6]));
-            fd.qy    = float(trim(t[7]));
-            fd.qz    = float(trim(t[8]));
-            fd.roll  = float(trim(t[9]));
-            fd.pitch = float(trim(t[10]));
-            fd.yaw   = float(trim(t[11]));
+            fd.ts          = Long.parseLong(trim(t[1]));
+            fd.accelX      = float(trim(t[2]));
+            fd.accelY      = float(trim(t[3]));
+            fd.accelZ      = float(trim(t[4]));
+            fd.qw          = float(trim(t[5]));
+            fd.qx          = float(trim(t[6]));
+            fd.qy          = float(trim(t[7]));
+            fd.qz          = float(trim(t[8]));
+            fd.roll        = float(trim(t[9]));
+            fd.pitch       = float(trim(t[10]));
+            fd.yaw         = float(trim(t[11]));
+            fd.strokeCount = int(trim(t[12]));
+            fd.cpm         = float(trim(t[13]));
             if (t.length >= 15) fd.gpsUtcSec = Long.parseLong(trim(t[14]));
             if (t.length >= 17) fd.rxMs      = Long.parseLong(trim(t[16]));
         } catch (Exception e) {
@@ -75,6 +99,22 @@ class DataSource {
     int       frameCount() { return frames.size(); }
     String    sourceName() { return srcName; }
     ArrayList<FrameData> getFrames() { return frames; }
+
+    // Whole-file min/max of the given field index (see FrameData.field()).
+    // Used by GraphPanel for auto-scaling.
+    float fieldAt(int frameIdx, int field) { return frameAt(frameIdx).field(field); }
+
+    float[] fieldRange(int field) {
+        if (frames.isEmpty()) return new float[]{-1, 1};
+        float mn = Float.MAX_VALUE, mx = -Float.MAX_VALUE;
+        for (int i = 0; i < frames.size(); i++) {
+            float v = frames.get(i).field(field);
+            if (v < mn) mn = v;
+            if (v > mx) mx = v;
+        }
+        if (mn == mx) { mn -= 1; mx += 1; }
+        return new float[]{mn, mx};
+    }
 
     FrameData frameAt(int idx) {
         if (frames.isEmpty()) return new FrameData();

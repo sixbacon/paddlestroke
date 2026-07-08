@@ -14,6 +14,11 @@ Model3D     model3D;
 DataSource  paddleData;   // null until user loads a paddle CSV
 BoatSource  boatData;     // null until user loads a boat CSV
 SyncMap     sync;         // paddle-frame -> boat-frame lookup; rebuilt on load
+GraphPanel  graph;        // bottom strip; visible when a paddle CSV is loaded
+
+// Height of the graph panel at the bottom of the window (px).
+// Anything above it belongs to the 3D scene + HUD.
+final int GRAPH_H = 220;
 
 // Slice / view state
 int     sliceMode  = 0;   // 0 = Slice 0 (calibration), 1 = Slice A, 2 = Slice B, 3 = Slice C (combined)
@@ -45,12 +50,13 @@ void setup() {
     model3D = new Model3D();
     model3D.loadPaddle("paddle60.obj");
 
-    sync = new SyncMap();
+    sync  = new SyncMap();
+    graph = new GraphPanel(0, height - GRAPH_H, width, GRAPH_H);
 
     surface.setTitle("PadViz6");
-    println("PadViz6 —  0=Slice0 cal   1=SliceA paddle   2=SliceB kayak   3=SliceC combined   V=toggle view");
-    println("Load:  O=paddle CSV   B=boat CSV");
-    println("Slices A/B/C:  Space=play/pause   Left/Right=step 100   ,/.=step 1   K=capture ref   U=clear ref");
+    println("PadViz6 —  0=Slice0 cal   1|P=SliceA paddle   2|K=SliceB kayak   3|W=SliceC world   V=toggle view");
+    println("Load:  p=paddle CSV   b=boat CSV");
+    println("Slices A/B/C:  Space=play/pause   Left/Right=step 100   ,/.=step 1   k=capture ref   u=clear ref   S=reset zoom   E=export");
 }
 
 void draw() {
@@ -58,11 +64,22 @@ void draw() {
     stepPlayback();
     drawScene3D();
 
-    // 2D HUD overlay
+    // 2D HUD + graph overlay
     camera();
     hint(DISABLE_DEPTH_TEST);
     drawHUD();
+    drawAxisCompass();
+    if (isGraphVisible()) graph.draw(paddleData, boatData, sync, paddleFrameIdx);
     hint(ENABLE_DEPTH_TEST);
+}
+
+// Graph panel is only meaningful when a paddle CSV is loaded and we're in a
+// data-driven slice (A/B/C). Slice 0 is a static calibration view.
+boolean isGraphVisible() {
+    return graph != null
+        && sliceMode >= 1
+        && paddleData != null
+        && paddleData.frameCount() > 0;
 }
 
 // ── 3D scene ──────────────────────────────────────────────────────────────────
@@ -74,7 +91,9 @@ void drawScene3D() {
     pushMatrix();
     scale(1, 1, -1);          // handedness bridge: worldRH ← sensorLH
 
-    drawSensorAxes();
+    // (Axis triad is drawn as a 2D compass widget in the HUD — see
+    //  drawAxisCompass(). Nothing is drawn at world origin here so the
+    //  paddle/kayak meshes are not visually cluttered.)
 
     if (sliceMode == 3 && paddleData != null && paddleData.frameCount() > 0
                        && boatData   != null && boatData.frameCount()   > 0) {
@@ -186,13 +205,61 @@ void setCamera() {
     }
 }
 
-void drawSensorAxes() {
-    float L = 350;
-    strokeWeight(3);
-    stroke(255, 60, 60);   line(0, 0, 0, L, 0, 0);   // +X sensor
-    stroke(60, 255, 60);   line(0, 0, 0, 0, L, 0);   // +Y sensor
-    stroke(60, 100, 255);  line(0, 0, 0, 0, 0, L);   // +Z sensor
+// 2D axis compass drawn in the HUD overlay, in the bottom-left of the
+// visualisation area. Sits above the graph panel when the graph is visible,
+// otherwise at the bottom of the window. About one third the on-screen size
+// of the previous world-origin axes (~80 px per axis). Colour convention
+// matches the world-origin lines: X red, Y green, Z blue.
+//
+// The letter above the compass names the frame currently in view:
+//   Slice 0 / A  -> "P" (paddle)
+//   Slice B      -> "K" (kayak)
+//   Slice C      -> "W" (combined world)
+void drawAxisCompass() {
+    int bottom = isGraphVisible() ? (height - GRAPH_H) : height;
+    int ox = 92;
+    int oy = bottom - 30;   // origin of the axis triad
+    int L  = 80;
+
+    // Frame letter above
+    fill(230);  textAlign(CENTER, BOTTOM);  textSize(30);
+    text(compassLetter(), ox, oy - L - 8);
+
+    // Axes
+    strokeWeight(2);
+    if (viewMode == 0) {
+        // Side view — X right (red), Z up (blue), Y into screen (green diagonal).
+        stroke(255, 80, 80);   line(ox, oy, ox + L, oy);
+        stroke(80, 200, 255);  line(ox, oy, ox, oy - L);
+        stroke(120, 220, 120); line(ox, oy, ox - (int)(L * 0.35), oy - (int)(L * 0.35));
+
+        noStroke();  textSize(12);
+        fill(255, 100, 100);  textAlign(LEFT, CENTER);   text("+X", ox + L + 4, oy);
+        fill(120, 200, 255);  textAlign(CENTER, BOTTOM); text("+Z", ox, oy - L - 4);
+        fill(140, 230, 140);  textAlign(RIGHT, CENTER);
+        text("+Y", ox - (int)(L * 0.35) - 4, oy - (int)(L * 0.35));
+    } else {
+        // Top-down — X right (red), Y up (green), Z out of screen (blue disc).
+        stroke(255, 80, 80);   line(ox, oy, ox + L, oy);
+        stroke(120, 220, 120); line(ox, oy, ox, oy - L);
+        stroke(80, 200, 255);  noFill();  ellipse(ox, oy, 14, 14);
+        fill(80, 200, 255);    noStroke(); ellipse(ox, oy, 4, 4);
+
+        noStroke();  textSize(12);
+        fill(255, 100, 100);  textAlign(LEFT, CENTER);   text("+X", ox + L + 4, oy);
+        fill(140, 230, 140);  textAlign(CENTER, BOTTOM); text("+Y", ox, oy - L - 4);
+        fill(120, 200, 255);  textAlign(LEFT, TOP);      text("+Z", ox + 10, oy + 4);
+    }
     strokeWeight(1);
+}
+
+String compassLetter() {
+    switch (sliceMode) {
+        case 0:  return "P";
+        case 1:  return "P";
+        case 2:  return "K";
+        default: return "W";
+    }
 }
 
 // ── HUD ───────────────────────────────────────────────────────────────────────
@@ -265,15 +332,15 @@ void drawHUD_slice0() {
     text("Z            zero all",                      20, y); y += 16;
     text("S            save data/model_calibration.json", 20, y); y += 16;
     text("L            list current triple to console", 20, y); y += 16;
-    text("0/1/2/3      Slice 0 / A paddle / B kayak / C combined", 20, y); y += 16;
+    text("0/1/2/3 or P/K/W  Slice 0 / A paddle / B kayak / C combined", 20, y); y += 16;
     text("V            toggle side / top view",        20, y); y += 16;
-    text("O / B        open paddle / boat CSV",        20, y);
+    text("p / b        open paddle / boat CSV (lowercase)", 20, y);
 }
 
 void drawHUD_sliceA() {
     if (paddleData == null || paddleData.frameCount() == 0) {
         fill(255, 180, 100);
-        text("No paddle CSV loaded — press O", 20, 56);
+        text("No paddle CSV loaded — press P", 20, 56);
         return;
     }
     FrameData fd = paddleData.frameAt(paddleFrameIdx);
@@ -322,7 +389,7 @@ void drawHUD_sliceB() {
 void drawHUD_sliceC() {
     if (paddleData == null || paddleData.frameCount() == 0) {
         fill(255, 180, 100);
-        text("No paddle CSV loaded — press O", 20, 56);
+        text("No paddle CSV loaded — press P", 20, 56);
         return;
     }
     if (boatData == null || boatData.frameCount() == 0) {
@@ -396,9 +463,11 @@ void drawPlaybackKeys(int yStart) {
     text("Left/Right   step 100 frames",            20, y); y += 16;
     text(", / .        step 1 frame",               20, y); y += 16;
     text("Home / End   jump to start / end",        20, y); y += 16;
-    text("K            capture reference (mean of +-50 frames)", 20, y); y += 16;
-    text("U            clear reference (back to raw quat)",      20, y); y += 16;
-    text("0/1/2/3      Slice 0 / A / B / C",        20, y); y += 16;
+    text("k            capture reference (mean of +-50 frames)", 20, y); y += 16;
+    text("u            clear reference (back to raw quat)",      20, y); y += 16;
+    text("S            reset graph zoom to full range",          20, y); y += 16;
+    text("E            export merged CSV over current zoom",     20, y); y += 16;
+    text("0/1/2/3 or P/K/W  Slice 0 / A / B / C",       20, y); y += 16;
     text("V            toggle side / top view",     20, y);
 }
 
@@ -427,12 +496,20 @@ void stepPlayback() {
 
 void keyPressed() {
     // Slice/view/load switches — always active.
-    if      (key == '0') { sliceMode = 0; return; }
-    else if (key == '1') { sliceMode = 1; return; }
-    else if (key == '2') { sliceMode = 2; return; }
-    else if (key == '3') { sliceMode = 3; return; }
+    // Slice-switch keys.
+    //   Digits 0/1/2/3 always switch, regardless of shift state.
+    //   Uppercase P/K/W (i.e. Shift+p, Shift+k, Shift+w) mirror the compass
+    //   labels so the letter you see is the letter you press.
+    //     P -> Slice A (paddle-only view)
+    //     K -> Slice B (kayak-only view)
+    //     W -> Slice C (combined "world" view)
+    if      (key == '0')               { sliceMode = 0; return; }
+    else if (key == '1' || key == 'P') { sliceMode = 1; return; }
+    else if (key == '2' || key == 'K') { sliceMode = 2; return; }
+    else if (key == '3' || key == 'W') { sliceMode = 3; return; }
     else if (key == 'v' || key == 'V') { viewMode = 1 - viewMode; return; }
-    else if (key == 'o' || key == 'O') { selectInput("Select paddle CSV", "onPaddleFileSelected"); return; }
+    // Lowercase 'p' / 'b' still open the CSV file pickers.
+    else if (key == 'p') { selectInput("Select paddle CSV", "onPaddleFileSelected"); return; }
     else if (key == 'b' || key == 'B') { selectInput("Select boat CSV",   "onBoatFileSelected");   return; }
 
     // Slice-specific keys.
@@ -442,8 +519,19 @@ void keyPressed() {
         return;
     }
 
-    // Slices A / B / C — playback and reference.
+    // Slices A / B / C — playback, reference, export, zoom reset.
     if (key == ' ') { playing = !playing; lastAdvanceMs = millis(); return; }
+    if (key == 'e' || key == 'E') {
+        selectOutput("Export merged CSV", "exportFileSelected");
+        return;
+    }
+    if (key == 's' || key == 'S') {
+        // Reset graph zoom to full range (same as Full button), retaining the
+        // previous zoom in history so a double-right-click on the chart can
+        // ping-pong back to where you were.
+        if (graph != null) graph.resetZoomToFull();
+        return;
+    }
 
     if (sliceMode == 1 && paddleData != null && paddleData.frameCount() > 0) {
         handleFrameNavPaddle();
@@ -466,7 +554,7 @@ void handleFrameNavCombined() {
     else if (keyCode == RIGHT) paddleFrameIdx = min(last, paddleFrameIdx + 100);
     else if (keyCode == 36)    paddleFrameIdx = 0;
     else if (keyCode == 35)    paddleFrameIdx = last;
-    else if (key == 'k' || key == 'K') {
+    else if (key == 'k') {
         int padLo = paddleFrameIdx - 50, padHi = paddleFrameIdx + 50;
         qRefPad     = paddleData.meanQuat(padLo, padHi);
         refFramePad = paddleFrameIdx;
@@ -483,7 +571,7 @@ void handleFrameNavCombined() {
         println("Slice C refs captured — pad frame " + refFramePad
                 + "  boat frame " + refFrameBoat);
     }
-    else if (key == 'u' || key == 'U') {
+    else if (key == 'u') {
         qRefPad = new float[]{ 1, 0, 0, 0 };
         qRefBoat = new float[]{ 1, 0, 0, 0 };
         refFramePad = -1;
@@ -500,14 +588,14 @@ void handleFrameNavPaddle() {
     else if (keyCode == RIGHT) paddleFrameIdx = min(last, paddleFrameIdx + 100);
     else if (keyCode == 36)    paddleFrameIdx = 0;
     else if (keyCode == 35)    paddleFrameIdx = last;
-    else if (key == 'k' || key == 'K') {
+    else if (key == 'k') {
         qRefPad     = paddleData.meanQuat(paddleFrameIdx - 50, paddleFrameIdx + 50);
         refFramePad = paddleFrameIdx;
         println("Paddle ref captured at frame " + refFramePad
                 + " (w=" + nf(qRefPad[0],0,4) + " x=" + nf(qRefPad[1],0,4)
                 + " y=" + nf(qRefPad[2],0,4) + " z=" + nf(qRefPad[3],0,4) + ")");
     }
-    else if (key == 'u' || key == 'U') {
+    else if (key == 'u') {
         qRefPad = new float[]{ 1, 0, 0, 0 };
         refFramePad = -1;
         println("Paddle ref cleared.");
@@ -522,14 +610,14 @@ void handleFrameNavBoat() {
     else if (keyCode == RIGHT) boatFrameIdx = min(last, boatFrameIdx + 100);
     else if (keyCode == 36)    boatFrameIdx = 0;
     else if (keyCode == 35)    boatFrameIdx = last;
-    else if (key == 'k' || key == 'K') {
+    else if (key == 'k') {
         qRefBoat     = boatData.meanQuat(boatFrameIdx - 50, boatFrameIdx + 50);
         refFrameBoat = boatFrameIdx;
         println("Boat ref captured at frame " + refFrameBoat
                 + " (w=" + nf(qRefBoat[0],0,4) + " x=" + nf(qRefBoat[1],0,4)
                 + " y=" + nf(qRefBoat[2],0,4) + " z=" + nf(qRefBoat[3],0,4) + ")");
     }
-    else if (key == 'u' || key == 'U') {
+    else if (key == 'u') {
         qRefBoat = new float[]{ 1, 0, 0, 0 };
         refFrameBoat = -1;
         println("Boat ref cleared.");
@@ -582,4 +670,47 @@ float[] qMul(float[] a, float[] b) {
 
 float[] qConj(float[] q) {
     return new float[] { q[0], -q[1], -q[2], -q[3] };
+}
+
+// ── Graph panel → sketch bridging ────────────────────────────────────────────
+//
+// GraphPanel calls these to seek/pause when the user drags the cursor.
+
+void setFrameIdx(int idx) {
+    if (paddleData == null || paddleData.frameCount() == 0) return;
+    paddleFrameIdx = constrain(idx, 0, paddleData.frameCount() - 1);
+}
+
+void setPlaying(boolean p) {
+    playing       = p;
+    lastAdvanceMs = millis();
+}
+
+// ── Mouse forwarding to the graph panel ─────────────────────────────────────
+
+void mousePressed() {
+    if (!isGraphVisible()) return;
+    graph.mousePressed(mouseX, mouseY - (height - GRAPH_H), paddleData, mouseButton);
+}
+
+void mouseDragged() {
+    if (!isGraphVisible()) return;
+    graph.mouseDragged(mouseX, paddleData);
+}
+
+void mouseReleased() {
+    if (!isGraphVisible()) return;
+    graph.mouseReleased();
+}
+
+void mouseWheel(processing.event.MouseEvent e) {
+    if (!isGraphVisible()) return;
+    graph.mouseWheel(e.getCount());
+}
+
+// ── Export callback (top-level so selectOutput can invoke it) ───────────────
+
+void exportFileSelected(File out) {
+    if (out == null || graph == null) return;
+    graph.exportMerged(out.getAbsolutePath(), paddleData, boatData, sync);
 }

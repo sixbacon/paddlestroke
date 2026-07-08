@@ -20,6 +20,18 @@ class BoatFrameData {
     float   qw = 1, qx, qy, qz;
     float   roll, pitch, yaw;
     long    rxMs;
+
+    // Field indices for GraphPanel: 0=roll, 1=pitch, 2=yaw, 3=speedMs, 4=cogDeg.
+    float field(int f) {
+        switch (f) {
+            case 0: return roll;
+            case 1: return pitch;
+            case 2: return yaw;
+            case 3: return speedMs;
+            case 4: return cogDeg;
+            default: return 0;
+        }
+    }
 }
 
 class BoatSource {
@@ -84,6 +96,19 @@ class BoatSource {
     int           frameCount() { return frames.size(); }
     String        sourceName() { return srcName; }
     ArrayList<BoatFrameData> getFrames() { return frames; }
+
+    // Whole-file min/max of the given field index (see BoatFrameData.field()).
+    float[] fieldRange(int field) {
+        if (frames.isEmpty()) return new float[]{-1, 1};
+        float mn = Float.MAX_VALUE, mx = -Float.MAX_VALUE;
+        for (BoatFrameData bfd : frames) {
+            float v = bfd.field(field);
+            if (v < mn) mn = v;
+            if (v > mx) mx = v;
+        }
+        if (mn == mx) { mn -= 1; mx += 1; }
+        return new float[]{mn, mx};
+    }
 
     BoatFrameData frameAt(int idx) {
         if (frames.isEmpty()) return new BoatFrameData();

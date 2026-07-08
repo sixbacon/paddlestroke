@@ -1,8 +1,8 @@
 # PadViz6 — Disciplined Orientation Specification
 
-**Version:** 0.4
+**Version:** 0.6
 **Date:** 2026-07-08
-**Status:** **Slices 0, A, B, C implemented.** Slices 0/A/B validated 7 Jul 2026 against `ImuLog20260706-1.CSV` + `BoatLog20260706-1.CSV`. Slice C added 8 Jul 2026 — `rx_ms` sync path via ported `SyncMap.pde`, kayak drives world, paddle drawn in kayak-body frame using `qKayak⁻¹ * qPaddle`, K/U captures both refs simultaneously to collapse the paddle-vs-kayak magnetic-yaw datum. Field validation of Slice C requires an under-way session with a rest window. Graph/export panels still pending. See §12 (implementation status) for the current file list and what each slice does.
+**Status:** Slices 0–C + bottom GraphPanel with two-click zoom (right-click), double-right-click revert, `S`-key zoom reset, and merged CSV export (curated + all-fields). Corner axis compass (2D, ~1/3 the old on-screen size) with a `P`/`K`/`W` frame letter that also acts as the slice-switch shortcut. Field notes 8 Jul 2026 record three follow-up items — see §12.10.
 
 ---
 
@@ -473,10 +473,11 @@ orientation review only.
 | `DataSource.pde` | Paddle CSV parser (v8.10 + v8.9), `meanQuat` window helper |
 | `BoatSource.pde` | Boat CSV parser (v8.10 + v8.9), `meanQuat` window helper |
 | `SyncMap.pde` | Paddle→boat frame lookup; `rx_ms` (±500 ms guard) or `gps_utc_sec` (±5 s) |
+| `GraphPanel.pde` | Bottom strip — 3 traces from any paddle/boat field, drag-zoom, seek, merged CSV export |
 | `data/paddle60.obj`+`.mtl` | Copied from PadViz5b (post 7 Jul 2026 blade split) |
 | `data/model_calibration.json` | Slice 0 output — currently `{0, 0, 0}` (see §12.3) |
 
-Not present (planned for graph/export work): `GraphPanel.pde`, `SidePanel.pde`, `Integrator.pde`.
+Not present: `SidePanel.pde`, `Integrator.pde`.
 
 ### 12.2 What each slice does
 
@@ -530,11 +531,82 @@ This is a **view alignment**, not a data correction, and it is deliberately per-
 - **Calibration Rest A window** (`ImuLog20260706-1.CSV`, t = 22 – 38 s, frames ≈ 2200–3800): paddle held horizontal, right blade face vertical, sensor +Y toward kayak bow. Mean roll = 0° ± 2°, pitch ≈ −2.5° ± 3°, yaw ≈ 55° ± 1°. Accel `≈ (0.25, −0.4, +9.85)` confirms sensor +Z is physically up.
 - **Boat mean orientation during the same window** (`BoatLog20260706-1.CSV`): kayak roll ≈ +5.9°, pitch ≈ −4°, yaw ≈ 50°, speed = 0. Note (corrected 8 Jul 2026): the boat is stationary only during the *calibration phase* at the start of the file (rows 1 – ~5000). GPS fix is solid throughout (24,791 / 24,791 rows fix = 1). Under-way paddling begins around row ~10,000 with speed ramping to 0.6 m/s, and by row ~15,000 the session is at steady paddling speed 2.2 – 2.6 m/s with COG stable near 300–310°. So both Slice C's rest-window prerequisite and Slice B's COG mapping test (§4.2 test 2) are runnable on this file — the earlier "stationary throughout" reading was of the calibration segment only.
 
-### 12.8 Not done
+### 12.8 Graph panel (bottom strip) — DONE 8 Jul 2026
+
+Full-width strip along the bottom of the window (height 220 px). Visible whenever a paddle CSV is loaded and the active slice is A/B/C. Ported from `PadViz5b/GraphPanel.pde`, with the field-name differences (`kayakRoll` → `roll` etc) resolved by the data-source refactor below.
+
+**Data-source refactor (prerequisite).** PadViz6 `FrameData` gained `accelX/Y/Z`, `strokeCount`, `cpm`, a `field(int)` helper, and `DataSource.fieldAt/fieldRange`. `BoatFrameData` gained a `field(int)` helper (0=roll, 1=pitch, 2=yaw, 3=speed, 4=cog) and `BoatSource.fieldRange`. Parser column indices moved from `t.length ≥ 12` to `t.length ≥ 14` on the paddle side to require the accel/cpm/stroke columns.
+
+**Fields.** 13 in total, three-slot dropdowns (defaults: roll, yaw, CPM):
+- Paddle: roll, pitch, yaw, CPM, strokeCount, accel_x/y/z.
+- Boat: kayak_roll, kayak_pitch, kayak_yaw, speed_ms, cog_deg.
+
+**Interaction.** Click a slot to pick its field; scroll wheel scrolls the dropdown list. Drag on the chart to zoom to a paddle-frame window; click near the yellow cursor line to seek + pause; drag the cursor to scrub. `Full` clears the zoom.
+
+**Export.** `Cols:` toggle in the footer cycles between `curated` (default) and `all` column sets. `Export…` (or the `E` key) opens a file dialog and writes the merged CSV over the current zoom range.
+
+- **Curated columns:** `pad_idx,pad_ts,pad_roll,pad_pitch,pad_yaw,pad_cpm,pad_stroke,pad_accel_x/y/z,pad_rx_ms,pad_gps_utc,boat_ts,boat_rx_ms,boat_gps_utc,boat_lat,boat_lon,boat_speed_ms,boat_cog_deg,kayak_qw/qx/qy/qz,kayak_roll,kayak_pitch,kayak_yaw`. Rows outside sync range emit empty boat columns.
+- **All-fields columns:** every field of paddle CSV first, then every field of boat CSV (including `gps_fix`). If no boat CSV is loaded the boat columns are omitted from the header.
+
+First line of every exported file is a comment recording mode + sync path, e.g. `# PadViz6 export — mode=curated   sync=rx_ms`.
+
+### 12.9 Not done
 
 - **Slice C field validation.** Runnable on the 6 Jul 2026 file (calibration rest at rows 1 – ~5000, then paddling under way from row ~15000 onward at 2.2 – 2.6 m/s with COG stable). Also runnable on the longer paddling session the user has on hand if it turns out to be more useful. Test per §4.3.
 - **Per-session rest-pose sidecar** (§7). Currently the K/U keys serve as the interactive equivalent; the offline sidecar workflow (compute mean-of-window paddle-vs-kayak offset from a marked rest window in the CSV, write `<basename>.rest.json`, auto-load at CSV-load time) is not yet implemented.
-- **Bottom graph panel** (`GraphPanel.pde`) with dropdown field selection, drag-to-zoom, and merged CSV export (curated + all-fields modes per §9).
 - **Side panel** (`SidePanel.pde`) — filenames, load buttons, play/pause, speed slider.
 - **Adaptive side view** for Slice B (starboard-side camera) if desired.
 - **Under-way GPS COG mapping test** for Slice B acceptance — needs a new field session.
+
+### 12.10 Field-use notes — 8 Jul 2026 (deferred fixes)
+
+These came up while driving the sketch against real data. Recording as follow-ups; no code changes made yet.
+
+1. **Lowercase `k` reports as "no effect".** Semantically it captures the reference for the current slice's data source. Suspected cause: nothing on screen changes visibly at the moment of capture (the same frame renders identically before and after — the visual difference only appears once you play back). No indicator flashes. Fix: give the HUD ref line a brief highlight (e.g. green flash for one second) on capture, and/or print a console line with the timestamp of the captured frame.
+
+2. **"Kayak view" that also shows the paddle.** User expectation on pressing `K`: see the kayak *while continuing to see the paddle*. Actual behaviour: `K` switches to Slice B which is kayak-only. The correct existing view is Slice C (`W` — combined). Options: rename the compass letter so kayak-with-paddle → `K`, and reassign Slice B (kayak-only) to something else; or add a HUD hint that says "for kayak+paddle use W". Decision pending.
+
+3. **No "revert to previous slice" shortcut.** User tried `u`/`U` for this — but those are the reference-clear keys. Add a slice-history back-shortcut (e.g. `Backspace` or `-`) that pops the previously-active slice. Independent of the K/U reference-history stack.
+
+### 12.11 Key bindings — current state (8 Jul 2026)
+
+All slices:
+| Key | Action |
+|-----|--------|
+| `0`               | Slice 0 (calibration) |
+| `1` or Shift+`P` (`P`) | Slice A — paddle view; compass letter `P` |
+| `2` or Shift+`K` (`K`) | Slice B — kayak view; compass letter `K` |
+| `3` or Shift+`W` (`W`) | Slice C — combined view; compass letter `W` |
+| `v` / `V`         | Toggle side / top-down camera |
+| `p` (lowercase)   | Open paddle CSV |
+| `b` / `B`         | Open boat CSV |
+
+Slices A / B / C additional:
+| Key | Action |
+|-----|--------|
+| Space | Play / pause |
+| ← / → | Step 100 frames |
+| `,` / `.` | Step 1 frame |
+| Home / End | Jump to start / end |
+| `k` (lowercase) | Capture reference — mean quat over ±50 frames |
+| `u` (lowercase) | Clear reference — back to raw quat |
+| `S` (Shift+s) | Reset graph zoom to full range (also pushed to history) |
+| `E` (Shift+e) | Export merged CSV over current zoom |
+
+Slice 0 (calibration) — routed through `cal.handleKey()`:
+| Key | Action |
+|-----|--------|
+| `y` / `Y` `p` / `P` `r` / `R` | Nudge yaw / pitch / roll by ± step |
+| `[` / `]` | Halve / double step |
+| `Z` | Zero all three |
+| `S` | Save `data/model_calibration.json` |
+| `L` | List current triple to console |
+
+Graph panel mouse gestures (Slices A/B/C only, when a paddle CSV is loaded):
+- **Left-click chart** — move playback cursor to x, pause playback (drag to scrub).
+- **Right-click chart** — first click places marker A, second click places B and applies zoom (moves cursor to zoom start).
+- **Double right-click same spot** (< 400 ms, within ±8 px) — revert to the previous zoom range (ping-pong).
+- **Full button** or `S` key — reset to full range.
+- **Cols button** — toggle export column set between `curated` and `all`.
+- **Export button** or `E` key — write merged CSV.
+- **Slot buttons** (left click) — open field-select dropdown; scroll wheel scrolls the dropdown.
