@@ -15,6 +15,7 @@ DataSource  paddleData;   // null until user loads a paddle CSV
 BoatSource  boatData;     // null until user loads a boat CSV
 SyncMap     sync;         // paddle-frame -> boat-frame lookup; rebuilt on load
 GraphPanel  graph;        // bottom strip; visible when a paddle CSV is loaded
+Sidecar     sidecar;      // per-session calibration; null until built or loaded
 
 // Height of the graph panel at the bottom of the window (px).
 // Anything above it belongs to the 3D scene + HUD.
@@ -74,10 +75,10 @@ void setup() {
 
     surface.setResizable(true);
     surface.setTitle("PadViz6");
-    println("PadViz6 —  0=Slice0 cal   1|P=SliceA paddle   2|K=SliceB kayak   3|W=SliceC world   V=cycle preset   Backspace/-=back");
+    println("PadViz6 —  0=Slice0 cal   1=SliceA paddle   2=SliceB kayak   3=SliceC world   V=cycle preset   Backspace/-=back");
     println("Camera:  left-drag orbits   mouse wheel zooms   V snaps to side/top preset");
     println("Load:  p=paddle CSV   b=boat CSV");
-    println("Slices A/B/C:  Space=play/pause   Left/Right=step 100   ,/.=step 1   k=capture ref   u=clear ref   S=reset zoom   E=export");
+    println("Slices A/B/C:  Space=play/pause   Left/Right=step 100   ,/.=step 1   k=capture ref   u=clear ref   S=reset zoom   E=export   C=build session sidecar");
 }
 
 void draw() {
@@ -373,6 +374,22 @@ void drawHUD() {
                                      camAzimDeg, camElevDeg, camDist);
     text("PadViz6   " + modeName + "   [" + viewName + "]", 20, 16);
 
+    // Sidecar indicator — sits to the right of the mode name if active.
+    if (sidecar != null && sidecar.valid) {
+        int col = (sidecar.confidence.equals("high"))   ? color(150, 220, 150)
+                : (sidecar.confidence.equals("medium")) ? color(230, 220, 140)
+                :                                         color(230, 140, 140);
+        fill(col);
+        textSize(12);
+        text(String.format("SIDECAR [%s]  padMount r=%+.1f° p=%+.1f°  boatMount r=%+.1f° p=%+.1f°  yaw datum=%+.1f°",
+                           sidecar.confidence,
+                           sidecar.rollOffsetPadDeg,  sidecar.pitchOffsetPadDeg,
+                           sidecar.rollOffsetBoatDeg, sidecar.pitchOffsetBoatDeg,
+                           sidecar.yawDatumDeg),
+             20, 38);
+        textSize(13);
+    }
+
     textSize(13);
     if      (sliceMode == 0) drawHUD_slice0();
     else if (sliceMode == 1) drawHUD_sliceA();
@@ -425,7 +442,7 @@ void drawHUD_slice0() {
     text("Z            zero all",                      20, y); y += 16;
     text("S            save data/model_calibration.json", 20, y); y += 16;
     text("L            list current triple to console", 20, y); y += 16;
-    text("0/1/2/3 or P/K/W  Slice 0 / A paddle / B kayak / C combined", 20, y); y += 16;
+    text("0/1/2/3       Slice 0 / A paddle / B kayak / C combined", 20, y); y += 16;
     text("V            toggle side / top view",        20, y); y += 16;
     text("p / b        open paddle / boat CSV (lowercase)", 20, y);
 }
@@ -476,7 +493,7 @@ void drawHUD_sliceB() {
     if (paddleData != null && paddleData.frameCount() > 0) {
         fill(140, 200, 255);
         textSize(11);
-        text("Paddle CSV also loaded — press W (or 3) for combined kayak+paddle view", 20, 152);
+        text("Paddle CSV also loaded — press 3 for combined kayak+paddle view", 20, 152);
         textSize(13);
         gpsY = 172;
     }
@@ -571,7 +588,8 @@ void drawPlaybackKeys(int yStart) {
     text("u            clear reference (back to raw quat)",      20, y); y += 16;
     text("S            reset graph zoom to full range",          20, y); y += 16;
     text("E            export merged CSV over current zoom",     20, y); y += 16;
-    text("0/1/2/3 or P/K/W  Slice 0 / A / B / C",       20, y); y += 16;
+    text("C            build session sidecar (rest-window detect)", 20, y); y += 16;
+    text("0/1/2/3      Slice 0 / A / B / C",            20, y); y += 16;
     text("Backspace / -   return to previous slice",    20, y); y += 16;
     text("V            cycle side / top-down preset",   20, y); y += 16;
     text("mouse drag   orbit camera",                   20, y); y += 16;
@@ -603,17 +621,16 @@ void stepPlayback() {
 
 void keyPressed() {
     // Slice/view/load switches — always active.
-    // Slice-switch keys.
-    //   Digits 0/1/2/3 always switch, regardless of shift state.
-    //   Uppercase P/K/W (i.e. Shift+p, Shift+k, Shift+w) mirror the compass
-    //   labels so the letter you see is the letter you press.
-    //     P -> Slice A (paddle-only view)
-    //     K -> Slice B (kayak-only view)
-    //     W -> Slice C (combined "world" view)
-    if      (key == '0')               { switchSlice(0); return; }
-    else if (key == '1' || key == 'P') { switchSlice(1); return; }
-    else if (key == '2' || key == 'K') { switchSlice(2); return; }
-    else if (key == '3' || key == 'W') { switchSlice(3); return; }
+    // Slice switching is on digits 0/1/2/3 only. The compass letters P/K/W
+    // are pure labels — earlier versions bound Shift+letter to the switch,
+    // but Caps Lock on Windows silently rewrites case, so pressing `k`
+    // (intending to capture the reference) with Caps Lock on would jump to
+    // Slice B instead. Dropping the letter shortcuts eliminates that
+    // footgun (see spec §12.10 item 2).
+    if      (key == '0') { switchSlice(0); return; }
+    else if (key == '1') { switchSlice(1); return; }
+    else if (key == '2') { switchSlice(2); return; }
+    else if (key == '3') { switchSlice(3); return; }
     else if (key == 'v' || key == 'V') {
         // Cycle canonical presets: side (az=0, el=0) <-> near-top (az=0, el=89).
         // Also snaps az to 0 and distance to default, so V doubles as
@@ -647,6 +664,10 @@ void keyPressed() {
     if (key == ' ') { playing = !playing; lastAdvanceMs = millis(); return; }
     if (key == 'e' || key == 'E') {
         selectOutput("Export merged CSV", "exportFileSelected");
+        return;
+    }
+    if (key == 'c' || key == 'C') {
+        buildAndSaveSidecar();
         return;
     }
     if (key == 's' || key == 'S') {
@@ -902,4 +923,63 @@ void mouseWheel(processing.event.MouseEvent e) {
 void exportFileSelected(File out) {
     if (out == null || graph == null) return;
     graph.exportMerged(out.getAbsolutePath(), paddleData, boatData, sync);
+}
+
+// ── Sidecar build + save ────────────────────────────────────────────────────
+//
+// C key: run the rest-window detector on the currently loaded paddle CSV,
+// compute mount offsets from mean roll/pitch and (if a synced boat CSV is
+// available) yaw datum from paddle-vs-boat mean yaw, then open a save
+// dialog. On successful build we also seed qRefPad / qRefBoat with the rest
+// window mean quats so the visual correction is immediate — the archived
+// JSON keeps the decomposed values for post-processing.
+
+void buildAndSaveSidecar() {
+    if (paddleData == null || paddleData.frameCount() == 0) {
+        triggerRefFlash("SIDECAR — LOAD PADDLE CSV FIRST");
+        return;
+    }
+    Sidecar built = buildSidecar(paddleData, boatData, sync);
+    sidecar = built;
+
+    println("Sidecar build result:");
+    println("  confidence:      " + built.confidence);
+    println("  notes:           " + built.notes);
+    if (built.valid) {
+        println("  rest window:     pad " + built.restPadStart + "-" + built.restPadEnd
+                + " (" + nf(built.restDurationS, 0, 1) + " s)"
+                + "   boat " + built.restBoatStart + "-" + built.restBoatEnd);
+        println("  paddle mount:    roll=" + nf(built.rollOffsetPadDeg, 0, 2)
+                + "°  pitch=" + nf(built.pitchOffsetPadDeg, 0, 2) + "°");
+        println("  boat   mount:    roll=" + nf(built.rollOffsetBoatDeg, 0, 2)
+                + "°  pitch=" + nf(built.pitchOffsetBoatDeg, 0, 2) + "°");
+        println("  yaw datum:       " + nf(built.yawDatumDeg, 0, 2) + "°");
+        println("  accel var max:   " + nf(built.restAccelVarMax, 0, 4));
+    }
+
+    if (!built.valid) {
+        triggerRefFlash("SIDECAR — " + built.notes);
+        return;
+    }
+
+    // Seed rest references so the visual correction shows immediately.
+    if (built.qRestPad != null) {
+        qRefPad     = built.qRestPad;
+        refFramePad = (built.restPadStart + built.restPadEnd) / 2;
+    }
+    if (built.qRestBoat != null) {
+        qRefBoat     = built.qRestBoat;
+        refFrameBoat = (built.restBoatStart + built.restBoatEnd) / 2;
+    }
+
+    triggerRefFlash("SIDECAR BUILT  (" + built.confidence
+                    + ", " + nf(built.restDurationS, 0, 1) + " s rest)");
+    selectOutput("Save session sidecar as", "sidecarSaveSelected");
+}
+
+void sidecarSaveSelected(File out) {
+    if (out == null || sidecar == null) return;
+    sidecar.save(out.getAbsolutePath());
+    println("Sidecar saved to " + out.getAbsolutePath());
+    triggerRefFlash("SIDECAR SAVED");
 }

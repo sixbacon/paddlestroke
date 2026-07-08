@@ -1,8 +1,8 @@
 # PadViz6 — Disciplined Orientation Specification
 
-**Version:** 0.9
+**Version:** 0.10
 **Date:** 2026-07-08
-**Status:** Slices 0–C + bottom GraphPanel with two-click zoom (right-click), double-right-click revert, `S`-key zoom reset, and merged CSV export (curated + all-fields). Corner axis compass (2D, ~1/3 the old on-screen size) with a `P`/`K`/`W` frame letter that also acts as the slice-switch shortcut. §7 expanded (v0.7) from single yaw-alignment rotation to a three-offset per-session procedure — sensor-mount roll/pitch (from accel) + magnetic-yaw datum (from mean quats) — with pre-session magnetometer figure-8 and DCD save. Requires three firmware additions listed in §7.8 (formalised in firmware spec §15, v2.7). v0.8: the three 8 Jul 2026 field-use notes (§12.10) are now DONE — `k`/`u` HUD flash, Slice B hint to `W`, and Backspace/`-` back-slice ping-pong. v0.9: free-orbit camera — left-drag orbits, wheel zooms, V snaps to side/top preset; 2D axis compass now rotates in step with the 3D camera basis.
+**Status:** Slices 0–C + bottom GraphPanel with two-click zoom (right-click), double-right-click revert, `S`-key zoom reset, and merged CSV export (curated + all-fields). Corner axis compass (2D, ~1/3 the old on-screen size) with a `P`/`K`/`W` frame letter that also acts as the slice-switch shortcut. §7 expanded (v0.7) from single yaw-alignment rotation to a three-offset per-session procedure — sensor-mount roll/pitch (from accel) + magnetic-yaw datum (from mean quats) — with pre-session magnetometer figure-8 and DCD save. Requires three firmware additions listed in §7.8 (formalised in firmware spec §15, v2.7). v0.8: the three 8 Jul 2026 field-use notes (§12.10) are now DONE — `k`/`u` HUD flash, Slice B hint to `W`, and Backspace/`-` back-slice ping-pong. v0.9: free-orbit camera — left-drag orbits, wheel zooms, V snaps to side/top preset; 2D axis compass now rotates in step with the 3D camera basis. v0.10: first-pass session sidecar builder (`Sidecar.pde`, C key) — rest-window detector + mean-based mount offsets + yaw datum + JSON save per §7.5. Slice-switch letter shortcuts P/K/W dropped (Caps-Lock case ambiguity); digits 0/1/2/3 only.
 
 ---
 
@@ -697,6 +697,7 @@ First line of every exported file is a comment recording mode + sync path, e.g. 
 - **Slice C field validation.** Runnable on the 6 Jul 2026 file (calibration rest at rows 1 – ~5000, then paddling under way from row ~15000 onward at 2.2 – 2.6 m/s with COG stable). Also runnable on the longer paddling session the user has on hand if it turns out to be more useful. Test per §4.3.
 - **Per-session rest-pose sidecar** (§7). Currently the K/U keys serve as the interactive equivalent; the offline sidecar workflow (compute mean-of-window paddle-vs-kayak offset from a marked rest window in the CSV, write `<basename>.rest.json`, auto-load at CSV-load time) is not yet implemented.
 - **Side panel** (`SidePanel.pde`) — filenames, load buttons, play/pause, speed slider.
+- **Startup onboarding checklist** (deferred behind sidecar work, 8 Jul 2026). Fill the bottom strip when the graph is not yet visible with a short checklist that auto-ticks from live state: `☐ Load paddle CSV [p]`, `☐ Load boat CSV [b]`, `☐ Find rest window`, `☐ Capture reference pose [k]`. Clickable rows as an alternative to the letter keys. Disappears the moment the graph becomes visible. Add `☐ Mag cal M3` row once Phase 10 firmware lands.
 - ~~**Adaptive side view** for Slice B (starboard-side camera).~~ — no longer needed; free-orbit camera (§12.5, v0.9) makes any angle reachable.
 - **Under-way GPS COG mapping test** for Slice B acceptance — needs a new field session.
 
@@ -706,7 +707,7 @@ These came up while driving the sketch against real data.
 
 1. **Lowercase `k` reports as "no effect".** — **DONE.** `k` (and `u`) now trigger a top-centre HUD flash for 1.5 s (linear fade over the last 400 ms). Message text is slice-specific: `PADDLE REF CAPTURED (frame N)` in Slice A, `KAYAK REF CAPTURED (frame N)` in Slice B, `BOTH REFS CAPTURED (pad N, boat M)` in Slice C, and the matching cleared-variant on `u`.
 
-2. **"Kayak view" that also shows the paddle."** — **DONE (hint approach).** Compass letters unchanged (`P`/`K`/`W`) to preserve the "letter you see is letter you press" invariant. Instead, Slice B's HUD adds a cyan hint line — `Paddle CSV also loaded — press W (or 3) for combined kayak+paddle view` — but only when a paddle CSV is currently loaded. If no paddle CSV is loaded, no hint (the combined view isn't yet meaningful).
+2. **"Kayak view" that also shows the paddle."** — **DONE.** Initial fix (v0.8) kept the P/K/W Shift-letter slice-switch shortcuts and added a HUD hint in Slice B pointing to `W`. Revisited v0.10: the letter shortcuts were dropped entirely because Caps Lock on Windows silently rewrites `k` → `K`, causing users who intended to press `k` (capture reference) to jump to Slice B instead. Slice switching is now on digits `0/1/2/3` only; the compass letters `P/K/W` are pure labels. Slice B's HUD hint remains but now points at `3`.
 
 3. **No "revert to previous slice" shortcut.** — **DONE.** `Backspace` and `-` both ping-pong to the previously-active slice. Same model as GraphPanel's double-right-click zoom revert — a single `prevSliceMode` variable is swapped, so repeated presses toggle between two most-recent slices rather than walking a full history stack. Slice changes from CSV loads (`onPaddleFileSelected`, `onBoatFileSelected`) also update the history, so loading a boat CSV while in Slice A pushes A for later revert.
 
@@ -716,9 +717,9 @@ All slices:
 | Key | Action |
 |-----|--------|
 | `0`               | Slice 0 (calibration) |
-| `1` or Shift+`P` (`P`) | Slice A — paddle view; compass letter `P` |
-| `2` or Shift+`K` (`K`) | Slice B — kayak view; compass letter `K` |
-| `3` or Shift+`W` (`W`) | Slice C — combined view; compass letter `W` |
+| `1` | Slice A — paddle view; compass letter `P` |
+| `2` | Slice B — kayak view; compass letter `K` |
+| `3` | Slice C — combined view; compass letter `W` |
 | `v` / `V`         | Cycle side / near-top camera preset (also recentres az and dist) |
 | Backspace or `-`  | Go back to previously-active slice (ping-pong) |
 | Mouse left-drag   | Orbit camera in 3D area (0.4°/px on azim and elev) |

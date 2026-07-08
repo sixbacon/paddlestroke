@@ -36,6 +36,7 @@ class FrameData {
 class DataSource {
     private ArrayList<FrameData> frames = new ArrayList<FrameData>();
     private String               srcName = "";
+    private String               srcPath = "";
     boolean                      hasRxMs = false;
 
     void loadCSV(String path) {
@@ -46,6 +47,7 @@ class DataSource {
             println("DataSource: cannot load " + path);
             return;
         }
+        srcPath = path;
         // Windows path separator handling.
         int cut = max(path.lastIndexOf('\\'), path.lastIndexOf('/'));
         srcName = (cut >= 0) ? path.substring(cut + 1) : path;
@@ -98,6 +100,7 @@ class DataSource {
 
     int       frameCount() { return frames.size(); }
     String    sourceName() { return srcName; }
+    String    sourcePath() { return srcPath; }
     ArrayList<FrameData> getFrames() { return frames; }
 
     // Whole-file min/max of the given field index (see FrameData.field()).
