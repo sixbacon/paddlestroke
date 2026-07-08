@@ -83,6 +83,7 @@ class BoatSource {
 
     int           frameCount() { return frames.size(); }
     String        sourceName() { return srcName; }
+    ArrayList<BoatFrameData> getFrames() { return frames; }
 
     BoatFrameData frameAt(int idx) {
         if (frames.isEmpty()) return new BoatFrameData();

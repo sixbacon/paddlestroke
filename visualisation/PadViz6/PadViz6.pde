@@ -13,9 +13,10 @@ Calibration cal;
 Model3D     model3D;
 DataSource  paddleData;   // null until user loads a paddle CSV
 BoatSource  boatData;     // null until user loads a boat CSV
+SyncMap     sync;         // paddle-frame -> boat-frame lookup; rebuilt on load
 
 // Slice / view state
-int     sliceMode  = 0;   // 0 = Slice 0 (calibration), 1 = Slice A (paddle), 2 = Slice B (kayak)
+int     sliceMode  = 0;   // 0 = Slice 0 (calibration), 1 = Slice A, 2 = Slice B, 3 = Slice C (combined)
 int     viewMode   = 0;   // 0 = side view (X-Z), 1 = top-down (X-Y)
 
 // Per-source frame indices and playback
@@ -44,10 +45,12 @@ void setup() {
     model3D = new Model3D();
     model3D.loadPaddle("paddle60.obj");
 
+    sync = new SyncMap();
+
     surface.setTitle("PadViz6");
-    println("PadViz6 —  0=Slice0 cal   1=SliceA paddle   2=SliceB kayak   V=toggle view");
+    println("PadViz6 —  0=Slice0 cal   1=SliceA paddle   2=SliceB kayak   3=SliceC combined   V=toggle view");
     println("Load:  O=paddle CSV   B=boat CSV");
-    println("Slices A/B:  Space=play/pause   Left/Right=step 100   ,/.=step 1   K=capture ref   U=clear ref");
+    println("Slices A/B/C:  Space=play/pause   Left/Right=step 100   ,/.=step 1   K=capture ref   U=clear ref");
 }
 
 void draw() {
@@ -73,15 +76,12 @@ void drawScene3D() {
 
     drawSensorAxes();
 
-    pushMatrix();
-    // Model calibration (only used to align paddle mesh to sensor frame).
-    // sensorLH ← blenderLH  (immutable, values from model_calibration.json)
-    rotateZ(radians(cal.yawDeg));
-    rotateY(radians(cal.pitchDeg));
-    rotateX(radians(cal.rollDeg));
-
-    if (sliceMode == 2 && boatData != null && boatData.frameCount() > 0) {
-        // Slice B — kayak from boat CSV.
+    if (sliceMode == 3 && paddleData != null && paddleData.frameCount() > 0
+                       && boatData   != null && boatData.frameCount()   > 0) {
+        drawSliceC();
+    } else if (sliceMode == 2 && boatData != null && boatData.frameCount() > 0) {
+        // Slice B — kayak from boat CSV. No paddle cal triple: kayak is not
+        // in the paddle-model Blender frame.
         BoatFrameData bfd = boatData.frameAt(boatFrameIdx);
         float[] qCur = { bfd.qw, bfd.qx, bfd.qy, bfd.qz };
         float[] qDisp = (refFrameBoat >= 0) ? qMul(qConj(qRefBoat), qCur) : qCur;
@@ -92,14 +92,85 @@ void drawScene3D() {
         FrameData fd = paddleData.frameAt(paddleFrameIdx);
         float[] qCur = { fd.qw, fd.qx, fd.qy, fd.qz };
         float[] qDisp = (refFramePad >= 0) ? qMul(qConj(qRefPad), qCur) : qCur;
+        applyCalTriple();
         model3D.applyQuat(qDisp[0], qDisp[1], qDisp[2], qDisp[3]);
         model3D.drawPaddle();
     } else {
-        // Slice 0 or empty data — draw paddle at identity.
+        // Slice 0 or empty data — draw paddle at identity, under cal triple.
+        applyCalTriple();
         model3D.drawPaddle();
     }
 
     popMatrix();
+}
+
+// sensorLH ← blenderLH — paddle OBJ mesh alignment to paddle-IMU frame.
+// Immutable, values from model_calibration.json. Applied only inside branches
+// that draw the paddle mesh.
+void applyCalTriple() {
+    rotateZ(radians(cal.yawDeg));
+    rotateY(radians(cal.pitchDeg));
+    rotateX(radians(cal.rollDeg));
+}
+
+// Slice C — combined. Kayak drives world orientation; paddle drawn inside
+// the kayak's local frame using its relative rotation.
+//
+// Absolute quats from BNO085 map body-rest -> sensor-world. Relative paddle-
+// vs-kayak rotation is  qRel = qKayak_conj * qPaddle.  If both K refs have
+// been captured (over the same window), the constant rest offset
+// (qRefBoat_conj * qRefPad) is subtracted from qRel so the captured pose
+// renders at Slice 0 identity in the kayak frame.
+//
+// Boat frame is selected via SyncMap.rx_ms (< 10 ms typical) or gps_utc_sec
+// (± 5 s fallback). If no match, boatFrameIdx is preserved and rendering
+// proceeds; the HUD flags NO SYNC.
+void drawSliceC() {
+    int bi = sync.boatIdxFor(paddleFrameIdx);
+    if (bi >= 0) boatFrameIdx = bi;     // sync'd; keep HUD honest
+    int bDraw = (bi >= 0) ? bi : boatFrameIdx;
+
+    FrameData     fd  = paddleData.frameAt(paddleFrameIdx);
+    BoatFrameData bfd = boatData.frameAt(bDraw);
+
+    float[] qPad  = { fd.qw,  fd.qx,  fd.qy,  fd.qz  };
+    float[] qBoat = { bfd.qw, bfd.qx, bfd.qy, bfd.qz };
+
+    // kayakLH ← paddleLH  (paddle rotation expressed in kayak-body frame)
+    float[] qRel = qMul(qConj(qBoat), qPad);
+
+    // Reference-subtraction. Applied per-frame only if both refs captured.
+    // Kayak: rendered relative to captured kayak rest (as in Slice B).
+    // Paddle: rendered relative to captured paddle-vs-kayak rest offset —
+    // this collapses the magnetic-yaw datum difference between the two IMUs.
+    float[] qBoatDisp = qBoat;
+    float[] qRelDisp  = qRel;
+    if (refFrameBoat >= 0) {
+        qBoatDisp = qMul(qConj(qRefBoat), qBoat);
+    }
+    if (refFramePad >= 0 && refFrameBoat >= 0) {
+        float[] qRelRef = qMul(qConj(qRefBoat), qRefPad);   // kayakLH ← paddleLH at rest
+        qRelDisp = qMul(qConj(qRelRef), qRel);
+    }
+
+    // Kayak in world (boat-IMU frame; no paddle cal triple).
+    // worldRH ← kayakLH
+    pushMatrix();
+    model3D.applyQuat(qBoatDisp[0], qBoatDisp[1], qBoatDisp[2], qBoatDisp[3]);
+    model3D.drawKayak();
+
+    // Lift the paddle so its shaft centre sits above the deck rather than
+    // overlapping the cockpit. This is a display offset applied in kayak-body
+    // coords (deck-up = +Z_kayak) — not a measurement of the physical paddle
+    // location. 300 px/m matches the paddle and kayak model scale.
+    final float PADDLE_LIFT_M = 0.3f;
+    translate(0, 0, PADDLE_LIFT_M * 300);
+
+    // Paddle inside the kayak's local frame — cal triple + relative quat.
+    // kayakLH ← paddleLH ← blenderLH
+    applyCalTriple();
+    model3D.applyQuat(qRelDisp[0], qRelDisp[1], qRelDisp[2], qRelDisp[3]);
+    model3D.drawPaddle();
     popMatrix();
 }
 
@@ -136,7 +207,8 @@ void drawHUD() {
     switch (sliceMode) {
         case 0:  modeName = "Slice 0 — Paddle Model Calibration"; break;
         case 1:  modeName = "Slice A — Paddle (data-driven)";      break;
-        default: modeName = "Slice B — Kayak (data-driven)";       break;
+        case 2:  modeName = "Slice B — Kayak (data-driven)";       break;
+        default: modeName = "Slice C — Combined (paddle + kayak)"; break;
     }
     String viewName = (viewMode == 0) ? "side view (X-Z)" : "top-down (X-Y)";
     text("PadViz6   " + modeName + "   [" + viewName + "]", 20, 16);
@@ -144,7 +216,8 @@ void drawHUD() {
     textSize(13);
     if      (sliceMode == 0) drawHUD_slice0();
     else if (sliceMode == 1) drawHUD_sliceA();
-    else                     drawHUD_sliceB();
+    else if (sliceMode == 2) drawHUD_sliceB();
+    else                     drawHUD_sliceC();
 
     // Right-column axis legend — labels change with slice mode.
     drawAxisLegend();
@@ -158,7 +231,8 @@ void drawHUD() {
 void drawAxisLegend() {
     textSize(13);
     fill(220);
-    if (sliceMode == 2) {
+    if (sliceMode == 2 || sliceMode == 3) {
+        // Slice B: kayak alone. Slice C: kayak drives world, so world axes = boat frame.
         text("Boat sensor axes at origin", width - 380, 16);
         textSize(12);
         fill(255, 80, 80);   text("+X  starboard",              width - 380, 42);
@@ -191,7 +265,7 @@ void drawHUD_slice0() {
     text("Z            zero all",                      20, y); y += 16;
     text("S            save data/model_calibration.json", 20, y); y += 16;
     text("L            list current triple to console", 20, y); y += 16;
-    text("0 / 1 / 2    Slice 0 / A (paddle) / B (kayak)", 20, y); y += 16;
+    text("0/1/2/3      Slice 0 / A paddle / B kayak / C combined", 20, y); y += 16;
     text("V            toggle side / top view",        20, y); y += 16;
     text("O / B        open paddle / boat CSV",        20, y);
 }
@@ -245,6 +319,65 @@ void drawHUD_sliceB() {
     drawPlaybackKeys(200);
 }
 
+void drawHUD_sliceC() {
+    if (paddleData == null || paddleData.frameCount() == 0) {
+        fill(255, 180, 100);
+        text("No paddle CSV loaded — press O", 20, 56);
+        return;
+    }
+    if (boatData == null || boatData.frameCount() == 0) {
+        fill(255, 180, 100);
+        text("No boat CSV loaded — press B", 20, 56);
+        return;
+    }
+    FrameData     fd  = paddleData.frameAt(paddleFrameIdx);
+    BoatFrameData bfd = boatData.frameAt(boatFrameIdx);
+    int   nPad  = paddleData.frameCount();
+    int   nBoat = boatData.frameCount();
+
+    // Sync status
+    int  bi     = sync.boatIdxFor(paddleFrameIdx);
+    long dSync  = sync.syncDeltaMs(paddleData, paddleFrameIdx);
+    String syncStr;
+    if (bi < 0) syncStr = "NO SYNC (paddle frame outside match window)";
+    else if (sync.usedRxMs && dSync != Long.MAX_VALUE)
+        syncStr = String.format("rx_ms path  delta = %+d ms", dSync);
+    else syncStr = "gps_utc path  (+-5 s)";
+
+    fill(200, 220, 255);
+    text("Paddle CSV:  " + paddleData.sourceName(), 20, 56);
+    text("Boat   CSV:  " + boatData.sourceName(),   20, 74);
+    fill(255);
+    text(String.format("pad frame  %6d / %d   rx_ms %d", paddleFrameIdx, nPad  - 1, fd.rxMs),  20, 96);
+    text(String.format("boat frame %6d / %d   rx_ms %d", boatFrameIdx,   nBoat - 1, bfd.rxMs), 20, 114);
+    fill((bi < 0) ? color(255, 120, 120) : color(150, 220, 150));
+    text("sync:  " + syncStr, 20, 132);
+
+    fill(255);
+    text(String.format("q_paddle (%.3f, %.3f, %.3f, %.3f)", fd.qw, fd.qx, fd.qy, fd.qz),   20, 154);
+    text(String.format("q_kayak  (%.3f, %.3f, %.3f, %.3f)", bfd.qw, bfd.qx, bfd.qy, bfd.qz), 20, 172);
+
+    fill(200);
+    text(String.format("GPS  fix=%s  speed=%.2f m/s  COG=%.1f°  utc=%d",
+                       bfd.gpsFix ? "yes" : "no", bfd.speedMs, bfd.cogDeg, bfd.gpsUtcSec), 20, 192);
+
+    // Two-line ref status — Slice C consumes both refs together.
+    int y = 214;
+    if (refFramePad >= 0 && refFrameBoat >= 0) {
+        fill(180, 255, 180);
+        text(String.format("refs captured   pad frame %d   boat frame %d   (paddle rendered relative to captured rest offset)",
+                           refFramePad, refFrameBoat), 20, y);
+    } else if (refFramePad >= 0 || refFrameBoat >= 0) {
+        fill(230, 220, 140);
+        text("only one ref captured — press K again after loading both CSVs; U to clear", 20, y);
+    } else {
+        fill(200);
+        text("refs = identity  (K captures paddle + matched boat rest simultaneously; U clears)", 20, y);
+    }
+
+    drawPlaybackKeys(y + 22);
+}
+
 void drawRefStatus(int refFrame, int yPos) {
     if (refFrame >= 0) {
         fill(180, 255, 180);
@@ -265,7 +398,7 @@ void drawPlaybackKeys(int yStart) {
     text("Home / End   jump to start / end",        20, y); y += 16;
     text("K            capture reference (mean of +-50 frames)", 20, y); y += 16;
     text("U            clear reference (back to raw quat)",      20, y); y += 16;
-    text("0 / 1 / 2    Slice 0 / A / B",            20, y); y += 16;
+    text("0/1/2/3      Slice 0 / A / B / C",        20, y); y += 16;
     text("V            toggle side / top view",     20, y);
 }
 
@@ -278,7 +411,10 @@ void stepPlayback() {
     if (nAdvance <= 0) return;
     lastAdvanceMs += nAdvance * 10;
 
-    if (sliceMode == 1 && paddleData != null && paddleData.frameCount() > 0) {
+    if ((sliceMode == 1 || sliceMode == 3)
+            && paddleData != null && paddleData.frameCount() > 0) {
+        // Slice A + C: paddle frame is the timeline master. In Slice C the
+        // matched boat frame is picked up in drawSliceC() via SyncMap.
         int last = paddleData.frameCount() - 1;
         paddleFrameIdx = min(last, paddleFrameIdx + nAdvance);
         if (paddleFrameIdx >= last) playing = false;
@@ -294,6 +430,7 @@ void keyPressed() {
     if      (key == '0') { sliceMode = 0; return; }
     else if (key == '1') { sliceMode = 1; return; }
     else if (key == '2') { sliceMode = 2; return; }
+    else if (key == '3') { sliceMode = 3; return; }
     else if (key == 'v' || key == 'V') { viewMode = 1 - viewMode; return; }
     else if (key == 'o' || key == 'O') { selectInput("Select paddle CSV", "onPaddleFileSelected"); return; }
     else if (key == 'b' || key == 'B') { selectInput("Select boat CSV",   "onBoatFileSelected");   return; }
@@ -305,13 +442,53 @@ void keyPressed() {
         return;
     }
 
-    // Slices A / B — playback and reference.
+    // Slices A / B / C — playback and reference.
     if (key == ' ') { playing = !playing; lastAdvanceMs = millis(); return; }
 
     if (sliceMode == 1 && paddleData != null && paddleData.frameCount() > 0) {
         handleFrameNavPaddle();
     } else if (sliceMode == 2 && boatData != null && boatData.frameCount() > 0) {
         handleFrameNavBoat();
+    } else if (sliceMode == 3 && paddleData != null && paddleData.frameCount() > 0
+                              && boatData   != null && boatData.frameCount()   > 0) {
+        handleFrameNavCombined();
+    }
+}
+
+// Slice C — paddle frame is master; boat frame follows via SyncMap. K
+// captures BOTH refs simultaneously (mean over +-50 paddle frames, and over
+// the boat window that syncs to the same rx_ms range).
+void handleFrameNavCombined() {
+    int last = paddleData.frameCount() - 1;
+    if      (key == ',')       paddleFrameIdx = max(0,    paddleFrameIdx - 1);
+    else if (key == '.')       paddleFrameIdx = min(last, paddleFrameIdx + 1);
+    else if (keyCode == LEFT)  paddleFrameIdx = max(0,    paddleFrameIdx - 100);
+    else if (keyCode == RIGHT) paddleFrameIdx = min(last, paddleFrameIdx + 100);
+    else if (keyCode == 36)    paddleFrameIdx = 0;
+    else if (keyCode == 35)    paddleFrameIdx = last;
+    else if (key == 'k' || key == 'K') {
+        int padLo = paddleFrameIdx - 50, padHi = paddleFrameIdx + 50;
+        qRefPad     = paddleData.meanQuat(padLo, padHi);
+        refFramePad = paddleFrameIdx;
+
+        // Match the boat window to the same rx_ms span.
+        int boatLo = sync.boatIdxFor(max(0, padLo));
+        int boatHi = sync.boatIdxFor(min(paddleData.frameCount() - 1, padHi));
+        int boatCentre = sync.boatIdxFor(paddleFrameIdx);
+        if (boatCentre < 0) boatCentre = boatFrameIdx;
+        if (boatLo < 0) boatLo = boatCentre - 50;
+        if (boatHi < 0) boatHi = boatCentre + 50;
+        qRefBoat     = boatData.meanQuat(boatLo, boatHi);
+        refFrameBoat = boatCentre;
+        println("Slice C refs captured — pad frame " + refFramePad
+                + "  boat frame " + refFrameBoat);
+    }
+    else if (key == 'u' || key == 'U') {
+        qRefPad = new float[]{ 1, 0, 0, 0 };
+        qRefBoat = new float[]{ 1, 0, 0, 0 };
+        refFramePad = -1;
+        refFrameBoat = -1;
+        println("Slice C refs cleared.");
     }
 }
 
@@ -367,7 +544,11 @@ void onPaddleFileSelected(File selection) {
     paddleData.loadCSV(selection.getAbsolutePath());
     paddleFrameIdx = 0;
     playing        = false;
-    if (paddleData.frameCount() > 0) sliceMode = 1;
+    rebuildSync();
+    if (paddleData.frameCount() > 0) {
+        // If a boat CSV is already loaded, go straight into combined view.
+        sliceMode = (boatData != null && boatData.frameCount() > 0) ? 3 : 1;
+    }
 }
 
 void onBoatFileSelected(File selection) {
@@ -376,7 +557,16 @@ void onBoatFileSelected(File selection) {
     boatData.loadCSV(selection.getAbsolutePath());
     boatFrameIdx = 0;
     playing      = false;
-    if (boatData.frameCount() > 0) sliceMode = 2;
+    rebuildSync();
+    if (boatData.frameCount() > 0) {
+        sliceMode = (paddleData != null && paddleData.frameCount() > 0) ? 3 : 2;
+    }
+}
+
+void rebuildSync() {
+    if (paddleData == null || boatData == null) return;
+    if (paddleData.frameCount() == 0 || boatData.frameCount() == 0) return;
+    sync.build(paddleData, boatData);
 }
 
 // ── Quaternion helpers (Hamilton, [w, x, y, z]) ─────────────────────────────

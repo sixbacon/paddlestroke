@@ -1,8 +1,8 @@
 # PadViz6 — Disciplined Orientation Specification
 
-**Version:** 0.3
-**Date:** 2026-07-07
-**Status:** **Slices 0, A, B implemented and validated** on 7 Jul 2026 against the `ImuLog20260706-1.CSV` + `BoatLog20260706-1.CSV` calibration recording. Slice C (combined) and the graph/export panels are pending. Files in `visualisation/PadViz6/`. See §12 (implementation status) for the current file list and what each slice does.
+**Version:** 0.4
+**Date:** 2026-07-08
+**Status:** **Slices 0, A, B, C implemented.** Slices 0/A/B validated 7 Jul 2026 against `ImuLog20260706-1.CSV` + `BoatLog20260706-1.CSV`. Slice C added 8 Jul 2026 — `rx_ms` sync path via ported `SyncMap.pde`, kayak drives world, paddle drawn in kayak-body frame using `qKayak⁻¹ * qPaddle`, K/U captures both refs simultaneously to collapse the paddle-vs-kayak magnetic-yaw datum. Field validation of Slice C requires an under-way session with a rest window. Graph/export panels still pending. See §12 (implementation status) for the current file list and what each slice does.
 
 ---
 
@@ -461,7 +461,7 @@ orientation review only.
 
 ---
 
-## 12. Implementation Status (7 Jul 2026)
+## 12. Implementation Status (8 Jul 2026)
 
 ### 12.1 Files present
 
@@ -472,10 +472,11 @@ orientation review only.
 | `Model3D.pde` | Paddle OBJ loader, `applyQuat`, procedural kayak |
 | `DataSource.pde` | Paddle CSV parser (v8.10 + v8.9), `meanQuat` window helper |
 | `BoatSource.pde` | Boat CSV parser (v8.10 + v8.9), `meanQuat` window helper |
+| `SyncMap.pde` | Paddle→boat frame lookup; `rx_ms` (±500 ms guard) or `gps_utc_sec` (±5 s) |
 | `data/paddle60.obj`+`.mtl` | Copied from PadViz5b (post 7 Jul 2026 blade split) |
 | `data/model_calibration.json` | Slice 0 output — currently `{0, 0, 0}` (see §12.3) |
 
-Not present (planned for Slice C and beyond): `SyncMap.pde`, `GraphPanel.pde`, `SidePanel.pde`, `Integrator.pde`.
+Not present (planned for graph/export work): `GraphPanel.pde`, `SidePanel.pde`, `Integrator.pde`.
 
 ### 12.2 What each slice does
 
@@ -483,7 +484,21 @@ Not present (planned for Slice C and beyond): `SyncMap.pde`, `GraphPanel.pde`, `
 
 **Slice A — DONE.** Loads a paddle CSV (`O` key; PadDis v8.10 17-col with `rx_ms` preferred, v8.9 16-col fallback). Draws paddle under handedness bridge + calibration + data quaternion. Independent frame index with Space / arrows / `,`/`.` / Home / End playback. **Reference subtraction (K/U):** `K` captures the mean quaternion over ±50 frames around the current frame; while active, each frame renders as `qRef⁻¹ * q_current` so the captured pose appears at Slice 0 identity. `U` clears. HUD shows current frame, timestamp, `rx_ms`, quat, Euler, and reference state.
 
-**Slice B — DONE.** Loads a boat CSV (`B` key). Draws procedural kayak (see §12.4) driven by `kayak_qw..qz` through the same pipeline. Independent frame index, independent K/U reference (separate `qRefBoat`). HUD adds a GPS line (fix / speed / COG / UTC). Axis legend switches to boat conventions (+X starboard, +Y bow, +Z deck).
+**Slice B — DONE.** Loads a boat CSV (`B` key). Draws procedural kayak (see §12.4) driven by `kayak_qw..qz` through the same pipeline (no paddle cal triple — kayak is drawn in the boat-IMU frame, not the paddle-model Blender frame). Independent frame index, independent K/U reference (separate `qRefBoat`). HUD adds a GPS line (fix / speed / COG / UTC). Axis legend switches to boat conventions (+X starboard, +Y bow, +Z deck).
+
+**Slice C — DONE (initial render; field validation pending).** Requires both CSVs loaded. Loading either CSV rebuilds `SyncMap`; loading the second one auto-enters Slice C. Paddle frame index is the timeline master; the matched boat frame is picked from `SyncMap` every draw call. Render composition (inside the handedness bridge):
+
+```
+applyQuat(qKayak_disp)     // worldRH ← kayakLH  (boat CSV drives world)
+drawKayak()
+applyCalTriple()           // kayakLH ← blenderLH_paddle
+applyQuat(qRel_disp)       // paddle-rel-to-kayak = qConj(qKayak) * qPaddle
+drawPaddle()
+```
+
+**K/U in Slice C** captures both refs simultaneously: `qRefPad` = mean paddle quat over ±50 paddle frames; `qRefBoat` = mean boat quat over the sync-matched boat window. With both refs set, the render subtracts each: `qKayak_disp = qConj(qRefBoat) * qKayak`, `qRel_disp = qConj(qConj(qRefBoat)*qRefPad) * qRel`. At the captured rest instant, both objects render at Slice 0 identity, collapsing the magnetic-yaw datum difference between the two IMUs. This is the interactive form of the per-session sidecar (§7); once a workflow is settled, the sidecar path replaces manual K captures.
+
+**HUD (Slice C).** Both CSV names, both frame indices, sync path (rx_ms / gps_utc / NO SYNC), sync delta in ms, both raw quats, GPS line, ref-capture status. Axis legend shows boat frame (kayak drives world).
 
 ### 12.3 Calibration result
 
@@ -513,11 +528,12 @@ This is a **view alignment**, not a data correction, and it is deliberately per-
 ### 12.7 Physical facts captured
 
 - **Calibration Rest A window** (`ImuLog20260706-1.CSV`, t = 22 – 38 s, frames ≈ 2200–3800): paddle held horizontal, right blade face vertical, sensor +Y toward kayak bow. Mean roll = 0° ± 2°, pitch ≈ −2.5° ± 3°, yaw ≈ 55° ± 1°. Accel `≈ (0.25, −0.4, +9.85)` confirms sensor +Z is physically up.
-- **Boat mean orientation during the same window** (`BoatLog20260706-1.CSV`): kayak roll ≈ +5.9°, pitch ≈ −4°, yaw ≈ 50°, speed = 0. Boat stationary throughout the session, so the COG-mapping acceptance test (§4.2 test 2) is not possible on this file — needs an under-way session.
+- **Boat mean orientation during the same window** (`BoatLog20260706-1.CSV`): kayak roll ≈ +5.9°, pitch ≈ −4°, yaw ≈ 50°, speed = 0. Note (corrected 8 Jul 2026): the boat is stationary only during the *calibration phase* at the start of the file (rows 1 – ~5000). GPS fix is solid throughout (24,791 / 24,791 rows fix = 1). Under-way paddling begins around row ~10,000 with speed ramping to 0.6 m/s, and by row ~15,000 the session is at steady paddling speed 2.2 – 2.6 m/s with COG stable near 300–310°. So both Slice C's rest-window prerequisite and Slice B's COG mapping test (§4.2 test 2) are runnable on this file — the earlier "stationary throughout" reading was of the calibration segment only.
 
 ### 12.8 Not done
 
-- **Slice C** — combined paddle + kayak with `rx_ms` sync from `SyncMap.pde` (byte-for-byte port from PadViz5b) and per-session paddle-vs-kayak yaw sidecar JSON.
+- **Slice C field validation.** Runnable on the 6 Jul 2026 file (calibration rest at rows 1 – ~5000, then paddling under way from row ~15000 onward at 2.2 – 2.6 m/s with COG stable). Also runnable on the longer paddling session the user has on hand if it turns out to be more useful. Test per §4.3.
+- **Per-session rest-pose sidecar** (§7). Currently the K/U keys serve as the interactive equivalent; the offline sidecar workflow (compute mean-of-window paddle-vs-kayak offset from a marked rest window in the CSV, write `<basename>.rest.json`, auto-load at CSV-load time) is not yet implemented.
 - **Bottom graph panel** (`GraphPanel.pde`) with dropdown field selection, drag-to-zoom, and merged CSV export (curated + all-fields modes per §9).
 - **Side panel** (`SidePanel.pde`) — filenames, load buttons, play/pause, speed slider.
 - **Adaptive side view** for Slice B (starboard-side camera) if desired.

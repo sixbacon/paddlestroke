@@ -74,6 +74,7 @@ class DataSource {
 
     int       frameCount() { return frames.size(); }
     String    sourceName() { return srcName; }
+    ArrayList<FrameData> getFrames() { return frames; }
 
     FrameData frameAt(int idx) {
         if (frames.isEmpty()) return new FrameData();
