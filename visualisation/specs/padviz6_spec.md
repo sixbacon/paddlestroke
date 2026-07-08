@@ -717,7 +717,7 @@ These came up while driving the sketch against real data.
 
 3. **No "revert to previous slice" shortcut.** — **DONE.** `Backspace` and `-` both ping-pong to the previously-active slice. Same model as GraphPanel's double-right-click zoom revert — a single `prevSliceMode` variable is swapped, so repeated presses toggle between two most-recent slices rather than walking a full history stack. Slice changes from CSV loads (`onPaddleFileSelected`, `onBoatFileSelected`) also update the history, so loading a boat CSV while in Slice A pushes A for later revert.
 
-### 12.11 Key bindings — current state (8 Jul 2026)
+### 12.11 Key bindings — current state (v0.12)
 
 All slices:
 | Key | Action |
@@ -744,6 +744,7 @@ Slices A / B / C additional:
 | `u` (lowercase) | Clear reference — back to raw quat |
 | `S` (Shift+s) | Reset graph zoom to full range (also pushed to history) |
 | `E` (Shift+e) | Export merged CSV over current zoom |
+| `C` (Shift+c) | Build session sidecar (rest-window detect + mount offsets + yaw datum) and auto-save as `<basename>.session.json` next to the paddle CSV |
 
 Slice 0 (calibration) — routed through `cal.handleKey()`:
 | Key | Action |
@@ -762,3 +763,9 @@ Graph panel mouse gestures (Slices A/B/C only, when a paddle CSV is loaded):
 - **Cols button** — toggle export column set between `curated` and `all`.
 - **Export button** or `E` key — write merged CSV.
 - **Slot buttons** (left click) — open field-select dropdown; scroll wheel scrolls the dropdown.
+
+Startup checklist mouse gestures (bottom strip while onboarding incomplete):
+- **Click row 1** — same as pressing `p` (open paddle CSV file picker).
+- **Click row 2** — same as pressing `b` (open boat CSV file picker). Dimmed and non-clickable until row 1 done.
+- **Click row 3** — same as pressing `C` (build and auto-save sidecar). Dimmed and non-clickable until row 1 done.
+- Checklist auto-dismisses 2.5 s after the last box ticks; during that window a countdown message shows at the bottom of the strip.
