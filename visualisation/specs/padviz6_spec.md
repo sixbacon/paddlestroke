@@ -1,8 +1,8 @@
 # PadViz6 — Disciplined Orientation Specification
 
-**Version:** 0.7
+**Version:** 0.8
 **Date:** 2026-07-08
-**Status:** Slices 0–C + bottom GraphPanel with two-click zoom (right-click), double-right-click revert, `S`-key zoom reset, and merged CSV export (curated + all-fields). Corner axis compass (2D, ~1/3 the old on-screen size) with a `P`/`K`/`W` frame letter that also acts as the slice-switch shortcut. Field notes 8 Jul 2026 record three follow-up items — see §12.10. §7 expanded (v0.7) from single yaw-alignment rotation to a three-offset per-session procedure — sensor-mount roll/pitch (from accel) + magnetic-yaw datum (from mean quats) — with pre-session magnetometer figure-8 and DCD save. Requires three firmware additions listed in §7.8.
+**Status:** Slices 0–C + bottom GraphPanel with two-click zoom (right-click), double-right-click revert, `S`-key zoom reset, and merged CSV export (curated + all-fields). Corner axis compass (2D, ~1/3 the old on-screen size) with a `P`/`K`/`W` frame letter that also acts as the slice-switch shortcut. §7 expanded (v0.7) from single yaw-alignment rotation to a three-offset per-session procedure — sensor-mount roll/pitch (from accel) + magnetic-yaw datum (from mean quats) — with pre-session magnetometer figure-8 and DCD save. Requires three firmware additions listed in §7.8 (formalised in firmware spec §15, v2.7). v0.8: the three 8 Jul 2026 field-use notes (§12.10) are now DONE — `k`/`u` HUD flash, Slice B hint to `W`, and Backspace/`-` back-slice ping-pong.
 
 ---
 
@@ -695,15 +695,15 @@ First line of every exported file is a comment recording mode + sync path, e.g. 
 - **Adaptive side view** for Slice B (starboard-side camera) if desired.
 - **Under-way GPS COG mapping test** for Slice B acceptance — needs a new field session.
 
-### 12.10 Field-use notes — 8 Jul 2026 (deferred fixes)
+### 12.10 Field-use notes — 8 Jul 2026 — all three DONE 8 Jul 2026
 
-These came up while driving the sketch against real data. Recording as follow-ups; no code changes made yet.
+These came up while driving the sketch against real data.
 
-1. **Lowercase `k` reports as "no effect".** Semantically it captures the reference for the current slice's data source. Suspected cause: nothing on screen changes visibly at the moment of capture (the same frame renders identically before and after — the visual difference only appears once you play back). No indicator flashes. Fix: give the HUD ref line a brief highlight (e.g. green flash for one second) on capture, and/or print a console line with the timestamp of the captured frame.
+1. **Lowercase `k` reports as "no effect".** — **DONE.** `k` (and `u`) now trigger a top-centre HUD flash for 1.5 s (linear fade over the last 400 ms). Message text is slice-specific: `PADDLE REF CAPTURED (frame N)` in Slice A, `KAYAK REF CAPTURED (frame N)` in Slice B, `BOTH REFS CAPTURED (pad N, boat M)` in Slice C, and the matching cleared-variant on `u`.
 
-2. **"Kayak view" that also shows the paddle.** User expectation on pressing `K`: see the kayak *while continuing to see the paddle*. Actual behaviour: `K` switches to Slice B which is kayak-only. The correct existing view is Slice C (`W` — combined). Options: rename the compass letter so kayak-with-paddle → `K`, and reassign Slice B (kayak-only) to something else; or add a HUD hint that says "for kayak+paddle use W". Decision pending.
+2. **"Kayak view" that also shows the paddle."** — **DONE (hint approach).** Compass letters unchanged (`P`/`K`/`W`) to preserve the "letter you see is letter you press" invariant. Instead, Slice B's HUD adds a cyan hint line — `Paddle CSV also loaded — press W (or 3) for combined kayak+paddle view` — but only when a paddle CSV is currently loaded. If no paddle CSV is loaded, no hint (the combined view isn't yet meaningful).
 
-3. **No "revert to previous slice" shortcut.** User tried `u`/`U` for this — but those are the reference-clear keys. Add a slice-history back-shortcut (e.g. `Backspace` or `-`) that pops the previously-active slice. Independent of the K/U reference-history stack.
+3. **No "revert to previous slice" shortcut.** — **DONE.** `Backspace` and `-` both ping-pong to the previously-active slice. Same model as GraphPanel's double-right-click zoom revert — a single `prevSliceMode` variable is swapped, so repeated presses toggle between two most-recent slices rather than walking a full history stack. Slice changes from CSV loads (`onPaddleFileSelected`, `onBoatFileSelected`) also update the history, so loading a boat CSV while in Slice A pushes A for later revert.
 
 ### 12.11 Key bindings — current state (8 Jul 2026)
 
@@ -715,6 +715,7 @@ All slices:
 | `2` or Shift+`K` (`K`) | Slice B — kayak view; compass letter `K` |
 | `3` or Shift+`W` (`W`) | Slice C — combined view; compass letter `W` |
 | `v` / `V`         | Toggle side / top-down camera |
+| Backspace or `-`  | Go back to previously-active slice (ping-pong) |
 | `p` (lowercase)   | Open paddle CSV |
 | `b` / `B`         | Open boat CSV |
 

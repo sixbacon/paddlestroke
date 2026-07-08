@@ -38,6 +38,14 @@ int     refFramePad   = -1;
 float[] qRefBoat      = { 1, 0, 0, 0 };
 int     refFrameBoat  = -1;
 
+// Slice-history ping-pong. Backspace / '-' swaps sliceMode with the last
+// value it held. Same model as GraphPanel's double-right-click zoom revert.
+int     prevSliceMode = -1;
+
+// Top-centre HUD flash — brief visual confirmation for ref capture/clear.
+int     refFlashUntilMs = 0;
+String  refFlashMsg     = "";
+
 void settings() {
     size(1400, 900, P3D);
     smooth(4);
@@ -55,7 +63,7 @@ void setup() {
 
     surface.setResizable(true);
     surface.setTitle("PadViz6");
-    println("PadViz6 —  0=Slice0 cal   1|P=SliceA paddle   2|K=SliceB kayak   3|W=SliceC world   V=toggle view");
+    println("PadViz6 —  0=Slice0 cal   1|P=SliceA paddle   2|K=SliceB kayak   3|W=SliceC world   V=toggle view   Backspace/-=back");
     println("Load:  p=paddle CSV   b=boat CSV");
     println("Slices A/B/C:  Space=play/pause   Left/Right=step 100   ,/.=step 1   k=capture ref   u=clear ref   S=reset zoom   E=export");
 }
@@ -74,6 +82,7 @@ void draw() {
     drawHUD();
     drawAxisCompass();
     if (isGraphVisible()) graph.draw(paddleData, boatData, sync, paddleFrameIdx);
+    drawRefFlash();
     hint(ENABLE_DEPTH_TEST);
 }
 
@@ -381,13 +390,24 @@ void drawHUD_sliceB() {
     text(String.format("q  = (%.4f, %.4f, %.4f, %.4f)", bfd.qw, bfd.qx, bfd.qy, bfd.qz), 20, 114);
     text(String.format("euler  roll=%7.2f  pitch=%7.2f  yaw=%7.2f", bfd.roll, bfd.pitch, bfd.yaw), 20, 132);
 
+    // K = kayak-only. If the paddle CSV is also loaded, point the user at the
+    // combined view — a common expectation after seeing "K" on the compass.
+    int gpsY = 152;
+    if (paddleData != null && paddleData.frameCount() > 0) {
+        fill(140, 200, 255);
+        textSize(11);
+        text("Paddle CSV also loaded — press W (or 3) for combined kayak+paddle view", 20, 152);
+        textSize(13);
+        gpsY = 172;
+    }
+
     // GPS block
     fill(200);
     text(String.format("GPS  fix=%s  speed=%.2f m/s  COG=%.1f°  utc=%d",
-                       bfd.gpsFix ? "yes" : "no", bfd.speedMs, bfd.cogDeg, bfd.gpsUtcSec), 20, 152);
+                       bfd.gpsFix ? "yes" : "no", bfd.speedMs, bfd.cogDeg, bfd.gpsUtcSec), 20, gpsY);
 
-    drawRefStatus(refFrameBoat, 172);
-    drawPlaybackKeys(200);
+    drawRefStatus(refFrameBoat, gpsY + 20);
+    drawPlaybackKeys(gpsY + 48);
 }
 
 void drawHUD_sliceC() {
@@ -472,6 +492,7 @@ void drawPlaybackKeys(int yStart) {
     text("S            reset graph zoom to full range",          20, y); y += 16;
     text("E            export merged CSV over current zoom",     20, y); y += 16;
     text("0/1/2/3 or P/K/W  Slice 0 / A / B / C",       20, y); y += 16;
+    text("Backspace / -   return to previous slice",    20, y); y += 16;
     text("V            toggle side / top view",     20, y);
 }
 
@@ -507,11 +528,20 @@ void keyPressed() {
     //     P -> Slice A (paddle-only view)
     //     K -> Slice B (kayak-only view)
     //     W -> Slice C (combined "world" view)
-    if      (key == '0')               { sliceMode = 0; return; }
-    else if (key == '1' || key == 'P') { sliceMode = 1; return; }
-    else if (key == '2' || key == 'K') { sliceMode = 2; return; }
-    else if (key == '3' || key == 'W') { sliceMode = 3; return; }
+    if      (key == '0')               { switchSlice(0); return; }
+    else if (key == '1' || key == 'P') { switchSlice(1); return; }
+    else if (key == '2' || key == 'K') { switchSlice(2); return; }
+    else if (key == '3' || key == 'W') { switchSlice(3); return; }
     else if (key == 'v' || key == 'V') { viewMode = 1 - viewMode; return; }
+    // Backspace / '-' — ping-pong to the previous slice.
+    else if (key == BACKSPACE || key == '-') {
+        if (prevSliceMode >= 0) {
+            int p         = prevSliceMode;
+            prevSliceMode = sliceMode;
+            sliceMode     = p;
+        }
+        return;
+    }
     // Lowercase 'p' / 'b' still open the CSV file pickers.
     else if (key == 'p') { selectInput("Select paddle CSV", "onPaddleFileSelected"); return; }
     else if (key == 'b' || key == 'B') { selectInput("Select boat CSV",   "onBoatFileSelected");   return; }
@@ -574,6 +604,8 @@ void handleFrameNavCombined() {
         refFrameBoat = boatCentre;
         println("Slice C refs captured — pad frame " + refFramePad
                 + "  boat frame " + refFrameBoat);
+        triggerRefFlash("BOTH REFS CAPTURED  (pad " + refFramePad
+                        + ", boat " + refFrameBoat + ")");
     }
     else if (key == 'u') {
         qRefPad = new float[]{ 1, 0, 0, 0 };
@@ -581,6 +613,7 @@ void handleFrameNavCombined() {
         refFramePad = -1;
         refFrameBoat = -1;
         println("Slice C refs cleared.");
+        triggerRefFlash("REFS CLEARED");
     }
 }
 
@@ -598,11 +631,13 @@ void handleFrameNavPaddle() {
         println("Paddle ref captured at frame " + refFramePad
                 + " (w=" + nf(qRefPad[0],0,4) + " x=" + nf(qRefPad[1],0,4)
                 + " y=" + nf(qRefPad[2],0,4) + " z=" + nf(qRefPad[3],0,4) + ")");
+        triggerRefFlash("PADDLE REF CAPTURED  (frame " + refFramePad + ")");
     }
     else if (key == 'u') {
         qRefPad = new float[]{ 1, 0, 0, 0 };
         refFramePad = -1;
         println("Paddle ref cleared.");
+        triggerRefFlash("PADDLE REF CLEARED");
     }
 }
 
@@ -620,11 +655,13 @@ void handleFrameNavBoat() {
         println("Boat ref captured at frame " + refFrameBoat
                 + " (w=" + nf(qRefBoat[0],0,4) + " x=" + nf(qRefBoat[1],0,4)
                 + " y=" + nf(qRefBoat[2],0,4) + " z=" + nf(qRefBoat[3],0,4) + ")");
+        triggerRefFlash("KAYAK REF CAPTURED  (frame " + refFrameBoat + ")");
     }
     else if (key == 'u') {
         qRefBoat = new float[]{ 1, 0, 0, 0 };
         refFrameBoat = -1;
         println("Boat ref cleared.");
+        triggerRefFlash("KAYAK REF CLEARED");
     }
 }
 
@@ -639,7 +676,7 @@ void onPaddleFileSelected(File selection) {
     rebuildSync();
     if (paddleData.frameCount() > 0) {
         // If a boat CSV is already loaded, go straight into combined view.
-        sliceMode = (boatData != null && boatData.frameCount() > 0) ? 3 : 1;
+        switchSlice((boatData != null && boatData.frameCount() > 0) ? 3 : 1);
     }
 }
 
@@ -651,7 +688,7 @@ void onBoatFileSelected(File selection) {
     playing      = false;
     rebuildSync();
     if (boatData.frameCount() > 0) {
-        sliceMode = (paddleData != null && paddleData.frameCount() > 0) ? 3 : 2;
+        switchSlice((paddleData != null && paddleData.frameCount() > 0) ? 3 : 2);
     }
 }
 
@@ -659,6 +696,38 @@ void rebuildSync() {
     if (paddleData == null || boatData == null) return;
     if (paddleData.frameCount() == 0 || boatData.frameCount() == 0) return;
     sync.build(paddleData, boatData);
+}
+
+// ── Slice / HUD helpers ─────────────────────────────────────────────────────
+
+// Change slice, remembering the previous mode so Backspace / '-' can go back.
+void switchSlice(int newMode) {
+    if (newMode == sliceMode) return;
+    prevSliceMode = sliceMode;
+    sliceMode     = newMode;
+}
+
+void triggerRefFlash(String msg) {
+    refFlashMsg     = msg;
+    refFlashUntilMs = millis() + 1500;
+}
+
+void drawRefFlash() {
+    int now = millis();
+    if (now >= refFlashUntilMs) return;
+    // Fade linearly over the last 400 ms of the flash; full opacity before.
+    int remaining = refFlashUntilMs - now;
+    int alpha     = (remaining >= 400) ? 240 : (int)(240 * remaining / 400.0);
+    noStroke();
+    fill(20, 20, 30, alpha);
+    rectMode(CENTER);
+    rect(width / 2, 30, textWidth(refFlashMsg) + 32, 40, 6);
+    rectMode(CORNER);
+    fill(120, 230, 200, alpha);
+    textAlign(CENTER, CENTER);
+    textSize(20);
+    text(refFlashMsg, width / 2, 30);
+    textAlign(LEFT, TOP);
 }
 
 // ── Quaternion helpers (Hamilton, [w, x, y, z]) ─────────────────────────────
