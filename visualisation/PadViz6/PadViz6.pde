@@ -53,6 +53,7 @@ void setup() {
     sync  = new SyncMap();
     graph = new GraphPanel(0, height - GRAPH_H, width, GRAPH_H);
 
+    surface.setResizable(true);
     surface.setTitle("PadViz6");
     println("PadViz6 —  0=Slice0 cal   1|P=SliceA paddle   2|K=SliceB kayak   3|W=SliceC world   V=toggle view");
     println("Load:  p=paddle CSV   b=boat CSV");
@@ -61,6 +62,9 @@ void setup() {
 
 void draw() {
     background(20);
+    // Keep graph bounds locked to the window each frame so full-screen /
+    // resize immediately re-lays out the bottom strip. Cheap; four assigns.
+    if (graph != null) graph.setBounds(0, height - GRAPH_H, width, GRAPH_H);
     stepPlayback();
     drawScene3D();
 

@@ -1,8 +1,8 @@
 # PadViz6 — Disciplined Orientation Specification
 
-**Version:** 0.6
+**Version:** 0.7
 **Date:** 2026-07-08
-**Status:** Slices 0–C + bottom GraphPanel with two-click zoom (right-click), double-right-click revert, `S`-key zoom reset, and merged CSV export (curated + all-fields). Corner axis compass (2D, ~1/3 the old on-screen size) with a `P`/`K`/`W` frame letter that also acts as the slice-switch shortcut. Field notes 8 Jul 2026 record three follow-up items — see §12.10.
+**Status:** Slices 0–C + bottom GraphPanel with two-click zoom (right-click), double-right-click revert, `S`-key zoom reset, and merged CSV export (curated + all-fields). Corner axis compass (2D, ~1/3 the old on-screen size) with a `P`/`K`/`W` frame letter that also acts as the slice-switch shortcut. Field notes 8 Jul 2026 record three follow-up items — see §12.10. §7 expanded (v0.7) from single yaw-alignment rotation to a three-offset per-session procedure — sensor-mount roll/pitch (from accel) + magnetic-yaw datum (from mean quats) — with pre-session magnetometer figure-8 and DCD save. Requires three firmware additions listed in §7.8.
 
 ---
 
@@ -348,37 +348,174 @@ source and not bindable at runtime.
 
 ---
 
-## 7. Per-Session Rest-Pose Sidecar (Slice C prerequisite)
+## 7. Per-Session Calibration Procedure
 
 *Distinct from the Slice 0 model calibration (§4.0). The model calibration is a one-time
-per-OBJ constant; the rest-pose sidecar below is a per-session paddle-vs-kayak yaw
-alignment captured at the start of each recording.*
+per-OBJ constant; the per-session procedure below captures three offsets that vary trip-to-
+trip and produces a sidecar JSON alongside each session's CSVs.*
 
+### 7.1 What is being calibrated
 
-Sidecar file next to the paddle CSV: `<basename>.rest.json`.
+Three offsets, each with a different physical origin:
+
+1. **Sensor-mount offset (paddle)** — rotation of the paddle-IMU package about the shaft
+   axis (and small deflection about the shaft-normal), because the sensor is Velcro'd
+   to the shaft and its orientation is not guaranteed the same each session. Manifests
+   as a non-zero accelerometer reading at rest along paddle-body Y.
+
+2. **Sensor-mount offset (boat)** — the same for the hull-IMU package.
+
+3. **Magnetic-yaw datum offset** — residual difference between the two sensors' estimates
+   of magnetic north after each has been figure-8'd. Both BNO085s reference world +X to
+   magnetic north, so in principle they align; in practice a few degrees of divergence
+   remain because of different local hard-iron environments (paddle in air vs boat with
+   fittings) and imperfect self-calibration.
+
+Offsets (1) and (2) come from the accelerometer at a single rest window. Offset (3) comes
+from the mean rotation vector difference over the same window (after (1) and (2) have been
+removed).
+
+### 7.2 Pre-session sensor preparation — magnetometer
+
+Both sensors need a converged magnetometer before they'll produce reliable yaw. Steps for
+each unit, done once per outing:
+
+1. Assemble the unit fully — battery in its final mounted position, enclosure closed.
+   Any ferrous material that will be near the sensor during use must be present now.
+2. Wave the unit in a figure-8 pattern (three axes of rotation, not just one plane) in
+   the open, away from cars/buildings/electronics. Continue until the firmware reports
+   `MAG_CAL: 3` on serial (or `M3` green on the CYD if that indicator is added).
+3. Save Dynamic Calibration Data to the BNO085's flash so it survives power-cycle. The
+   firmware must call `sh2_saveDcdNow()` once mag status reaches 3.
+4. Mount the unit in its normal position (boat unit into hull, paddle unit on shaft).
+5. Verify: do a short second figure-8 in the mounted position. If mag status stays 3,
+   no ferrous distortion at the mounting point — you're done. If it drops to 2 or 1,
+   re-cal in-mount and re-save.
+
+For the boat unit, step (2) can be done outside the boat if and only if the mounting point
+is verified free of ferrous material within ~30 cm. Step (5) is the check for that.
+
+### 7.3 The rest pose
+
+At the start of every recording:
+
+- Kayak level (deck horizontal — flat water, no wake).
+- Paddle held horizontal, exactly across the kayak (shaft perpendicular to the bow-stern
+  axis).
+- Blades exactly vertical.
+- **Blade normal pointing to bow** (right blade's power face forward). This aligns
+  paddle-sensor +Y with boat-sensor +Y.
+- Held still for **at least 3 s** at 100 Hz — gives 300 samples for offset estimation.
+
+In this pose the two sensor-body frames coincide axis-for-axis (see §7.1 table analogy):
+paddle +X = boat +X = starboard; paddle +Y = boat +Y = bow; paddle +Z = boat +Z = up.
+Any observed difference between the two quaternions at rest is the datum offset to be
+captured.
+
+### 7.4 Rest-window detection and offset extraction
+
+An offline pass over the paddle and boat CSVs identifies the rest window and extracts
+offsets. The rest window is the first contiguous span where:
+
+- `abs(||accel|| − 9.81) < 0.1 m/s²` on both sensors, and
+- per-axis rolling variance of accel over 100 samples < a threshold (roughly
+  `0.02 (m/s²)²`), and
+- span duration ≥ 300 paddle frames (3 s).
+
+From the rest window:
+
+- **Paddle mount offset** — `roll_offset_pad = atan2(-mean(ay_pad), mean(az_pad))`,
+  `pitch_offset_pad = atan2(mean(ax_pad), sqrt(mean(ay_pad)² + mean(az_pad)²))`.
+- **Boat mount offset** — same formulae on boat accel.
+- **Yaw datum offset** — take the mean quaternion of each sensor over the rest window,
+  remove the mount offsets from each, then extract the yaw component of
+  `q_boat_rest_conj * q_paddle_rest`.
+
+Yaw offset is only observable via the magnetometer — offsets (1) and (2) alone cannot
+resolve it (accel is symmetric about the vertical axis).
+
+### 7.5 Sidecar schema
+
+One sidecar per session, next to the paddle CSV: `<basename>.session.json`.
 
 ```json
 {
-  "session":      "2026-07-15",
-  "recorded_at":  "2026-07-15T14:32:11Z",
-  "rest_pose": {
-    "description":     "Paddle held horizontal across kayak; kayak level; still for 2 s.",
-    "paddle_frame_index_start": 187,
-    "paddle_frame_index_end":   387,
-    "boat_frame_index_start":   19,
-    "boat_frame_index_end":     39
+  "session":       "2026-07-15",
+  "recorded_at":   "2026-07-15T14:32:11Z",
+  "paddle_csv":    "ImuLog20260715-1.CSV",
+  "boat_csv":      "BoatLog20260715-1.CSV",
+  "rest_window": {
+    "paddle_frame_start": 187,
+    "paddle_frame_end":   487,
+    "boat_frame_start":    19,
+    "boat_frame_end":      49,
+    "duration_s":          3.0,
+    "accel_var_max":       0.014,
+    "confidence":          "high"
   },
-  "q_mount_paddle_kayak": { "w": 0.7071, "x": 0.0, "y": 0.0, "z": -0.7071 }
+  "paddle_mount_offset_deg": { "roll":  1.42, "pitch": -0.31 },
+  "boat_mount_offset_deg":   { "roll":  0.08, "pitch": -0.19 },
+  "yaw_datum_offset_deg":    7.6,
+  "mag_cal_status_at_rest": { "paddle": 3, "boat": 3 },
+  "notes":         "figure-8 done on beach; both sensors green before launch."
 }
 ```
 
-`q_mount_paddle_kayak` is derived from the mean paddle and mean kayak quaternions over the
-rest window. It is applied at CSV load time to every paddle frame before rendering. It is
-**never** hard-coded and **never** adjusted at runtime.
+`mag_cal_status_at_rest` is read from the firmware's per-frame accuracy field (§7.8) — a
+recording with either sensor below 3 during the rest window is flagged low-confidence and
+Slice C draws its HUD sync line in amber.
 
-**If the sidecar is missing:** PadViz6 loads without a mount correction and prints a HUD
-warning `NO REST-POSE SIDECAR — orientation uncorrected`. This is preferable to silently
-applying a stale correction.
+### 7.6 Application at load
+
+The sidecar is applied at CSV-load time, once. Nothing is mutated at render time.
+
+- Each paddle frame quaternion is left-multiplied by the paddle mount-offset conjugate,
+  bringing the shaft/blade into their true physical orientation regardless of how the
+  sensor was clamped.
+- Each boat frame quaternion is treated symmetrically.
+- The yaw datum offset is applied to the paddle quaternion so its magnetic reference
+  matches the boat's.
+
+After these three corrections, the rest-pose sample renders at Slice 0 identity and
+paddle-vs-boat orientation comparisons are meaningful.
+
+### 7.7 Fallback and validation
+
+**If the sidecar is missing:** PadViz6 loads uncorrected and prints
+`NO SESSION SIDECAR — orientation uncorrected` in the HUD. The K/U keys remain as an
+interactive equivalent for exploratory work.
+
+**If the rest window fails detection:** the offline pass writes a sidecar with
+`"confidence": "none"` and no offsets; the visualiser treats it as if missing.
+
+**Validation:** after applying the sidecar, at any frame inside the rest window the
+paddle should render exactly in the Slice 0 pose (shaft along red +X, blades vertical,
+blade normal forward = green +Y). Deviation ≥ 2° at rest indicates either a bad rest
+window or a mag cal that didn't converge.
+
+### 7.8 Firmware dependencies
+
+The per-session procedure requires Phase 10 firmware — formalised in
+`firmware/specs/functional_spec.md` §15 (Magnetometer Calibration Support). Summary of
+what §15 delivers to this section:
+
+1. **Mag report enabled on both PadLog and BoatLog** — `SH2_MAGNETIC_FIELD_CALIBRATED`
+   at 10 Hz, `.status` field read every loop (§15.2.1).
+2. **On-change serial output** — `MAG_CAL: <0-3>` printed only when the value changes,
+   so the operator can watch figure-8 convergence during warm-up (§15.2.2).
+3. **DCD saved to flash on first convergence** — `sh2_saveDcdNow()` fires once per
+   boot at the moment status first reaches 3, persisting calibration across power-
+   cycles (§15.2.3).
+4. **`mag_cal` column in both CSVs** — added after `rx_ms`, values 0–3, used by the
+   rest-window detector to flag low-confidence sessions (§15.2.4).
+
+Note that (4) is a payload struct change and requires a coordinated release of
+PadLog v8.8, BoatLog v1.1, and PadDis v8.11 in a single commit (§15.6).
+
+**Fallback for pre-Phase-10 CSVs:** rest-window detection treats missing `mag_cal`
+column as "unknown" — mount offsets are still extracted from accel (which needs no
+mag), but the sidecar records `"mag_cal_status_at_rest": null` and the visualiser
+displays `MAG UNKNOWN` in the Slice C HUD.
 
 ---
 

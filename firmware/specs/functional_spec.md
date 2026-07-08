@@ -1,8 +1,8 @@
 # Kayak Paddle Stroke Rate Monitor — Functional Specification
 
 **Project:** paddlestroke  
-**Date:** 20 May 2026  
-**Version:** 2.6
+**Date:** 2026-07-08  
+**Version:** 2.7  (§15 added — Phase 10 magnetometer calibration support: mag report enable, on-change serial status, DCD save on first convergence, `mag_cal` CSV column on paddle + boat, Phase 10 test plan T-40 to T-45, release-coupling requirement PadLog v8.8 / BoatLog v1.1 / PadDis v8.11.)
 
 ---
 
@@ -1940,3 +1940,188 @@ acceleration fills in the high-frequency detail between GPS fixes. This is a sta
 GNSS/IMU loose-coupling architecture and will give significantly more reliable position
 estimates than accelerometer integration alone. The boat unit's `gps_utc_sec` field
 aligns the two logs for this fusion in post-processing.
+
+---
+
+## 15. Magnetometer Calibration Support (Phase 10)
+
+*Firmware-side counterpart to PadViz6 spec §7 (per-session calibration procedure).*
+
+### 15.1 Motivation
+
+The BNO085 fusion references world +X to magnetic north via a self-calibrating
+magnetometer. Yaw accuracy — and therefore paddle-vs-kayak orientation comparisons in
+Slice C — depends on both sensors' magnetometers being well-calibrated in the same local
+field. In practice this requires:
+
+- A figure-8 warm-up per unit before every session.
+- Persistent storage of Dynamic Calibration Data (DCD) so it survives power-cycle.
+- A signal to the operator that calibration has converged (`mag status = 3`).
+- An archival record of mag confidence per CSV row so post-processing can flag low-
+  confidence segments.
+
+None of this is currently exposed by PadLog or BoatLog — the mag status is emitted by
+the sensor but silently discarded.
+
+### 15.2 Requirements
+
+#### 15.2.1 Enable the calibrated-magnetic-field report
+
+Both PadLog and BoatLog must, in `setup()`, enable
+`SH2_MAGNETIC_FIELD_CALIBRATED` at ≥ 10 Hz alongside the existing rotation-vector
+report. The report's `.status` field (0–3) is the mag calibration accuracy.
+
+Adafruit_BNO08x example:
+
+```cpp
+if (!bno.enableReport(SH2_MAGNETIC_FIELD_CALIBRATED, 100000UL)) {  // 10 Hz
+    Serial.println("MAG report enable failed");
+}
+```
+
+#### 15.2.2 Serial mag-status output — on-change only
+
+Once per `loop()`, sample the latest mag report and emit a serial line **only when the
+status value has changed** from the previously-emitted value:
+
+```
+[MM:SS] MAG_CAL: 0
+[MM:SS] MAG_CAL: 1
+[MM:SS] MAG_CAL: 2
+[MM:SS] MAG_CAL: 3
+```
+
+Emit `MAG_CAL: 3` when the value first reaches 3; do not re-emit on subsequent frames
+until the value changes. On-change output keeps the serial channel quiet during steady-
+state operation while making figure-8 convergence visible in real time.
+
+#### 15.2.3 Save DCD after first convergence
+
+When mag status reaches 3 for the first time in a given power-cycle, call
+`sh2_saveDcdNow()` once. Log the outcome:
+
+```
+[MM:SS] MAG_CAL: 3
+[MM:SS] DCD_SAVED
+```
+
+This persists the calibration to the BNO085's on-chip flash so the next power-cycle
+starts with a converged mag rather than requiring a fresh figure-8. Subsequent status
+transitions (3 → 2 → 3 etc.) do **not** re-trigger the save — one save per boot.
+
+#### 15.2.4 Log mag_cal per CSV row
+
+Add a `mag_cal` column (uint8, 0–3) to both the paddle payload struct and the boat
+payload struct. This is a payload change — versions of PadLog, PadDis, and BoatLog that
+carry `mag_cal` must be released together and the payload struct definition kept in
+byte-for-byte sync as with previous phases.
+
+CSV column additions (paddle and boat sides, appended after `rx_ms`):
+
+- **Paddle log** (v8.10 full 15-col becomes 16-col; reduced 9-col becomes 10-col):
+  `..., rx_ms, mag_cal`
+- **Boat log** (v1.0 17-col becomes 18-col):
+  `..., rx_ms, mag_cal`
+
+Header comment version bumps: PadDis → **v8.11**, BoatLog → **v1.1**, PadLog → **v8.8**.
+
+#### 15.2.5 CYD indicator (optional, deferred)
+
+On the CYD display, an `M<0-3>` letter next to the existing signal dots (line 1),
+coloured red/orange/yellow/green for 0/1/2/3. Deferred until field use confirms whether
+the serial channel is sufficient during figure-8 warm-up on shore. Not blocking for
+Phase 10 acceptance.
+
+### 15.3 Payload struct — updated
+
+Paddle and boat structs each gain a single `uint8_t mag_cal` field appended after the
+existing content. To preserve 4-byte alignment on both ends, pack three padding bytes
+alongside it:
+
+```cpp
+struct ImuDataPayload {
+    // ... existing fields ...
+    uint8_t  mag_cal;
+    uint8_t  _pad[3];   // reserved for future use, must be zero
+};
+```
+
+Total payload size grows by 4 bytes on each side, still well under the 250-byte
+ESP-NOW limit.
+
+### 15.4 Test Plan (Phase 10)
+
+#### T-40 Mag Report Enabled at Startup
+
+**Purpose:** confirm both firmwares enable the mag report without error.
+
+**Steps:** flash PadLog (or BoatLog); monitor serial from cold start.
+
+**Pass:** no `MAG report enable failed` line appears. First `MAG_CAL: <n>` line appears
+within 5 s of the startup banner.
+
+#### T-41 Mag Status Converges to 3 on Figure-8
+
+**Purpose:** confirm the sensor learns calibration in a clean environment.
+
+**Steps:** place unit on bench (no ferrous mass within 30 cm), start serial monitor,
+wave the unit in a figure-8 pattern (three axes of rotation).
+
+**Pass:** `MAG_CAL: 3` line emitted within 60 s of the first figure-8 movement.
+
+#### T-42 DCD_SAVED Fires Exactly Once Per Boot
+
+**Purpose:** confirm calibration is persisted, and only once.
+
+**Steps:** run T-41 to convergence. Continue moving the unit for another 5 minutes,
+occasionally holding still.
+
+**Pass:** exactly one `DCD_SAVED` line emitted, immediately after the first
+`MAG_CAL: 3` line. No further `DCD_SAVED` lines regardless of subsequent status
+oscillation.
+
+#### T-43 DCD Survives Power-Cycle
+
+**Purpose:** confirm on-chip flash preserves calibration.
+
+**Steps:** run T-42 to `DCD_SAVED`. Power-cycle the unit. On restart, monitor serial
+without moving the unit.
+
+**Pass:** first `MAG_CAL:` line reports status ≥ 2 (usually 3). No figure-8 is required
+before the unit reaches status 3 again.
+
+#### T-44 mag_cal Column Present in CSVs
+
+**Purpose:** confirm the new column reaches the SD file.
+
+**Steps:** flash PadDis v8.11 and BoatLog v1.1 (or PadLog v8.8 + PadDis v8.11); record
+a short session with both units powered.
+
+**Pass:** both `ImuLogNN.CSV` and `BoatLogNN.CSV` contain a `mag_cal` column as the
+last field. Values are integers in `[0, 3]`. Header-comment version lines updated
+(`# PadDis v8.11`, `# BoatLog v1.1`).
+
+#### T-45 mag_cal Populated After DCD Load
+
+**Purpose:** confirm the archival log reflects post-load calibration state.
+
+**Steps:** power-cycle a unit that has previously saved DCD. Start recording within 10 s
+of the CYD acquiring signal.
+
+**Pass:** `mag_cal` column reads 3 (or ≥ 2) within the first 100 rows without any
+figure-8 movement.
+
+### 15.5 Interaction with PadViz6
+
+The visualiser's per-session sidecar (PadViz6 spec §7) reads the `mag_cal` column during
+rest-window detection. Rest windows are only accepted with `mag_cal ≥ 2` on both
+sensors; low-confidence windows produce a sidecar with `"confidence": "none"`. The
+visualiser then displays `LOW MAG CONFIDENCE` in the Slice C HUD and skips the yaw
+datum correction (mount offsets are still applied — they're accel-only).
+
+### 15.6 Release Coupling
+
+Phase 10 is released as a co-ordinated set: PadLog v8.8, BoatLog v1.1, PadDis v8.11.
+Any two of these built against different payload struct definitions are incompatible.
+Version bumps must be committed in a single commit and the payload struct definition
+kept identical across the three sketches.
