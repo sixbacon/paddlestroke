@@ -22,7 +22,18 @@ final int GRAPH_H = 220;
 
 // Slice / view state
 int     sliceMode  = 0;   // 0 = Slice 0 (calibration), 1 = Slice A, 2 = Slice B, 3 = Slice C (combined)
-int     viewMode   = 0;   // 0 = side view (X-Z), 1 = top-down (X-Y)
+
+// Camera — orbit + zoom around world origin. az / el / dist replace the old
+// two-preset viewMode. V cycles between the side and near-top presets; mouse
+// drag orbits; wheel zooms.
+float   camAzimDeg    = 0;      // rotation about world Z; 0 = looking from -Y
+float   camElevDeg    = 0;      // elevation above horizontal; +ve tilts toward physical up
+float   camDist       = 1200;   // distance from origin
+int     dragMouseX    = 0;
+int     dragMouseY    = 0;
+float   dragStartAz   = 0;
+float   dragStartEl   = 0;
+boolean camDragging   = false;
 
 // Per-source frame indices and playback
 int     paddleFrameIdx = 0;
@@ -63,7 +74,8 @@ void setup() {
 
     surface.setResizable(true);
     surface.setTitle("PadViz6");
-    println("PadViz6 —  0=Slice0 cal   1|P=SliceA paddle   2|K=SliceB kayak   3|W=SliceC world   V=toggle view   Backspace/-=back");
+    println("PadViz6 —  0=Slice0 cal   1|P=SliceA paddle   2|K=SliceB kayak   3|W=SliceC world   V=cycle preset   Backspace/-=back");
+    println("Camera:  left-drag orbits   mouse wheel zooms   V snaps to side/top preset");
     println("Load:  p=paddle CSV   b=boat CSV");
     println("Slices A/B/C:  Space=play/pause   Left/Right=step 100   ,/.=step 1   k=capture ref   u=clear ref   S=reset zoom   E=export");
 }
@@ -207,15 +219,48 @@ void drawSliceC() {
 }
 
 void setCamera() {
-    if (viewMode == 0) {
-        // Side view: eye on -Y side, up = +Z (Processing screen-DOWN).
-        // Red +X right, blue +Z up, green +Y into the screen.
-        camera(0, -1200, 0,   0, 0, 0,   0, 0, 1);
-    } else {
-        // Top-down view: eye at world -Z (physical up after flip).
-        // Red +X right, green +Y up, blue +Z out of the screen.
-        camera(0, 0, -1200,   0, 0, 0,   0, -1, 0);
-    }
+    float[] eye   = new float[3];
+    float[] fwd   = new float[3];
+    float[] right = new float[3];
+    float[] up    = new float[3];
+    getCameraBasis(eye, fwd, right, up);
+    camera(eye[0], eye[1], eye[2],  0, 0, 0,  up[0], up[1], up[2]);
+}
+
+// Compute the current camera's world-space basis. Also used by
+// drawAxisCompass() so the 2D compass rotates in step with the 3D scene.
+//
+// Baseline (az = 0, el = 0): eye at (0, -camDist, 0), looking toward origin.
+// Elevation positive tilts the eye toward physical up (world -Z after the
+// handedness bridge). world_up choice is world +Z throughout; clamped
+// elevation range (constrained to ±89° at input) keeps right non-degenerate.
+void getCameraBasis(float[] eye, float[] fwd, float[] right, float[] up) {
+    float az = radians(camAzimDeg);
+    float el = radians(camElevDeg);
+    float ch = cos(el);
+    float sh = sin(el);
+
+    eye[0] =  camDist * ch * sin(az);
+    eye[1] = -camDist * ch * cos(az);
+    eye[2] = -camDist * sh;
+
+    float mag = sqrt(eye[0]*eye[0] + eye[1]*eye[1] + eye[2]*eye[2]);
+    if (mag < 1e-6) mag = 1;
+    fwd[0] = -eye[0] / mag;
+    fwd[1] = -eye[1] / mag;
+    fwd[2] = -eye[2] / mag;
+
+    // world_up = (0, 0, 1). right = normalize(cross(forward, world_up)).
+    right[0] = fwd[1] * 1 - fwd[2] * 0;
+    right[1] = fwd[2] * 0 - fwd[0] * 1;
+    right[2] = fwd[0] * 0 - fwd[1] * 0;
+    float rmag = sqrt(right[0]*right[0] + right[1]*right[1] + right[2]*right[2]);
+    if (rmag < 1e-6) rmag = 1;
+    right[0] /= rmag; right[1] /= rmag; right[2] /= rmag;
+
+    up[0] = right[1] * fwd[2] - right[2] * fwd[1];
+    up[1] = right[2] * fwd[0] - right[0] * fwd[2];
+    up[2] = right[0] * fwd[1] - right[1] * fwd[0];
 }
 
 // 2D axis compass drawn in the HUD overlay, in the bottom-left of the
@@ -228,42 +273,76 @@ void setCamera() {
 //   Slice 0 / A  -> "P" (paddle)
 //   Slice B      -> "K" (kayak)
 //   Slice C      -> "W" (combined world)
+// 2D axis triad, projected through the current camera. Placed in the
+// bottom-left of the visualisation area — above the graph when it's visible,
+// otherwise at the window bottom.
+//
+// Each sensor axis is transformed through the handedness bridge and then
+// projected through the current camera basis (via getCameraBasis) so the
+// compass rotates in step with the 3D scene. Axes that are near-perpendicular
+// to the screen render as a disc-in-ring (out of screen) or an X (into
+// screen); those with meaningful projected length render as coloured lines.
 void drawAxisCompass() {
     int bottom = isGraphVisible() ? (height - GRAPH_H) : height;
     int ox = 92;
-    int oy = bottom - 30;   // origin of the axis triad
+    int oy = bottom - 30;
     int L  = 80;
 
-    // Frame letter above
+    float[] eye   = new float[3];
+    float[] fwd   = new float[3];
+    float[] right = new float[3];
+    float[] up    = new float[3];
+    getCameraBasis(eye, fwd, right, up);
+
+    // Sensor axes after the handedness bridge (scale(1,1,-1) flips Z).
+    float[][] axes = {
+        {1, 0,  0},   // sensor +X
+        {0, 1,  0},   // sensor +Y
+        {0, 0, -1}    // sensor +Z (physical up under bridge)
+    };
+    int[]    cols   = { color(255, 100, 100), color(120, 220, 120), color(120, 200, 255) };
+    String[] labels = { "+X", "+Y", "+Z" };
+
+    // Frame letter above the triad.
     fill(230);  textAlign(CENTER, BOTTOM);  textSize(30);
     text(compassLetter(), ox, oy - L - 8);
 
-    // Axes
-    strokeWeight(2);
-    if (viewMode == 0) {
-        // Side view — X right (red), Z up (blue), Y into screen (green diagonal).
-        stroke(255, 80, 80);   line(ox, oy, ox + L, oy);
-        stroke(80, 200, 255);  line(ox, oy, ox, oy - L);
-        stroke(120, 220, 120); line(ox, oy, ox - (int)(L * 0.35), oy - (int)(L * 0.35));
+    for (int i = 0; i < 3; i++) {
+        float[] v = axes[i];
+        float sdx = right[0]*v[0] + right[1]*v[1] + right[2]*v[2];
+        float sdy = up[0]   *v[0] + up[1]   *v[1] + up[2]   *v[2];
+        float dep = fwd[0]  *v[0] + fwd[1]  *v[1] + fwd[2]  *v[2];
+        float pm  = sqrt(sdx*sdx + sdy*sdy);
 
-        noStroke();  textSize(12);
-        fill(255, 100, 100);  textAlign(LEFT, CENTER);   text("+X", ox + L + 4, oy);
-        fill(120, 200, 255);  textAlign(CENTER, BOTTOM); text("+Z", ox, oy - L - 4);
-        fill(140, 230, 140);  textAlign(RIGHT, CENTER);
-        text("+Y", ox - (int)(L * 0.35) - 4, oy - (int)(L * 0.35));
-    } else {
-        // Top-down — X right (red), Y up (green), Z out of screen (blue disc).
-        stroke(255, 80, 80);   line(ox, oy, ox + L, oy);
-        stroke(120, 220, 120); line(ox, oy, ox, oy - L);
-        stroke(80, 200, 255);  noFill();  ellipse(ox, oy, 14, 14);
-        fill(80, 200, 255);    noStroke(); ellipse(ox, oy, 4, 4);
-
-        noStroke();  textSize(12);
-        fill(255, 100, 100);  textAlign(LEFT, CENTER);   text("+X", ox + L + 4, oy);
-        fill(140, 230, 140);  textAlign(CENTER, BOTTOM); text("+Y", ox, oy - L - 4);
-        fill(120, 200, 255);  textAlign(LEFT, TOP);      text("+Z", ox + 10, oy + 4);
+        if (pm > 0.15) {
+            float endX = ox + L * sdx;
+            float endY = oy + L * sdy;
+            stroke(cols[i]);  strokeWeight(2);
+            line(ox, oy, endX, endY);
+            noStroke();  fill(cols[i]);  textSize(12);
+            textAlign(sdx >  0.1 ? LEFT   : (sdx < -0.1 ? RIGHT  : CENTER),
+                      sdy >  0.1 ? TOP    : (sdy < -0.1 ? BOTTOM : CENTER));
+            float lx = endX + 6 * (sdx > 0.1 ? 1 : (sdx < -0.1 ? -1 : 0));
+            float ly = endY + 6 * (sdy > 0.1 ? 1 : (sdy < -0.1 ? -1 : 0));
+            text(labels[i], lx, ly);
+        } else {
+            // Near-perpendicular to screen — disc (out) or X (in).
+            stroke(cols[i]);  strokeWeight(2);
+            if (dep < 0) {
+                noFill();  ellipse(ox, oy, 14, 14);
+                noStroke(); fill(cols[i]);  ellipse(ox, oy, 4, 4);
+            } else {
+                line(ox - 4, oy - 4, ox + 4, oy + 4);
+                line(ox - 4, oy + 4, ox + 4, oy - 4);
+                noStroke();
+            }
+            fill(cols[i]);  textSize(12);
+            textAlign(LEFT, TOP);
+            text(labels[i], ox + 10, oy + 8 + i * 12);   // stack labels vertically
+        }
     }
     strokeWeight(1);
+    textAlign(LEFT, TOP);
 }
 
 String compassLetter() {
@@ -290,7 +369,8 @@ void drawHUD() {
         case 2:  modeName = "Slice B — Kayak (data-driven)";       break;
         default: modeName = "Slice C — Combined (paddle + kayak)"; break;
     }
-    String viewName = (viewMode == 0) ? "side view (X-Z)" : "top-down (X-Y)";
+    String viewName = String.format("cam az=%+.0f°  el=%+.0f°  d=%.0f",
+                                     camAzimDeg, camElevDeg, camDist);
     text("PadViz6   " + modeName + "   [" + viewName + "]", 20, 16);
 
     textSize(13);
@@ -493,7 +573,9 @@ void drawPlaybackKeys(int yStart) {
     text("E            export merged CSV over current zoom",     20, y); y += 16;
     text("0/1/2/3 or P/K/W  Slice 0 / A / B / C",       20, y); y += 16;
     text("Backspace / -   return to previous slice",    20, y); y += 16;
-    text("V            toggle side / top view",     20, y);
+    text("V            cycle side / top-down preset",   20, y); y += 16;
+    text("mouse drag   orbit camera",                   20, y); y += 16;
+    text("mouse wheel  zoom in / out",                  20, y);
 }
 
 // ── Playback / input ─────────────────────────────────────────────────────────
@@ -532,7 +614,15 @@ void keyPressed() {
     else if (key == '1' || key == 'P') { switchSlice(1); return; }
     else if (key == '2' || key == 'K') { switchSlice(2); return; }
     else if (key == '3' || key == 'W') { switchSlice(3); return; }
-    else if (key == 'v' || key == 'V') { viewMode = 1 - viewMode; return; }
+    else if (key == 'v' || key == 'V') {
+        // Cycle canonical presets: side (az=0, el=0) <-> near-top (az=0, el=89).
+        // Also snaps az to 0 and distance to default, so V doubles as
+        // "recenter" from wherever mouse orbit has taken the camera.
+        camAzimDeg = 0;
+        camDist    = 1200;
+        camElevDeg = (abs(camElevDeg) < 45) ? 89 : 0;
+        return;
+    }
     // Backspace / '-' — ping-pong to the previous slice.
     else if (key == BACKSPACE || key == '-') {
         if (prevSliceMode >= 0) {
@@ -759,26 +849,52 @@ void setPlaying(boolean p) {
     lastAdvanceMs = millis();
 }
 
-// ── Mouse forwarding to the graph panel ─────────────────────────────────────
+// ── Mouse routing ──────────────────────────────────────────────────────────
+//
+// Split by region: graph strip along the bottom belongs to GraphPanel;
+// everything above it is the 3D scene, where left-drag orbits the camera and
+// the mouse wheel zooms.
+
+boolean pointerInGraph() {
+    return isGraphVisible() && mouseY >= (height - GRAPH_H);
+}
 
 void mousePressed() {
-    if (!isGraphVisible()) return;
-    graph.mousePressed(mouseX, mouseY - (height - GRAPH_H), paddleData, mouseButton);
+    if (pointerInGraph()) {
+        graph.mousePressed(mouseX, mouseY - (height - GRAPH_H), paddleData, mouseButton);
+        return;
+    }
+    // 3D scene — left-drag orbits.
+    if (mouseButton == LEFT) {
+        dragMouseX  = mouseX;
+        dragMouseY  = mouseY;
+        dragStartAz = camAzimDeg;
+        dragStartEl = camElevDeg;
+        camDragging = true;
+    }
 }
 
 void mouseDragged() {
-    if (!isGraphVisible()) return;
-    graph.mouseDragged(mouseX, paddleData);
+    if (camDragging) {
+        camAzimDeg = dragStartAz + (mouseX - dragMouseX) * 0.4;
+        camElevDeg = constrain(dragStartEl - (mouseY - dragMouseY) * 0.4, -89, 89);
+        return;
+    }
+    if (isGraphVisible()) graph.mouseDragged(mouseX, paddleData);
 }
 
 void mouseReleased() {
-    if (!isGraphVisible()) return;
-    graph.mouseReleased();
+    if (camDragging) { camDragging = false; return; }
+    if (isGraphVisible()) graph.mouseReleased();
 }
 
 void mouseWheel(processing.event.MouseEvent e) {
-    if (!isGraphVisible()) return;
-    graph.mouseWheel(e.getCount());
+    if (pointerInGraph()) {
+        graph.mouseWheel(e.getCount());
+        return;
+    }
+    // 3D scene — zoom. Positive count = wheel down = zoom out.
+    camDist = constrain(camDist * pow(1.12, e.getCount()), 200, 5000);
 }
 
 // ── Export callback (top-level so selectOutput can invoke it) ───────────────

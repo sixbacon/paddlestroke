@@ -1,8 +1,8 @@
 # PadViz6 — Disciplined Orientation Specification
 
-**Version:** 0.8
+**Version:** 0.9
 **Date:** 2026-07-08
-**Status:** Slices 0–C + bottom GraphPanel with two-click zoom (right-click), double-right-click revert, `S`-key zoom reset, and merged CSV export (curated + all-fields). Corner axis compass (2D, ~1/3 the old on-screen size) with a `P`/`K`/`W` frame letter that also acts as the slice-switch shortcut. §7 expanded (v0.7) from single yaw-alignment rotation to a three-offset per-session procedure — sensor-mount roll/pitch (from accel) + magnetic-yaw datum (from mean quats) — with pre-session magnetometer figure-8 and DCD save. Requires three firmware additions listed in §7.8 (formalised in firmware spec §15, v2.7). v0.8: the three 8 Jul 2026 field-use notes (§12.10) are now DONE — `k`/`u` HUD flash, Slice B hint to `W`, and Backspace/`-` back-slice ping-pong.
+**Status:** Slices 0–C + bottom GraphPanel with two-click zoom (right-click), double-right-click revert, `S`-key zoom reset, and merged CSV export (curated + all-fields). Corner axis compass (2D, ~1/3 the old on-screen size) with a `P`/`K`/`W` frame letter that also acts as the slice-switch shortcut. §7 expanded (v0.7) from single yaw-alignment rotation to a three-offset per-session procedure — sensor-mount roll/pitch (from accel) + magnetic-yaw datum (from mean quats) — with pre-session magnetometer figure-8 and DCD save. Requires three firmware additions listed in §7.8 (formalised in firmware spec §15, v2.7). v0.8: the three 8 Jul 2026 field-use notes (§12.10) are now DONE — `k`/`u` HUD flash, Slice B hint to `W`, and Backspace/`-` back-slice ping-pong. v0.9: free-orbit camera — left-drag orbits, wheel zooms, V snaps to side/top preset; 2D axis compass now rotates in step with the 3D camera basis.
 
 ---
 
@@ -648,14 +648,19 @@ Octagonal cross-section (eight vertices at deck level, eight at hull level), tap
 
 ### 12.5 Camera conventions (Processing P3D)
 
-| View | `camera()` call | On-screen axes |
+**Free-orbit camera (v0.9, 8 Jul 2026).** State: `camAzimDeg`, `camElevDeg`, `camDist`. Baseline eye position (az = 0, el = 0) is `(0, -camDist, 0)` with world up = `(0, 0, 1)` — the same side view as the pre-v0.9 preset. Elevation positive tilts the eye toward physical up (world −Z under the handedness bridge), clamped to ±89°.
+
+Presets available via `V`:
+| Preset | (az, el, dist) | Notes |
 |---|---|---|
-| Side (`viewMode = 0`) | `camera(0, -1200, 0,  0, 0, 0,  0, 0, 1)` | +X right, +Z up, +Y into screen |
-| Top-down (`viewMode = 1`) | `camera(0, 0, -1200,  0, 0, 0,  0, -1, 0)` | +X right, +Y up, +Z out of screen |
+| Side | (0, 0, 1200) | Baseline. Red +X right, blue +Z up, green +Y into screen. |
+| Near-top | (0, 89, 1200) | Physical top-down. Red +X right, green +Y up (bow), blue +Z out of screen. |
 
-**P3D gotcha:** the camera `up` vector actually specifies the screen-**down** direction (Y-inverted from OpenGL to match 2D). That's why the `up` vectors above look like they point down. Verified empirically 7 Jul 2026 across two rounds of camera tuning.
+Mouse: left-drag orbits (0.4° per pixel), wheel zooms (12% per notch), constrained to `camDist ∈ [200, 5000]`.
 
-The side view uses camera along −Y, which is a good side profile for the paddle (long axis along X) but shows the kayak stern-on (kayak long axis along Y). For Slice B use the top-down view for orientation review; a starboard-side camera can be added later if a side profile of the kayak is wanted.
+The camera basis (`right`, `up`, `forward`) is computed once per frame in `getCameraBasis()` and shared between `setCamera()` and `drawAxisCompass()`. The compass therefore rotates in step with the 3D scene: each sensor axis is transformed through the handedness bridge, projected through the basis, and rendered as a coloured line if the projection has non-trivial length, or as a disc-in-ring (out of screen) / X (into screen) when near-perpendicular.
+
+**P3D gotcha:** the `up` vector passed to `camera()` specifies the screen-**down** direction (Y-inverted from OpenGL to match 2D). Verified empirically 7 Jul 2026. The `getCameraBasis()` output already accounts for this — passing the computed `up[]` to `camera()` yields the correct physical-up-is-up-on-screen behaviour under the handedness bridge.
 
 ### 12.6 Reference subtraction (K/U) — validation aid
 
@@ -692,7 +697,7 @@ First line of every exported file is a comment recording mode + sync path, e.g. 
 - **Slice C field validation.** Runnable on the 6 Jul 2026 file (calibration rest at rows 1 – ~5000, then paddling under way from row ~15000 onward at 2.2 – 2.6 m/s with COG stable). Also runnable on the longer paddling session the user has on hand if it turns out to be more useful. Test per §4.3.
 - **Per-session rest-pose sidecar** (§7). Currently the K/U keys serve as the interactive equivalent; the offline sidecar workflow (compute mean-of-window paddle-vs-kayak offset from a marked rest window in the CSV, write `<basename>.rest.json`, auto-load at CSV-load time) is not yet implemented.
 - **Side panel** (`SidePanel.pde`) — filenames, load buttons, play/pause, speed slider.
-- **Adaptive side view** for Slice B (starboard-side camera) if desired.
+- ~~**Adaptive side view** for Slice B (starboard-side camera).~~ — no longer needed; free-orbit camera (§12.5, v0.9) makes any angle reachable.
 - **Under-way GPS COG mapping test** for Slice B acceptance — needs a new field session.
 
 ### 12.10 Field-use notes — 8 Jul 2026 — all three DONE 8 Jul 2026
@@ -714,8 +719,10 @@ All slices:
 | `1` or Shift+`P` (`P`) | Slice A — paddle view; compass letter `P` |
 | `2` or Shift+`K` (`K`) | Slice B — kayak view; compass letter `K` |
 | `3` or Shift+`W` (`W`) | Slice C — combined view; compass letter `W` |
-| `v` / `V`         | Toggle side / top-down camera |
+| `v` / `V`         | Cycle side / near-top camera preset (also recentres az and dist) |
 | Backspace or `-`  | Go back to previously-active slice (ping-pong) |
+| Mouse left-drag   | Orbit camera in 3D area (0.4°/px on azim and elev) |
+| Mouse wheel       | Zoom camera in 3D area (12%/notch, clamped 200-5000) |
 | `p` (lowercase)   | Open paddle CSV |
 | `b` / `B`         | Open boat CSV |
 
