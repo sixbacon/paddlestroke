@@ -802,6 +802,8 @@ void onPaddleFileSelected(File selection) {
     paddleFrameIdx = 0;
     playing        = false;
     rebuildSync();
+    tryAutoLoadSidecar(paddleData.sourcePath());
+    applySidecarToDisplay();
     if (paddleData.frameCount() > 0) {
         // If a boat CSV is already loaded, go straight into combined view.
         switchSlice((boatData != null && boatData.frameCount() > 0) ? 3 : 1);
@@ -815,6 +817,9 @@ void onBoatFileSelected(File selection) {
     boatFrameIdx = 0;
     playing      = false;
     rebuildSync();
+    // A sidecar loaded earlier from the paddle CSV can now finish applying
+    // its boat rest quaternion, since we've just gained boat data.
+    applySidecarToDisplay();
     if (boatData.frameCount() > 0) {
         switchSlice((paddleData != null && paddleData.frameCount() > 0) ? 3 : 2);
     }
@@ -824,6 +829,51 @@ void rebuildSync() {
     if (paddleData == null || boatData == null) return;
     if (paddleData.frameCount() == 0 || boatData.frameCount() == 0) return;
     sync.build(paddleData, boatData);
+}
+
+// ── Sidecar auto-load ──────────────────────────────────────────────────────
+//
+// After a paddle CSV loads, look for a sibling `.session.json`. If present,
+// parse it into `sidecar` and re-derive the rest-window mean quats from the
+// just-loaded CSV so qRefPad / qRefBoat can be seeded (those quats aren't
+// stored in the JSON — only the frame indices are).
+
+void tryAutoLoadSidecar(String paddleCsvPath) {
+    if (paddleCsvPath == null || paddleCsvPath.length() == 0) return;
+    String candidate = deriveSidecarPath(paddleCsvPath);
+    java.io.File f   = new java.io.File(candidate);
+    if (!f.exists() || !f.isFile()) return;
+
+    Sidecar loaded = new Sidecar();
+    if (!loaded.loadFromFile(candidate)) return;
+    sidecar = loaded;
+
+    int cut     = max(candidate.lastIndexOf('\\'), candidate.lastIndexOf('/'));
+    String leaf = (cut >= 0) ? candidate.substring(cut + 1) : candidate;
+    println("Sidecar auto-loaded from " + candidate
+            + "  (confidence " + loaded.confidence + ")");
+    triggerRefFlash("SIDECAR AUTO-LOADED (" + loaded.confidence + ")  ←  " + leaf);
+}
+
+// Recompute rest-window mean quats from the loaded CSVs and seed
+// qRefPad / qRefBoat so the display shows the sidecar's correction. Safe to
+// call whenever CSV state changes; no-ops when the required data is absent.
+void applySidecarToDisplay() {
+    if (sidecar == null || !sidecar.valid) return;
+
+    if (paddleData != null && paddleData.frameCount() > 0
+        && sidecar.restPadStart >= 0 && sidecar.restPadEnd > sidecar.restPadStart) {
+        sidecar.qRestPad = paddleData.meanQuat(sidecar.restPadStart, sidecar.restPadEnd);
+        qRefPad     = sidecar.qRestPad;
+        refFramePad = (sidecar.restPadStart + sidecar.restPadEnd) / 2;
+    }
+
+    if (boatData != null && boatData.frameCount() > 0
+        && sidecar.restBoatStart >= 0 && sidecar.restBoatEnd > sidecar.restBoatStart) {
+        sidecar.qRestBoat = boatData.meanQuat(sidecar.restBoatStart, sidecar.restBoatEnd);
+        qRefBoat     = sidecar.qRestBoat;
+        refFrameBoat = (sidecar.restBoatStart + sidecar.restBoatEnd) / 2;
+    }
 }
 
 // ── Slice / HUD helpers ─────────────────────────────────────────────────────
