@@ -5,8 +5,11 @@
 #include <SD.h>
 
 #define SKETCH_NAME    "PadDis"
-#define SKETCH_VERSION "8.10"
+#define SKETCH_VERSION "8.11"
 
+// v8.11 (Phase 10): mag_cal column on both CSVs + boat_accel_x/y/z columns on
+// boat CSV. Payload structs grow by 4 bytes (paddle) and 16 bytes (boat) —
+// PadLog v8.8 / BoatLog v1.1 / PadDis v8.11 must ship together.
 // v8.10: add rx_ms column (CYD-side receive timestamp, captured in ESPnow
 // callback) to both paddle and boat CSVs. rx_ms uses the SAME CYD millis()
 // clock for both streams, so post-processing sync = match rows by nearest
@@ -23,8 +26,10 @@ struct __attribute__((packed)) ImuDataPayload {
     uint32_t stroke_count;
     uint32_t cpm;
     float    hz;
+    uint8_t  mag_cal;
+    uint8_t  _pad[3];
 };
-static_assert(sizeof(ImuDataPayload) == 60, "ImuDataPayload size mismatch — check struct");
+static_assert(sizeof(ImuDataPayload) == 64, "ImuDataPayload size mismatch — check struct");
 
 // ── Boat payload — must match BoatLog exactly ─────────────────────────────────
 struct __attribute__((packed)) BoatDataPayload {
@@ -39,8 +44,11 @@ struct __attribute__((packed)) BoatDataPayload {
     uint8_t  gps_uk_offset;
     float    kayak_qw, kayak_qx, kayak_qy, kayak_qz;
     float    kayak_roll, kayak_pitch, kayak_yaw;
+    float    accel_x, accel_y, accel_z;
+    uint8_t  mag_cal;
+    uint8_t  _pad[3];
 };
-static_assert(sizeof(BoatDataPayload) == 58, "BoatDataPayload size mismatch — check struct");
+static_assert(sizeof(BoatDataPayload) == 74, "BoatDataPayload size mismatch — check struct");
 
 // ── Pin assignments ───────────────────────────────────────────────────────────
 #define TFT_BL_PIN  21
@@ -255,7 +263,7 @@ void setup() {
         Serial.println("SD init failed — logging disabled");
     } else {
         // Paddle log
-        char fname[] = "/ImuLog00.CSV";
+        char fname[] = "/PadLog00.CSV";
         for (int i = 0; i < 100; i++) {
             fname[7] = '0' + i / 10;
             fname[8] = '0' + i % 10;
@@ -268,14 +276,14 @@ void setup() {
             logFile.println("# " SKETCH_NAME " v" SKETCH_VERSION " paddle");
 #ifdef CSV_COLUMNS_REDUCED
             logFile.println("timestamp_ms,roll,pitch,yaw,stroke_count,cpm,"
-                            "gps_utc_sec,gps_uk_offset,rx_ms");
+                            "gps_utc_sec,gps_uk_offset,rx_ms,mag_cal");
 #else
             logFile.println("seq,timestamp_ms,"
                             "accel_x,accel_y,accel_z,"
                             "q_w,q_x,q_y,q_z,"
                             "roll,pitch,yaw,"
                             "stroke_count,cpm,"
-                            "gps_utc_sec,gps_uk_offset,rx_ms");
+                            "gps_utc_sec,gps_uk_offset,rx_ms,mag_cal");
 #endif
             Serial.print("Paddle logging to "); Serial.println(fname);
             sdReady = true;
@@ -296,7 +304,8 @@ void setup() {
             boatLogFile.println("seq,timestamp_ms,gps_utc_sec,gps_uk_offset,"
                                 "gps_lat,gps_lon,gps_speed_ms,gps_cog_deg,gps_fix,"
                                 "kayak_qw,kayak_qx,kayak_qy,kayak_qz,"
-                                "kayak_roll,kayak_pitch,kayak_yaw,rx_ms");
+                                "kayak_roll,kayak_pitch,kayak_yaw,rx_ms,"
+                                "boat_accel_x,boat_accel_y,boat_accel_z,mag_cal");
             Serial.print("Boat logging to "); Serial.println(bfname);
             boatSdReady = true;
         }
@@ -348,23 +357,23 @@ void loop() {
 #ifdef CSV_COLUMNS_REDUCED
             char row[96];
             int n = snprintf(row, sizeof(row),
-                "%u,%.5f,%.5f,%.5f,%u,%u,%u,%u,%u\n",
+                "%u,%.5f,%.5f,%.5f,%u,%u,%u,%u,%u,%u\n",
                 pkt.timestamp_ms,
                 pkt.roll, pkt.pitch, pkt.yaw,
                 pkt.stroke_count, pkt.cpm,
                 g_gps_utc_sec, (uint32_t)g_gps_uk_offset,
-                pktRxMs);
+                pktRxMs, (uint32_t)pkt.mag_cal);
 #else
             char row[220];
             int n = snprintf(row, sizeof(row),
-                "%u,%u,%.5f,%.5f,%.5f,%.8f,%.8f,%.8f,%.8f,%.5f,%.5f,%.5f,%u,%u,%u,%u,%u\n",
+                "%u,%u,%.5f,%.5f,%.5f,%.8f,%.8f,%.8f,%.8f,%.5f,%.5f,%.5f,%u,%u,%u,%u,%u,%u\n",
                 pkt.seq, pkt.timestamp_ms,
                 pkt.accel_x, pkt.accel_y, pkt.accel_z,
                 pkt.q_w, pkt.q_x, pkt.q_y, pkt.q_z,
                 pkt.roll, pkt.pitch, pkt.yaw,
                 pkt.stroke_count, pkt.cpm,
                 g_gps_utc_sec, (uint32_t)g_gps_uk_offset,
-                pktRxMs);
+                pktRxMs, (uint32_t)pkt.mag_cal);
 #endif
             logFile.write((const uint8_t*)row, n);
         }
@@ -408,10 +417,11 @@ void loop() {
         lastBoatRxMs = now;
 
         if (boatSdReady) {
-            char row[220];
+            char row[280];
             int n = snprintf(row, sizeof(row),
                 "%u,%u,%u,%u,%.6f,%.6f,%.4f,%.2f,%u,"
-                "%.8f,%.8f,%.8f,%.8f,%.5f,%.5f,%.5f,%u\n",
+                "%.8f,%.8f,%.8f,%.8f,%.5f,%.5f,%.5f,%u,"
+                "%.5f,%.5f,%.5f,%u\n",
                 bpkt.seq, bpkt.timestamp_ms,
                 bpkt.gps_utc_sec, (uint32_t)bpkt.gps_uk_offset,
                 (double)bpkt.gps_lat, (double)bpkt.gps_lon,
@@ -421,7 +431,9 @@ void loop() {
                 (double)bpkt.kayak_qy, (double)bpkt.kayak_qz,
                 (double)bpkt.kayak_roll, (double)bpkt.kayak_pitch,
                 (double)bpkt.kayak_yaw,
-                bpktRxMs);
+                bpktRxMs,
+                (double)bpkt.accel_x, (double)bpkt.accel_y, (double)bpkt.accel_z,
+                (uint32_t)bpkt.mag_cal);
             boatLogFile.write((const uint8_t*)row, n);
         }
 

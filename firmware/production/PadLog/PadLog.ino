@@ -7,7 +7,7 @@
 #include "StrokeDetector.h"
 
 #define SKETCH_NAME    "PadLog"
-#define SKETCH_VERSION "8.7"
+#define SKETCH_VERSION "8.8"
 
 // ── Payload struct — must match PadDis (PadDis.ino) exactly ──────────────────
 struct __attribute__((packed)) ImuDataPayload {
@@ -19,8 +19,10 @@ struct __attribute__((packed)) ImuDataPayload {
     uint32_t stroke_count;                 // cumulative qualifying strokes
     uint32_t cpm;                          // current stroke rate CPM
     float    hz;                           // current stroke rate Hz
+    uint8_t  mag_cal;                      // magnetometer accuracy 0–3
+    uint8_t  _pad[3];                      // reserved, must be zero
 };
-static_assert(sizeof(ImuDataPayload) == 60, "Payload size mismatch — check struct");
+static_assert(sizeof(ImuDataPayload) == 64, "Payload size mismatch — check struct");
 
 // ── Temporary diagnostic flags ────────────────────────────────────────────────
 #define DOZE_DISABLED       // comment out to restore doze mode
@@ -68,6 +70,11 @@ static float              g_accel_x       = 0.0f;
 static float              g_accel_y       = 0.0f;
 static float              g_accel_z       = 0.0f;
 
+// Mag calibration state — see spec §15
+static uint8_t            g_mag_cal       = 0;
+static uint8_t            g_mag_lastPrint = 255;   // sentinel — force first emit
+static bool               g_dcdSaved      = false;
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 struct Euler { float yaw, pitch, roll; };
 
@@ -91,6 +98,9 @@ static void printTimestamp() {
 static void enableNormalReports() {
     bno.enableReport(SH2_ARVR_STABILIZED_RV, NORMAL_REPORT_US);
     bno.enableReport(SH2_ACCELEROMETER,       NORMAL_REPORT_US);
+    if (!bno.enableReport(SH2_MAGNETIC_FIELD_CALIBRATED, 100000UL)) {
+        Serial.println("MAG report enable failed");
+    }
 }
 
 static void initESPNow() {
@@ -129,6 +139,8 @@ static void sendImuPayload(const sh2_RotationVectorWAcc_t& rv, const Euler& e) {
     p.stroke_count = g_strokeCount;
     p.cpm          = g_cpm;
     p.hz           = g_hz;
+    p.mag_cal      = g_mag_cal;
+    p._pad[0] = p._pad[1] = p._pad[2] = 0;
     esp_now_send(broadcast, (uint8_t*)&p, sizeof(p));
 }
 
@@ -255,6 +267,23 @@ void loop() {
         g_accel_x = sensorValue.un.accelerometer.x;
         g_accel_y = sensorValue.un.accelerometer.y;
         g_accel_z = sensorValue.un.accelerometer.z;
+        return;
+    }
+
+    // Mag calibration status — accuracy is the low 2 bits of `.status`
+    if (sensorValue.sensorId == SH2_MAGNETIC_FIELD_CALIBRATED) {
+        g_mag_cal = sensorValue.status & 0x03;
+        if (g_mag_cal != g_mag_lastPrint) {
+            printTimestamp();
+            Serial.printf("MAG_CAL: %u\n", (unsigned)g_mag_cal);
+            g_mag_lastPrint = g_mag_cal;
+        }
+        if (g_mag_cal == 3 && !g_dcdSaved) {
+            sh2_saveDcdNow();
+            printTimestamp();
+            Serial.println("DCD_SAVED");
+            g_dcdSaved = true;
+        }
         return;
     }
 

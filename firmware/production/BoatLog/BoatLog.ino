@@ -5,7 +5,7 @@
 #include <TinyGPSPlus.h>
 
 #define SKETCH_NAME    "BoatLog"
-#define SKETCH_VERSION "1.0"
+#define SKETCH_VERSION "1.1"
 
 // Define to disable ESPnow and echo raw NMEA to serial — for GPS bench testing only.
 // Comment out for normal operation.
@@ -24,8 +24,11 @@ struct __attribute__((packed)) BoatDataPayload {
     uint8_t  gps_uk_offset;  // UK UTC offset in hours: 0 (GMT) or 1 (BST)
     float    kayak_qw, kayak_qx, kayak_qy, kayak_qz;
     float    kayak_roll, kayak_pitch, kayak_yaw;
+    float    accel_x, accel_y, accel_z;   // m/s², raw (includes gravity) — v1.1
+    uint8_t  mag_cal;                     // magnetometer accuracy 0–3 — v1.1
+    uint8_t  _pad[3];                     // reserved, must be zero
 };
-static_assert(sizeof(BoatDataPayload) == 58, "BoatDataPayload size mismatch — check struct");
+static_assert(sizeof(BoatDataPayload) == 74, "BoatDataPayload size mismatch — check struct");
 
 // ── BNO085 pins (VSPI — same as PadLog) ──────────────────────────────────────
 #define BNO_CS    5
@@ -56,6 +59,11 @@ static float    g_accel_y = 0.0f;
 static float    g_accel_z = 0.0f;
 static bool     espNowReady = false;
 static bool     gpsPrinted  = false;   // T2 one-shot print flag
+
+// Mag calibration state — see spec §15
+static uint8_t  g_mag_cal       = 0;
+static uint8_t  g_mag_lastPrint = 255;   // sentinel — force first emit
+static bool     g_dcdSaved      = false;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 struct Euler { float yaw, pitch, roll; };
@@ -99,6 +107,16 @@ static int ukUtcOffsetHours(int y, int m, int d, int h) {
 static void enableReports() {
     bno.enableReport(SH2_ARVR_STABILIZED_RV, REPORT_US);
     bno.enableReport(SH2_ACCELEROMETER,       REPORT_US);
+    if (!bno.enableReport(SH2_MAGNETIC_FIELD_CALIBRATED, 100000UL)) {
+        Serial.println("MAG report enable failed");
+    }
+}
+
+static void printTimestamp() {
+    unsigned long s = millis() / 1000;
+    char buf[12];
+    snprintf(buf, sizeof(buf), "[%02lu:%02lu] ", s / 60, s % 60);
+    Serial.print(buf);
 }
 
 static void initESPNow() {
@@ -191,6 +209,23 @@ void loop() {
         return;
     }
 
+    // Mag calibration status — accuracy is the low 2 bits of `.status`
+    if (sensorValue.sensorId == SH2_MAGNETIC_FIELD_CALIBRATED) {
+        g_mag_cal = sensorValue.status & 0x03;
+        if (g_mag_cal != g_mag_lastPrint) {
+            printTimestamp();
+            Serial.printf("MAG_CAL: %u\n", (unsigned)g_mag_cal);
+            g_mag_lastPrint = g_mag_cal;
+        }
+        if (g_mag_cal == 3 && !g_dcdSaved) {
+            sh2_saveDcdNow();
+            printTimestamp();
+            Serial.println("DCD_SAVED");
+            g_dcdSaved = true;
+        }
+        return;
+    }
+
     if (sensorValue.sensorId != SH2_ARVR_STABILIZED_RV) return;
 #ifndef GPS_TEST_MODE
     if (!espNowReady) return;
@@ -248,6 +283,11 @@ void loop() {
     p.kayak_roll   = e.roll;
     p.kayak_pitch  = e.pitch;
     p.kayak_yaw    = e.yaw;
+    p.accel_x      = g_accel_x;
+    p.accel_y      = g_accel_y;
+    p.accel_z      = g_accel_z;
+    p.mag_cal      = g_mag_cal;
+    p._pad[0] = p._pad[1] = p._pad[2] = 0;
 
 #ifndef GPS_TEST_MODE
     esp_now_send(broadcast, (uint8_t*)&p, sizeof(p));
