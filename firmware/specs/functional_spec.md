@@ -2,6 +2,7 @@
 
 **Project:** paddlestroke  
 **Date:** 2026-07-09  
+**Version:** 2.9  (Phase 10 RELEASED — commit d8ce219 bumps PadLog v8.7→v8.8, BoatLog v1.0→v1.1, PadDis v8.10→v8.11 as a coordinated set. Bench-verified: banners + payload sizes + MAG_CAL emission on both TX units + new SD file naming (`/PadLog##.CSV`). Outstanding hardware tests documented in §15.7.)  
 **Version:** 2.8  (§15 extended — Phase 10 now also bundles boat accelerometer forwarding: `BoatDataPayload` gains three `float` accel fields, boat CSV gains `boat_accel_x/y/z` columns, test T-46 added. Same coordinated release: PadLog v8.8 / BoatLog v1.1 / PadDis v8.11.)  
 **Version:** 2.7  (§15 added — Phase 10 magnetometer calibration support: mag report enable, on-change serial status, DCD save on first convergence, `mag_cal` CSV column on paddle + boat, Phase 10 test plan T-40 to T-45, release-coupling requirement PadLog v8.8 / BoatLog v1.1 / PadDis v8.11.)
 
@@ -2174,3 +2175,40 @@ Phase 10 is released as a co-ordinated set: PadLog v8.8, BoatLog v1.1, PadDis v8
 Any two of these built against different payload struct definitions are incompatible.
 Version bumps must be committed in a single commit and the payload struct definition
 kept identical across the three sketches.
+
+### 15.7 Release Status (9 Jul 2026)
+
+**Released** in single commit `d8ce219` on `main`:
+
+- PadLog v8.8, BoatLog v1.1, PadDis v8.11 (payload struct byte-locked at 64 B / 74 B).
+- PadDis SD paddle-log prefix renamed `ImuLog → PadLog` alongside; existing `ImuLog##.CSV`
+  files stay unchanged.
+
+**Bench-verified 9 Jul 2026:**
+
+- PadLog banner + `Payload: 64 bytes` line + `MAG_CAL:` telemetry emitting on-change.
+- BoatLog banner + `MAG_CAL:` telemetry emitting (values 0, 1, 2 observed).
+- PadDis boots + SD init + creates `/PadLog##.CSV` and `/BoatLog##.CSV` on the new naming
+  convention.
+
+**Outstanding (require cleaner magnetic environment or on-water session):**
+
+- **T-41** mag climb to stable status 3 — reached 3 briefly on PadLog but sensor
+  bench environment (nearby computer + USB hub) is noisy; not held long enough to
+  verify.
+- **T-42** `DCD_SAVED` emitted exactly once per boot at first status=3 — line did not
+  appear in the bench run despite `MAG_CAL: 3` appearing. Possible causes to investigate:
+  status oscillation between the two consecutive prints (unlikely — same event dispatch),
+  `sh2_saveDcdNow()` silently blocked/failed (would show a POWERON on next boot — did
+  not), or environment-dependent transient. Add a debug printf capturing
+  `sh2_saveDcdNow()`'s return value on the re-flash pass.
+- **T-43** DCD survives power-cycle — gated on T-42.
+- **T-44 / T-45** `mag_cal` column populated in both CSVs — verify by pulling the SD
+  card and inspecting a `PadLog##.CSV` and `BoatLog##.CSV` written during a session.
+- **T-46** `boat_accel_x/y/z` populated with plausible gravity vector — same SD-card
+  inspection covers this.
+
+**Diagnostic tool:** `firmware/diag/mag_watch.ps1` — opens the serial port on Windows
+without triggering the ESP32 DTR/RTS reset and filters for boot / MAG_CAL / DCD_SAVED
+/ CSV-init lines. Useful for inspecting a running sketch without restarting it.
+Usage: `powershell -File firmware/diag/mag_watch.ps1 -Port COM3 -Baud 115200`.

@@ -89,6 +89,7 @@ The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `firmware/test/padd
 - **Phase 7** — ESPnow full-IMU data link + CYD SD logging: complete (6 May 2026). All tests T-23–T-31 passed. Bug fixed: yaw wrap at ±180° caused EulerErr=360° (corrected with wrap-aware subtraction in RX sketch).
 - **Phase 8** — Production integration: complete (v8.6 flashed 18 May 2026). v8.1: hardware validated 12 May 2026. v8.2: streak gate, separate rate buffers, asymmetry bar. v8.3: doze/wake bug fixed (accelerometer left active in doze blocked RV wakeup events). v8.4: isRateMature gate + rolling-midpoint asymmetry. Field test 18 May 2026 revealed feather rotation artefacts inflating CPM ~1.7×. v8.5 (PadDis only): CSV_COLUMNS_REDUCED directive; 20-second CPM display EMA. v8.6: AMPLITUDE_GATE_DEG 45°→90°; Option 3 consecutive-event asymmetry; dark display theme. v8.7 (PadDis only): asymmetry bar removed; CPM EMA 20s→10s; yellow SD-absent warning. v8.8 (PadDis only): CSV_COLUMNS_REDUCED commented out — full 15-col CSV for PadViz4 position-tracking data collection. v8.9 (PadDis only): boat unit ESPnow integration; CPM 1dp display; speed/time/GPS warning; BoatLog00.CSV; GPS time stamped into paddle CSV. v8.10 (PadDis only): add rx_ms column (CYD-side ESPnow reception timestamp, captured in receive callback) to both paddle and boat CSVs — common clock domain enables sub-10 ms sync in post-processing.
 - **Phase 9** — Pending: blade entry/exit detection using accel_x/accel_y transients to detect blade catch and release independently of roll oscillation. Design not started.
+- **Phase 10** — Magnetometer calibration support: complete (9 Jul 2026, commit d8ce219). Coordinated release PadLog v8.8 / BoatLog v1.1 / PadDis v8.11 per spec §15.6. Enables `SH2_MAGNETIC_FIELD_CALIBRATED` at 10 Hz on both TX units, on-change `MAG_CAL:` serial, `sh2_saveDcdNow()` on first status=3. Payload struct grows: paddle 60→64 B (mag_cal + pad), boat 58→74 B (accel_x/y/z + mag_cal + pad — boat accel forwarding was previously read and discarded, spec §15.2.5 rider). New CSV columns: paddle gains `mag_cal`, boat gains `boat_accel_x/y/z,mag_cal`. PadDis SD paddle-log prefix renamed `ImuLog → PadLog`. Bench-verified 9 Jul 2026; T-41..T-46 hardware tests need cleaner mag environment or on-water session (see spec §15.7).
 
 ## Production Sketches
 
@@ -98,11 +99,18 @@ The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `firmware/test/padd
 | PadDis | `firmware/production/PadDis/` | CYD ESP32-2432S028 | COM6 | `esp32:esp32:esp32` |
 | BoatLog | `firmware/production/BoatLog/` | LOLIN32 Lite | COM3 | `esp32:esp32:lolin32-lite` |
 
-**Version scheme:** `<phase>.<iteration>` — PadLog **v8.7**, PadDis **v8.10**, BoatLog **v1.0**. Versions can diverge when only one sketch changes.
+**Version scheme:** `<phase>.<iteration>` — PadLog **v8.8**, PadDis **v8.11**, BoatLog **v1.1**. Versions can diverge when only one sketch changes; Phase 10 required a coordinated bump per spec §15.6 (payload struct change).
 
-**Payload struct** (60 bytes, float — must be identical in both sketches):
+**Paddle payload struct** (64 bytes, float — must be identical in PadLog and PadDis):
 ```
-seq, timestamp_ms, accel_x/y/z, q_w/x/y/z, roll/pitch/yaw, stroke_count, cpm, hz
+seq, timestamp_ms, accel_x/y/z, q_w/x/y/z, roll/pitch/yaw, stroke_count, cpm, hz, mag_cal, _pad[3]
+```
+
+**Boat payload struct** (74 bytes — must be identical in BoatLog and PadDis):
+```
+seq, timestamp_ms, gps_utc_sec, gps_lat, gps_lon, gps_speed_ms, gps_cog_deg,
+gps_fix, gps_uk_offset, kayak_qw/x/y/z, kayak_roll/pitch/yaw,
+accel_x/y/z, mag_cal, _pad[3]
 ```
 
 **Key display findings (5 May 2026 / updated 30 Jun 2026):**
@@ -122,16 +130,16 @@ seq, timestamp_ms, accel_x/y/z, q_w/x/y/z, roll/pitch/yaw, stroke_count, cpm, hz
 
 ## SD Card Logging
 
-CSV files auto-numbered `/ImuLog00.CSV` … `/ImuLog99.CSV` on PadDis SD card. Written at 100 Hz; flush every 5 s and on signal loss. SD absence is non-fatal.
+Paddle CSV files auto-numbered `/PadLog00.CSV` … `/PadLog99.CSV` on PadDis SD card (renamed from `/ImuLog##.CSV` in v8.11 to match BoatLog convention; older `ImuLog` files stay). Written at 100 Hz; flush every 5 s and on signal loss. SD absence is non-fatal.
 
 **Paddle log column sets** (controlled by `#define CSV_COLUMNS_REDUCED` in `PadDis.ino`):
 
-- **Reduced** (re-enable for field use): `timestamp_ms, roll, pitch, yaw, stroke_count, cpm, gps_utc_sec, gps_uk_offset, rx_ms`
-- **Full** (v8.10 default — directive commented out): `seq, timestamp_ms, accel_x, accel_y, accel_z, q_w, q_x, q_y, q_z, roll, pitch, yaw, stroke_count, cpm, gps_utc_sec, gps_uk_offset, rx_ms`
+- **Reduced** (re-enable for field use): `timestamp_ms, roll, pitch, yaw, stroke_count, cpm, gps_utc_sec, gps_uk_offset, rx_ms, mag_cal`
+- **Full** (v8.11 default — directive commented out): `seq, timestamp_ms, accel_x, accel_y, accel_z, q_w, q_x, q_y, q_z, roll, pitch, yaw, stroke_count, cpm, gps_utc_sec, gps_uk_offset, rx_ms, mag_cal`
 
-`gps_utc_sec` and `gps_uk_offset` are 0 when no GPS fix is active. `rx_ms` is CYD-side `millis()` captured at the moment the ESPnow receive callback fires — same clock domain on both paddle and boat log rows, so post-processing sync is a straight nearest-`rx_ms` match (< 10 ms typical). First line of every file: `# PadDis v8.10`. `cpm` column is raw (un-EMAd).
+`gps_utc_sec` and `gps_uk_offset` are 0 when no GPS fix is active. `rx_ms` is CYD-side `millis()` captured at the moment the ESPnow receive callback fires — same clock domain on both paddle and boat log rows, so post-processing sync is a straight nearest-`rx_ms` match (< 10 ms typical). `mag_cal` is the BNO085 magnetometer accuracy 0–3 (see spec §15). First line of every file: `# PadDis v8.11 paddle` / `# PadDis v8.11 boat`. `cpm` column is raw (un-EMAd).
 
-**Boat log** (auto-numbered `/BoatLog00.CSV`): `seq, timestamp_ms, gps_utc_sec, gps_uk_offset, gps_lat, gps_lon, gps_speed_ms, gps_cog_deg, gps_fix, kayak_qw, kayak_qx, kayak_qy, kayak_qz, kayak_roll, kayak_pitch, kayak_yaw, rx_ms`
+**Boat log** (auto-numbered `/BoatLog00.CSV`): `seq, timestamp_ms, gps_utc_sec, gps_uk_offset, gps_lat, gps_lon, gps_speed_ms, gps_cog_deg, gps_fix, kayak_qw, kayak_qx, kayak_qy, kayak_qz, kayak_roll, kayak_pitch, kayak_yaw, rx_ms, boat_accel_x, boat_accel_y, boat_accel_z, mag_cal`
 
 ## Serial Output Format
 
