@@ -149,7 +149,11 @@ final int   MIN_REST_DUR = 300;    // 3 s at 100 Hz
 // Returns { start, end } in paddle-frame indices, or null if no window found.
 // Also writes the max per-axis variance encountered inside the found window
 // into out[2] (0 if null).
-int[] detectRestWindow(DataSource pad, float[] outMaxVar) {
+//
+// `searchStart` is the earliest frame the scan will consider — set from the
+// current playback frame so the user can seek to the intended rest moment
+// before pressing C. 0 restores the "scan from beginning" behaviour.
+int[] detectRestWindow(DataSource pad, int searchStart, float[] outMaxVar) {
     ArrayList<FrameData> frames = pad.getFrames();
     int n = frames.size();
     if (n < WIN_SIZE + MIN_REST_DUR) return null;
@@ -157,7 +161,8 @@ int[] detectRestWindow(DataSource pad, float[] outMaxVar) {
     int runStart = -1;
     float maxVarInRun = 0;
 
-    for (int i = WIN_SIZE / 2; i < n - WIN_SIZE / 2; i++) {
+    int i0 = max(WIN_SIZE / 2, searchStart);
+    for (int i = i0; i < n - WIN_SIZE / 2; i++) {
         float[] mv = windowMeanAndVar(frames, i, WIN_SIZE);
         float mx = mv[0], my = mv[1], mz = mv[2];
         float vx = mv[3], vy = mv[4], vz = mv[5];
@@ -246,7 +251,7 @@ float[] meanRPYFromFrames(java.util.List<?> frames, int src) {
 
 // ── Builder entry point ────────────────────────────────────────────────────
 
-Sidecar buildSidecar(DataSource pad, BoatSource boat, SyncMap sync) {
+Sidecar buildSidecar(DataSource pad, BoatSource boat, SyncMap sync, int searchStart) {
     Sidecar s = new Sidecar();
     s.paddleCsvName = (pad  != null) ? pad.sourceName()  : "";
     s.boatCsvName   = (boat != null) ? boat.sourceName() : "";
@@ -265,9 +270,10 @@ Sidecar buildSidecar(DataSource pad, BoatSource boat, SyncMap sync) {
     }
 
     float[] outMaxVar = new float[]{ 0 };
-    int[]   rw = detectRestWindow(pad, outMaxVar);
+    int[]   rw = detectRestWindow(pad, searchStart, outMaxVar);
     if (rw == null) {
-        s.notes = "No rest window detected (need >= 3 s of |a|~9.81 and low variance in paddle accel).";
+        s.notes = "No rest window detected after frame " + searchStart
+                + " (need >= 3 s of |a|~9.81 and low variance in paddle accel).";
         return s;
     }
     s.restPadStart    = rw[0];

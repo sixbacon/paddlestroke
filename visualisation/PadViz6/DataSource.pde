@@ -16,6 +16,13 @@ class FrameData {
     long  gpsUtcSec;
     long  rxMs;
 
+    // Paddle centre offset from the shaft rest position (metres, world_LH
+    // = sensor Z-up frame). Populated by DataSource.computePaddleCentreMotion
+    // as a post-pass over the loaded frames. Consumed by the render code in
+    // Slices A / C to translate the paddle mesh so its centre visually drops
+    // toward the in-water blade and lifts back toward centre in the air.
+    float posX = 0, posY = 0, posZ = 0;
+
     // Field indices — mirror GraphPanel FIELD_NAMES order (paddle side).
     // 0=roll 1=pitch 2=yaw 3=cpm 4=strokeCount 5=accelX 6=accelY 7=accelZ
     float field(int f) {
@@ -68,6 +75,89 @@ class DataSource {
         }
         println("DataSource: loaded " + frames.size() + " frames from " + srcName
                 + (hasRxMs ? "  (v8.10 rx_ms)" : "  (v8.9 or older)"));
+        computePaddleCentreMotion();
+    }
+
+    // Estimate the paddle-shaft-centre displacement (metres, sensor world_LH
+    // frame with Z up) from the accelerometer stream. Pipeline per axis:
+    //
+    //   1. Rotate body-frame accel to world using the frame quaternion.
+    //   2. Subtract gravity (0, 0, +g).
+    //   3. First-order HPF the linear accel  — kills any residual bias so
+    //      the integrators can't run away.
+    //   4. Integrate to velocity.
+    //   5. HPF the velocity — kills the accumulated bias from step 4.
+    //   6. Integrate to position.
+    //   7. HPF the position — the final safety net against slow drift.
+    //   8. Clamp each axis to ±MAX_OFFSET.
+    //
+    // Filter cutoff (~0.3 Hz) sits below the ~0.5–1 Hz stroke band, so the
+    // AC swing passes through cleanly while DC and slow drift are removed.
+    // Naive leaky integrators fail here: their DC gain is bounded but
+    // large, and gravity-subtraction residuals of a fraction of a m/s²
+    // saturate the ±0.3 m clamp within seconds.
+    //
+    // This is a display-only estimate. Over long timescales it decays to
+    // zero rather than tracking true position (which would need mag- and
+    // GPS-aided INS). For visualising the centre swing paired with the
+    // stroke, the AC-band behaviour is what matters.
+    void computePaddleCentreMotion() {
+        if (frames.isEmpty()) return;
+        final float G          = 9.81f;
+        final float FC_HZ      = 0.3f;     // HPF cutoff below stroke band
+        final float DT_NOM     = 0.01f;    // 100 Hz nominal
+        final float ALPHA      = 1 - TWO_PI * FC_HZ * DT_NOM;   // ~0.981
+        final float MAX_OFFSET = 0.3f;     // metres, per user spec
+
+        // First-order HPF state: y[n] = ALPHA * (y[n-1] + x[n] - x[n-1]).
+        // Three cascade stages: linear-accel HPF, velocity HPF, position HPF.
+        float[] laPrev = {0,0,0}, haPrev = {0,0,0};
+        float[] v      = {0,0,0}, vPrev  = {0,0,0}, hvPrev = {0,0,0};
+        float[] p      = {0,0,0}, pPrev  = {0,0,0}, hpPrev = {0,0,0};
+
+        long prevTs = frames.get(0).ts;
+        for (FrameData f : frames) {
+            float dt = (f.ts - prevTs) * 0.001f;
+            if (dt <= 0 || dt > 0.05f) dt = DT_NOM;
+            prevTs = f.ts;
+
+            // R(q) * a_body  — same rotation matrix used in Model3D.applyQuat.
+            float xx = f.qx*f.qx, yy = f.qy*f.qy, zz = f.qz*f.qz;
+            float xy = f.qx*f.qy, xz = f.qx*f.qz, yz = f.qy*f.qz;
+            float wx = f.qw*f.qx, wy = f.qw*f.qy, wz = f.qw*f.qz;
+            float wAx = (1 - 2*(yy + zz))*f.accelX
+                      +      2*(xy - wz) *f.accelY
+                      +      2*(xz + wy) *f.accelZ;
+            float wAy =      2*(xy + wz) *f.accelX
+                      + (1 - 2*(xx + zz))*f.accelY
+                      +      2*(yz - wx) *f.accelZ;
+            float wAz =      2*(xz - wy) *f.accelX
+                      +      2*(yz + wx) *f.accelY
+                      + (1 - 2*(xx + yy))*f.accelZ;
+
+            float[] la = { wAx, wAy, wAz - G };
+
+            for (int i = 0; i < 3; i++) {
+                float ha = ALPHA * (haPrev[i] + la[i] - laPrev[i]);
+                laPrev[i] = la[i];
+                haPrev[i] = ha;
+
+                v[i] += ha * dt;
+                float hv = ALPHA * (hvPrev[i] + v[i] - vPrev[i]);
+                vPrev[i]  = v[i];
+                hvPrev[i] = hv;
+
+                p[i] += hv * dt;
+                float hp = ALPHA * (hpPrev[i] + p[i] - pPrev[i]);
+                pPrev[i]  = p[i];
+                hpPrev[i] = hp;
+
+                float clamped = constrain(hp, -MAX_OFFSET, MAX_OFFSET);
+                if      (i == 0) f.posX = clamped;
+                else if (i == 1) f.posY = clamped;
+                else             f.posZ = clamped;
+            }
+        }
     }
 
     // v8.10 17-col:  seq, ts, ax, ay, az, qw, qx, qy, qz, roll, pitch, yaw, sc, cpm, gps_utc, gps_uk, rx_ms

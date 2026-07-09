@@ -1,8 +1,8 @@
 # PadViz6 — Disciplined Orientation Specification
 
-**Version:** 0.12
-**Date:** 2026-07-08
-**Status:** Slices 0–C + bottom GraphPanel with two-click zoom (right-click), double-right-click revert, `S`-key zoom reset, and merged CSV export (curated + all-fields). Corner axis compass (2D, ~1/3 the old on-screen size) with a `P`/`K`/`W` frame letter that also acts as the slice-switch shortcut. §7 expanded (v0.7) from single yaw-alignment rotation to a three-offset per-session procedure — sensor-mount roll/pitch (from accel) + magnetic-yaw datum (from mean quats) — with pre-session magnetometer figure-8 and DCD save. Requires three firmware additions listed in §7.8 (formalised in firmware spec §15, v2.7). v0.8: the three 8 Jul 2026 field-use notes (§12.10) are now DONE — `k`/`u` HUD flash, Slice B hint to `W`, and Backspace/`-` back-slice ping-pong. v0.9: free-orbit camera — left-drag orbits, wheel zooms, V snaps to side/top preset; 2D axis compass now rotates in step with the 3D camera basis. v0.10: first-pass session sidecar builder (`Sidecar.pde`, C key) — rest-window detector + mean-based mount offsets + yaw datum + JSON save per §7.5. Slice-switch letter shortcuts P/K/W dropped (Caps-Lock case ambiguity); digits 0/1/2/3 only. v0.11: startup onboarding checklist (`Checklist.pde`) in the bottom strip when no paddle CSV is loaded — three rows auto-ticked and clickable. v0.12: sidecar auto-load — on paddle-CSV open, look for a sibling `<basename>.session.json`, parse it, and reseed rest-window references so the correction is active without pressing C. Third checklist row auto-ticks in that case; boat CSV load extends the seeding to the boat side.
+**Version:** 0.13
+**Date:** 2026-07-09
+**Status:** Slices 0–C + bottom GraphPanel with two-click zoom (right-click), double-right-click revert, `S`-key zoom reset, and merged CSV export (curated + all-fields). Corner axis compass (2D, ~1/3 the old on-screen size) with a `P`/`K`/`W` frame letter that also acts as the slice-switch shortcut. §7 expanded (v0.7) from single yaw-alignment rotation to a three-offset per-session procedure — sensor-mount roll/pitch (from accel) + magnetic-yaw datum (from mean quats) — with pre-session magnetometer figure-8 and DCD save. Requires three firmware additions listed in §7.8 (formalised in firmware spec §15, v2.7). v0.8: the three 8 Jul 2026 field-use notes (§12.10) are now DONE — `k`/`u` HUD flash, Slice B hint to `W`, and Backspace/`-` back-slice ping-pong. v0.9: free-orbit camera — left-drag orbits, wheel zooms, V snaps to side/top preset; 2D axis compass now rotates in step with the 3D camera basis. v0.10: first-pass session sidecar builder (`Sidecar.pde`, C key) — rest-window detector + mean-based mount offsets + yaw datum + JSON save per §7.5. Slice-switch letter shortcuts P/K/W dropped (Caps-Lock case ambiguity); digits 0/1/2/3 only. v0.11: startup onboarding checklist (`Checklist.pde`) in the bottom strip when no paddle CSV is loaded — three rows auto-ticked and clickable. v0.12: sidecar auto-load — on paddle-CSV open, look for a sibling `<basename>.session.json`, parse it, and reseed rest-window references so the correction is active without pressing C. Third checklist row auto-ticks in that case; boat CSV load extends the seeding to the boat side. v0.13 (9 Jul 2026): three field-use fixes driven by the 9 Jul session — (a) C-key rest-window search now starts at the current playback frame (was frame 0), so the user can seek to the intended still moment before building; (b) checklist strip hides as soon as the paddle CSV loads (was blocking the graph until sidecar built), and a yellow "SIDECAR not built — seek then press C" HUD hint appears in its place; (c) `DataSource.computePaddleCentreMotion` — accel double-integration with a three-stage HPF cascade (fc ≈ 0.3 Hz) drives a per-frame paddle-centre offset (±0.3 m clamped) that translates the mesh in Slices A + C during render, so the shaft midpoint visibly swings with the stroke.
 
 ---
 
@@ -415,12 +415,18 @@ captured.
 ### 7.4 Rest-window detection and offset extraction
 
 An offline pass over the paddle and boat CSVs identifies the rest window and extracts
-offsets. The rest window is the first contiguous span where:
+offsets. The rest window is the first contiguous span **at or after the current playback
+frame** (v0.13) where:
 
 - `abs(||accel|| − 9.81) < 0.1 m/s²` on both sensors, and
 - per-axis rolling variance of accel over 100 samples < a threshold (roughly
   `0.02 (m/s²)²`), and
 - span duration ≥ 300 paddle frames (3 s).
+
+The playback-frame anchor lets the user seek past unwanted quiet periods (paddler
+sitting in the kayak before launch, pauses during setup, etc.) that would otherwise
+be selected as the first "at rest" span. Frame 0 (default before any seeking)
+scans from the beginning of the file.
 
 From the rest window:
 
@@ -744,7 +750,7 @@ Slices A / B / C additional:
 | `u` (lowercase) | Clear reference — back to raw quat |
 | `S` (Shift+s) | Reset graph zoom to full range (also pushed to history) |
 | `E` (Shift+e) | Export merged CSV over current zoom |
-| `C` (Shift+c) | Build session sidecar (rest-window detect + mount offsets + yaw datum) and auto-save as `<basename>.session.json` next to the paddle CSV |
+| `C` (Shift+c) | Build session sidecar (rest-window detect + mount offsets + yaw datum) and auto-save as `<basename>.session.json` next to the paddle CSV. Search starts at the current playback frame (v0.13). |
 
 Slice 0 (calibration) — routed through `cal.handleKey()`:
 | Key | Action |
@@ -764,8 +770,29 @@ Graph panel mouse gestures (Slices A/B/C only, when a paddle CSV is loaded):
 - **Export button** or `E` key — write merged CSV.
 - **Slot buttons** (left click) — open field-select dropdown; scroll wheel scrolls the dropdown.
 
-Startup checklist mouse gestures (bottom strip while onboarding incomplete):
+Startup checklist mouse gestures (bottom strip **only while no paddle CSV is loaded** — v0.13):
 - **Click row 1** — same as pressing `p` (open paddle CSV file picker).
 - **Click row 2** — same as pressing `b` (open boat CSV file picker). Dimmed and non-clickable until row 1 done.
 - **Click row 3** — same as pressing `C` (build and auto-save sidecar). Dimmed and non-clickable until row 1 done.
+
+Once the paddle CSV is loaded, the graph replaces the checklist (essential — the user needs to seek before pressing C). A yellow HUD line below the mode-name row prompts "SIDECAR not built — drag the graph cursor to the intended rest moment, then press C (search will start at paddle frame N)" until a sidecar is built or auto-loaded.
+
+### 12.12 Paddle-centre motion (v0.13, 9 Jul 2026)
+
+**Feature.** The paddle mesh in Slices A and C is translated per-frame by a small offset derived from the paddle IMU accelerometer, so the shaft midpoint visibly drops toward the water-side blade during the pull and rises back toward centre in the air phase. Clamped to ±0.3 m per axis.
+
+**Pipeline** (see `DataSource.computePaddleCentreMotion`, run once at CSV-load time):
+
+1. Rotate body-frame accel to world using the frame quaternion: `a_world = R(q) · a_body`.
+2. Subtract gravity: `a_linear = a_world − (0, 0, +g)`.
+3. HPF cascade — three stages: `y[n] = α · (y[n−1] + x[n] − x[n−1])` with `α = 1 − 2π·fc·Δt`, `fc = 0.3 Hz`, `Δt = 0.01 s` → α ≈ 0.981. Stage 1 filters linear accel; stage 2 filters the integrated velocity; stage 3 filters the integrated position.
+4. Clamp final offset per axis to ±0.3 m.
+
+**Why HPF cascade and not leaky integrators.** A plain leaky integrator (`v[n] = α·v[n−1] + a·Δt`) has bounded but *large* DC gain; a residual gravity-subtraction bias of just 0.1 m/s² saturates the ±0.3 m clamp within seconds. Empirically on the 9 Jul 2026 CSV, leaky integrators pinned 94.5 % of Z-axis frames to the clamp with zero roll correlation. The HPF cascade zeroes DC at each stage and passes the ~0.3–1.5 Hz stroke band cleanly — RMS output 5–8 cm during steady paddling, no clamp hits, position visibly oscillates at stroke frequency.
+
+**Caveat — position is world-anchored.** The offset is in the sensor's magnetic-north-anchored world frame. In Slice C it is applied *in kayak body coords* (after the kayak orientation and paddle-lift translate), so the visual is close to "paddle centre swings relative to the kayak" as long as the kayak's yaw is roughly constant relative to magnetic north. It will not perfectly track the physical description "always toward the low blade" — the visual is an accel-anchored oscillation, not a paddle-body-frame kinematic model.
+
+**Not tracked over long time scales.** By design (HPF), the position decays to zero rather than integrating true displacement. True paddle-centre tracking would require mag- and GPS-aided INS which is not attempted here.
+
+**Render integration.** Slices A and C both translate by `(posX, posY, posZ) · MODEL_SCALE` (300 px/m — shared with paddle OBJ scale) *before* the cal triple and quaternion. In Slice C the offset is applied after the kayak orientation and paddle-lift translate, so the paddle floats in kayak body coords rather than magnetic world.
 - Checklist auto-dismisses 2.5 s after the last box ticks; during that window a countdown message shows at the bottom of the strip.

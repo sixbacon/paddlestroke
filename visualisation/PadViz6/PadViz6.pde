@@ -22,6 +22,10 @@ Sidecar     sidecar;      // per-session calibration; null until built or loaded
 // Anything above it belongs to the 3D scene + HUD.
 final int GRAPH_H = 220;
 
+// Pixels per metre for all mesh + world translations. Must match the paddle
+// OBJ scale (Model3D.loadPaddle uses 300) and the kayak vertex scale.
+final float MODEL_SCALE = 300;
+
 // Slice / view state
 int     sliceMode  = 0;   // 0 = Slice 0 (calibration), 1 = Slice A, 2 = Slice B, 3 = Slice C (combined)
 
@@ -115,12 +119,14 @@ boolean isGraphVisible() {
         && paddleData.frameCount() > 0;
 }
 
-// Startup checklist takes the bottom strip until all three onboarding steps
-// are done (paddle CSV loaded, boat CSV loaded, session sidecar built), and
-// then for a further ~2.5 s so the user can see the final tick land before
-// the graph replaces it (see Checklist.shouldStayVisible).
+// Startup checklist takes the bottom strip only until the paddle CSV is
+// loaded. Once paddle data is present the graph takes over — this is
+// essential so the user can drag the graph cursor to their intended rest
+// moment before pressing C to build the sidecar. Remaining onboarding
+// steps (load boat, build sidecar) are surfaced via the top-line HUD
+// hint instead.
 boolean isChecklistVisible() {
-    return checklist != null && checklist.shouldStayVisible();
+    return checklist != null && !(paddleData != null && paddleData.frameCount() > 0);
 }
 
 // ── 3D scene ──────────────────────────────────────────────────────────────────
@@ -152,6 +158,10 @@ void drawScene3D() {
         FrameData fd = paddleData.frameAt(paddleFrameIdx);
         float[] qCur = { fd.qw, fd.qx, fd.qy, fd.qz };
         float[] qDisp = (refFramePad >= 0) ? qMul(qConj(qRefPad), qCur) : qCur;
+        // Paddle-centre offset from accel double-integration (world_LH, metres).
+        // Written first so it is applied last to the vertex — the mesh is
+        // rotated by cal + quat as before, then translated to its world position.
+        translate(fd.posX * MODEL_SCALE, fd.posY * MODEL_SCALE, fd.posZ * MODEL_SCALE);
         applyCalTriple();
         model3D.applyQuat(qDisp[0], qDisp[1], qDisp[2], qDisp[3]);
         model3D.drawPaddle();
@@ -224,7 +234,13 @@ void drawSliceC() {
     // coords (deck-up = +Z_kayak) — not a measurement of the physical paddle
     // location. 300 px/m matches the paddle and kayak model scale.
     final float PADDLE_LIFT_M = 0.3f;
-    translate(0, 0, PADDLE_LIFT_M * 300);
+    translate(0, 0, PADDLE_LIFT_M * MODEL_SCALE);
+
+    // Paddle-centre offset from accel double-integration. Applied in kayak-
+    // body frame so the paddle swings relative to the kayak rather than the
+    // world — visually it drops toward whichever side has a blade in the water.
+    FrameData fdP = paddleData.frameAt(paddleFrameIdx);
+    translate(fdP.posX * MODEL_SCALE, fdP.posY * MODEL_SCALE, fdP.posZ * MODEL_SCALE);
 
     // Paddle inside the kayak's local frame — cal triple + relative quat.
     // kayakLH ← paddleLH ← blenderLH
@@ -403,6 +419,17 @@ void drawHUD() {
                            sidecar.rollOffsetPadDeg,  sidecar.pitchOffsetPadDeg,
                            sidecar.rollOffsetBoatDeg, sidecar.pitchOffsetBoatDeg,
                            sidecar.yawDatumDeg),
+             20, 38);
+        textSize(13);
+    } else if (paddleData != null && paddleData.frameCount() > 0 && sliceMode >= 1) {
+        // No sidecar yet — coach the user through the seek-then-C flow. The
+        // graph strip is now visible below the 3D scene; the current paddle
+        // frame index is the search-start point that C will use.
+        fill(230, 220, 140);
+        textSize(12);
+        int fi = constrain(paddleFrameIdx, 0, paddleData.frameCount() - 1);
+        text("SIDECAR not built — drag the graph cursor to the intended rest moment, then press C  "
+                + "(search will start at paddle frame " + fi + ")",
              20, 38);
         textSize(13);
     }
@@ -605,7 +632,7 @@ void drawPlaybackKeys(int yStart) {
     text("u            clear reference (back to raw quat)",      20, y); y += 16;
     text("S            reset graph zoom to full range",          20, y); y += 16;
     text("E            export merged CSV over current zoom",     20, y); y += 16;
-    text("C            build session sidecar (rest-window detect)", 20, y); y += 16;
+    text("C            build session sidecar (rest-window search from current frame)", 20, y); y += 16;
     text("0/1/2/3      Slice 0 / A / B / C",            20, y); y += 16;
     text("Backspace / -   return to previous slice",    20, y); y += 16;
     text("V            cycle side / top-down preset",   20, y); y += 16;
@@ -1019,10 +1046,12 @@ void buildAndSaveSidecar() {
         triggerRefFlash("SIDECAR — LOAD PADDLE CSV FIRST");
         return;
     }
-    Sidecar built = buildSidecar(paddleData, boatData, sync);
+    int searchStart = paddleFrameIdx;
+    Sidecar built = buildSidecar(paddleData, boatData, sync, searchStart);
     sidecar = built;
 
     println("Sidecar build result:");
+    println("  search start:    frame " + searchStart);
     println("  confidence:      " + built.confidence);
     println("  notes:           " + built.notes);
     if (built.valid) {

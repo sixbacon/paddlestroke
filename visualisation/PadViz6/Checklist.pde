@@ -83,7 +83,7 @@ class Checklist {
                    "BoatLog v1.0 log — GPS + kayak quaternion. Enables yaw datum.",
                    "b", stepBoatLoaded(), stepPaddleLoaded());
         drawRow(2, "Build session sidecar",
-                   "detects rest window; auto-saves <basename>.session.json next to paddle CSV",
+                   "seek to the intended rest moment first — search begins at the current frame",
                    "C", stepSidecarBuilt(), stepPaddleLoaded());
 
         // Completion banner during the dismissal delay.
