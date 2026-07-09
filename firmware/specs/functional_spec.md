@@ -1,7 +1,8 @@
 # Kayak Paddle Stroke Rate Monitor — Functional Specification
 
 **Project:** paddlestroke  
-**Date:** 2026-07-08  
+**Date:** 2026-07-09  
+**Version:** 2.8  (§15 extended — Phase 10 now also bundles boat accelerometer forwarding: `BoatDataPayload` gains three `float` accel fields, boat CSV gains `boat_accel_x/y/z` columns, test T-46 added. Same coordinated release: PadLog v8.8 / BoatLog v1.1 / PadDis v8.11.)  
 **Version:** 2.7  (§15 added — Phase 10 magnetometer calibration support: mag report enable, on-change serial status, DCD save on first convergence, `mag_cal` CSV column on paddle + boat, Phase 10 test plan T-40 to T-45, release-coupling requirement PadLog v8.8 / BoatLog v1.1 / PadDis v8.11.)
 
 ---
@@ -2016,16 +2017,37 @@ payload struct. This is a payload change — versions of PadLog, PadDis, and Boa
 carry `mag_cal` must be released together and the payload struct definition kept in
 byte-for-byte sync as with previous phases.
 
-CSV column additions (paddle and boat sides, appended after `rx_ms`):
+CSV column additions (appended after `rx_ms`):
 
 - **Paddle log** (v8.10 full 15-col becomes 16-col; reduced 9-col becomes 10-col):
   `..., rx_ms, mag_cal`
-- **Boat log** (v1.0 17-col becomes 18-col):
-  `..., rx_ms, mag_cal`
+- **Boat log** (v1.0 17-col becomes 21-col — three accel columns added per §15.2.5 in
+  addition to `mag_cal`):
+  `..., rx_ms, boat_accel_x, boat_accel_y, boat_accel_z, mag_cal`
 
 Header comment version bumps: PadDis → **v8.11**, BoatLog → **v1.1**, PadLog → **v8.8**.
 
-#### 15.2.5 CYD indicator (optional, deferred)
+#### 15.2.5 Boat accelerometer forwarding
+
+BoatLog already enables `SH2_ACCELEROMETER` at 100 Hz alongside the rotation-vector
+report but the samples are read and discarded. Phase 10 adds the missing forwarding so
+the boat side matches the paddle side:
+
+- BoatLog: cache the latest `accel_x/y/z` in the existing `SH2_ACCELEROMETER` event
+  branch (see BoatLog.ino around L187) and emit them in every outgoing payload.
+- `BoatDataPayload` gains three `float` fields (`accel_x`, `accel_y`, `accel_z`),
+  inserted before `mag_cal` so mag stays as the final semantic field.
+- PadDis boat CSV gains three columns (`boat_accel_x`, `boat_accel_y`, `boat_accel_z`),
+  inserted before `mag_cal` so mag stays as the final column.
+
+Motivation: symmetry with paddle CSV; enables rest-window detection on the boat side
+(PadViz6 `Sidecar.pde` currently uses paddle accel only); enables surge/heave/lateral
+kayak analysis in later visualiser work.
+
+Deferred until now because it did not merit its own coordinated release, but bundles
+naturally with Phase 10 since Phase 10 already breaks the boat payload struct.
+
+#### 15.2.6 CYD indicator (optional, deferred)
 
 On the CYD display, an `M<0-3>` letter next to the existing signal dots (line 1),
 coloured red/orange/yellow/green for 0/1/2/3. Deferred until field use confirms whether
@@ -2034,9 +2056,8 @@ Phase 10 acceptance.
 
 ### 15.3 Payload struct — updated
 
-Paddle and boat structs each gain a single `uint8_t mag_cal` field appended after the
-existing content. To preserve 4-byte alignment on both ends, pack three padding bytes
-alongside it:
+**Paddle** — `ImuDataPayload` gains a single `uint8_t mag_cal` field appended after the
+existing content, plus three padding bytes for 4-byte alignment:
 
 ```cpp
 struct ImuDataPayload {
@@ -2046,8 +2067,25 @@ struct ImuDataPayload {
 };
 ```
 
-Total payload size grows by 4 bytes on each side, still well under the 250-byte
-ESP-NOW limit.
+Paddle payload grows 60 → 64 bytes.
+
+**Boat** — `BoatDataPayload` gains three `float` accel fields **plus** the same
+`mag_cal + _pad[3]`. Accel goes before `mag_cal` so the mag byte stays as the final
+semantic field on both sides:
+
+```cpp
+struct BoatDataPayload {
+    // ... existing fields ...
+    float    accel_x;
+    float    accel_y;
+    float    accel_z;
+    uint8_t  mag_cal;
+    uint8_t  _pad[3];   // reserved for future use, must be zero
+};
+```
+
+Boat payload grows 58 → 74 bytes (12 for accel + 4 for mag). Both still well under the
+250-byte ESP-NOW limit.
 
 ### 15.4 Test Plan (Phase 10)
 
@@ -2110,6 +2148,17 @@ of the CYD acquiring signal.
 
 **Pass:** `mag_cal` column reads 3 (or ≥ 2) within the first 100 rows without any
 figure-8 movement.
+
+#### T-46 Boat Accel Columns Populated
+
+**Purpose:** confirm the boat-side accel forwarding is live end-to-end.
+
+**Steps:** flash BoatLog v1.1 and PadDis v8.11; record a short session; move the boat
+unit (or the whole boat) in a known direction — e.g. lift the bow, tilt to starboard.
+
+**Pass:** boat CSV contains `boat_accel_x`, `boat_accel_y`, `boat_accel_z` columns
+before `mag_cal`. `sqrt(x² + y² + z²)` ≈ 9.8 m/s² when the unit is still. Tilting the
+unit produces the expected sign changes on the tilted axes.
 
 ### 15.5 Interaction with PadViz6
 
