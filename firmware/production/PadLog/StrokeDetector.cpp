@@ -2,6 +2,7 @@
 #include <math.h>
 
 static const float         AMPLITUDE_GATE_DEG   = 90.0f;  // 60° feathered paddle: wrist rotation reaches 70-85° in filtered space
+static const float         PROMINENCE_DEG       = 30.0f;  // rejects shoulder wiggles on two-piece paddles (spec §16.3)
 static const float         PERIOD_MIN_S         = 0.4f;
 static const float         PERIOD_MAX_S         = 4.0f;
 static const unsigned long TIMEOUT_US           = 3000000UL;
@@ -28,6 +29,9 @@ void StrokeDetector::reset() {
 
     _lastQualifyingTs = 0;
     _currentRateHz    = 0.0f;
+
+    _minSincePeak    = 0.0f;
+    _maxSinceTrough  = 0.0f;
 }
 
 bool StrokeDetector::update(float rollDeg, unsigned long timestampUs) {
@@ -40,6 +44,10 @@ bool StrokeDetector::update(float rollDeg, unsigned long timestampUs) {
     if (!_dcInitialized) { _dcOffset = rollDeg; _dcInitialized = true; }
     else _dcOffset += DC_ALPHA * (rollDeg - _dcOffset);
     rollDeg -= _dcOffset;
+
+    // Track intervening excursion for the prominence gate (see _onExtrema).
+    if (_hasPeak   && rollDeg < _minSincePeak)   _minSincePeak   = rollDeg;
+    if (_hasTrough && rollDeg > _maxSinceTrough) _maxSinceTrough = rollDeg;
 
     unsigned long candidateTs = _prevTs;
 
@@ -67,8 +75,14 @@ bool StrokeDetector::_onExtrema(bool isPeak, float val, unsigned long tsUs) {
     if (isPeak) {
         if (_hasPeak && (tsUs - _lastPeakTs) < MIN_EXTREMA_INTERVAL) return false;
 
+        // Prominence gate: candidate peak must be PROMINENCE_DEG above the min
+        // the signal reached since the last accepted peak. Rejects shoulder
+        // wiggles that never actually descend. See spec §16.3.
+        if (_hasPeak && (val - _minSincePeak) < PROMINENCE_DEG) return false;
+
         if (!_hasTrough) {
             _lastPeakVal = val; _lastPeakTs = tsUs; _hasPeak = true;
+            _minSincePeak = val;
             return false;
         }
         float amp = val - _lastTroughVal;
@@ -84,12 +98,17 @@ bool StrokeDetector::_onExtrema(bool isPeak, float val, unsigned long tsUs) {
             }
         }
         _lastPeakVal = val; _lastPeakTs = tsUs; _hasPeak = true;
+        _minSincePeak = val;
 
     } else {
         if (_hasTrough && (tsUs - _lastTroughTs) < MIN_EXTREMA_INTERVAL) return false;
 
+        // Mirror of the prominence gate above, for troughs.
+        if (_hasTrough && (_maxSinceTrough - val) < PROMINENCE_DEG) return false;
+
         if (!_hasPeak) {
             _lastTroughVal = val; _lastTroughTs = tsUs; _hasTrough = true;
+            _maxSinceTrough = val;
             return false;
         }
         float amp = _lastPeakVal - val;
@@ -105,6 +124,7 @@ bool StrokeDetector::_onExtrema(bool isPeak, float val, unsigned long tsUs) {
             }
         }
         _lastTroughVal = val; _lastTroughTs = tsUs; _hasTrough = true;
+        _maxSinceTrough = val;
     }
 
     return qualified;

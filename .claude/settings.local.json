@@ -47,7 +47,9 @@
       "Bash(bash -c 'echo \"cmd would be: node C:\\\\Users\\\\billg\\\\.claude\\\\statusline.js\"')",
       "Bash(bash -c 'node C:\\\\Users\\\\billg\\\\.claude\\\\statusline.js < /dev/null')",
       "Bash(echo \"exit=$?\")",
-      "Bash(bash -c 'node C:/Users/billg/.claude/statusline.js')"
+      "Bash(bash -c 'node C:/Users/billg/.claude/statusline.js')",
+      "Bash(PYTHONIOENCODING=utf-8 /c/Python311/python.exe *)",
+      "PowerShell($port = New-Object System.IO.Ports.SerialPort 'COM13',115200,'None',8,'One'; $port.DtrEnable = $true; $port.RtsEnable = $true; $port.NewLine = \"`n\"; $port.ReadTimeout = 500; try { $port.Open\\(\\) } catch { Write-Output \"OPEN_FAIL: $_\"; exit 1 }; Start-Sleep -Milliseconds 200; $port.DtrEnable = $false; $port.RtsEnable = $false; Start-Sleep -Milliseconds 100; $deadline = \\(Get-Date\\).AddSeconds\\(15\\); $sb = New-Object System.Text.StringBuilder; while \\(\\(Get-Date\\) -lt $deadline\\) { try { $chunk = $port.ReadExisting\\(\\); if \\($chunk\\) { [void]$sb.Append\\($chunk\\) } } catch {}; Start-Sleep -Milliseconds 100 }; $port.Close\\(\\); $sb.ToString\\(\\))"
     ]
   }
 }

@@ -308,6 +308,10 @@ void loop() {
             Serial.printf("CYCLE_RATE: %u CPM  (%.2f Hz)\n", g_cpm, g_hz);
         }
     } else if (detector.isTimedOut(nowUs) && !timeoutActive) {
+        // Reset the detector so stale rolling-buffer / DC-EMA / last-extremum
+        // state from a poor segment does not bleed into the next one after a
+        // 3 s idle. See spec §16.3 (Fix 1).
+        detector.reset();
         g_strokeStreak  = 0;
         g_cpm           = 0;
         g_hz            = 0.0f;

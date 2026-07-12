@@ -9,3 +9,6 @@ visualisation/error_reports/*
 
 # Editor backups
 *.bak
+
+# Python bytecode cache (from visualisation/stroke_*.py analysis scripts)
+__pycache__/

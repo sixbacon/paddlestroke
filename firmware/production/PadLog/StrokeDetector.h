@@ -40,6 +40,12 @@ private:
     unsigned long _lastQualifyingTs;
     float         _currentRateHz;
 
+    // Running min-since-last-accepted-peak / max-since-last-accepted-trough,
+    // used by the prominence gate to reject shoulder wiggles that clear the
+    // 90 deg amplitude gate but never actually descend to a real trough.
+    float _minSincePeak;
+    float _maxSinceTrough;
+
     bool _onExtrema(bool isPeak, float val, unsigned long tsUs);
     void _pushRate(float rateHz, bool isPeak);
     void _computeAverage();

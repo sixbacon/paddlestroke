@@ -2212,3 +2212,177 @@ kept identical across the three sketches.
 without triggering the ESP32 DTR/RTS reset and filters for boot / MAG_CAL / DCD_SAVED
 / CSV-init lines. Useful for inspecting a running sketch without restarting it.
 Usage: `powershell -File firmware/diag/mag_watch.ps1 -Port COM3 -Baud 115200`.
+
+---
+
+## 16. Peak-Detector Robustness — 11 Jul 2026 Findings
+
+*Status: root-cause analysed; both fixes applied to firmware 12 Jul 2026;
+on-water field verification pending. See §16.7.*
+
+### 16.1 Session Overview
+
+Field session `data/2026-07-11/`, using a **two-piece** paddle (all previous
+sessions used a one-piece paddle). Four back-to-back segments recorded to
+diagnose feather-angle sensitivity:
+
+| Segment | File pair | Paddle setting | True rate (FFT peak) | Firmware `cpm` | Verdict |
+|---|---|---|---|---|---|
+| Part 1 (cal) | `padcal…` / `boatcal…` | Normal 60° feather, cal figure-of-eights + paddling | ~30 | 36 mean | close |
+| Part 2 | `padleft…` / `boatleft…` | Left-hand 60° feather | 28 (28–30) | 29 | correct |
+| Part 3 | `padzero…` / `boatzero…` | Zero feather | ~29 (fundamental at 58 = 2nd harmonic) | 46 | expected — sub-90° span |
+| Part 4 | `padbad…` / `boatbad…` | Back to normal 60° feather | 30 (rock steady) | 87 | **2.9× over — bug** |
+
+True rate is the spectral peak of the roll signal in rolling 60 s windows.
+`padbad`'s FFT shows a rock-steady 30 CPM at 91 % power concentration in the
+fundamental band — cleaner than `padnormal` — so the field failure is not a
+signal-quality issue.
+
+### 16.2 Root Cause
+
+Two independent mechanisms combine on the two-piece paddle:
+
+1. **Joint-play notches at torque reversals.** With a one-piece paddle the shaft
+   is rigid; with a two-piece paddle the ferrule joint slips microscopically at
+   each catch/release, producing small (5–15 °) dips at the top and bottom of
+   each stroke's roll waveform. These dips are visible as "shoulders" in the raw
+   roll trace of `padbad` but not `padnormal`.
+
+2. **Peak detector has no local prominence check.** `StrokeDetector::update`
+   accepts any 3-sample turn-around as a candidate extremum. The only
+   subsequent gate is the 90 ° amplitude check `val − _lastTroughVal`, which
+   compares against the *last accepted trough* — often 1–2 s away. A shoulder
+   wiggle 5 ° below a real peak is still >90 ° above the far-away trough, so it
+   qualifies as a second peak inside the same real stroke cycle. Every real
+   stroke can generate 2–3 accepted peaks; the reported CPM is the mean of the
+   resulting rates (1/period), which is inflated because the arithmetic mean of
+   1/T over short + long intervals is biased upward.
+
+There is also a **state-carryover gap**: `detector.reset()` is called only in
+`setup()` and `exitDozeMode()`. The `CYCLE_RATE: 0` timeout branch
+(PadLog.ino, currently ~line 314) clears `g_cpm`, `g_strokeStreak`, and
+`g_hz` but does *not* reset the detector's rolling rate buffers, DC-EMA, or
+`_lastPeakVal/_lastTroughVal`. State from a bad segment (e.g. Part 3
+padzero, where the algorithm was known to misdetect) persists across the
+3-second timeout into the next segment. Offline replay of `padbad` from a
+clean detector state produces the correct 30 CPM, so state carryover is the
+likeliest single explanation for why the field firmware reported 87 CPM on a
+signal whose replay gives 30.
+
+### 16.3 Fix Candidates
+
+Both should be applied together.
+
+**Fix 1 — reset detector on timeout.** One-line change in PadLog.ino
+timeout branch: add `detector.reset();` alongside the existing `g_cpm=0` /
+`g_strokeStreak=0` clears. No regression risk — the branch only fires after
+3 s of inactivity, so no in-progress stroke is disrupted.
+
+**Fix 2 — prominence gate against last same-type extremum.** In
+`StrokeDetector`, track:
+
+- `_minSincePeak` — running minimum of the DC-removed signal since the last
+  accepted peak; reset to `val` when a new peak is accepted.
+- `_maxSinceTrough` — mirror for troughs.
+
+Reject a candidate peak if `val − _minSincePeak < PROMINENCE_DEG`. Reject a
+candidate trough if `_maxSinceTrough − val < PROMINENCE_DEG`. Recommended
+value: **30 °**.
+
+This measures prominence against the actual intervening excursion, not
+against a fixed time window (which fails at 0.25 Hz where a real peak looks
+locally flat) and not against the far-away opposite extremum (which is
+already the amplitude gate). It rejects shoulder wiggles that never
+actually descend, while accepting real peaks that follow a genuine trough.
+
+### 16.4 Regression Testing
+
+`firmware/test/paddlestroke_sim_test` (20-test suite ST-01..ST-20) passes
+20/20 with `PROMINENCE_DEG = 30` at all tested settings. Verified via a
+Python port of `StrokeDetector` (`visualisation/stroke_detector_sim.py`)
+run against a Python port of the sim test
+(`visualisation/stroke_regression.py`).
+
+### 16.5 Offline Analysis Tools (new)
+
+Added to `visualisation/` during the 11 Jul investigation. All are
+git-tracked, standalone Python scripts run against the CSVs in
+`visualisation/`:
+
+| Script | Purpose |
+|---|---|
+| `stroke_spectral.py` | FFT-based true stroke rate per file (whole-file + rolling 60 s windows) |
+| `stroke_compare.py` | Waveform + spectrum plot of a matched 30 s window between two files |
+| `stroke_hifreq.py` | Bandpower breakdown (fundamental / harmonic / wobble) + HPF simulation |
+| `stroke_detector_sim.py` | Pure-Python port of `StrokeDetector`, with optional prominence gate |
+| `stroke_regression.py` | Python port of the ST-01..ST-20 sim suite for algorithm iteration |
+| `stroke_chain.py` | Chain multiple CSVs through one detector to test state-carryover hypotheses |
+
+These are for algorithm iteration only — production timing decisions still
+require the on-hardware sim sketch.
+
+### 16.6 Future Cross-Checks (not scoped)
+
+Both are candidates if peak detection continues to be fragile on non-standard
+paddles. Neither is scheduled.
+
+- **Yaw-based CPM (relative yaw).** Paddle yaw minus boat yaw sweeps left/right
+  every stroke regardless of feather. Must live in **PadDis** — only place both
+  yaw signals coexist in one clock domain (via `rx_ms`). Amplitude gate would
+  need re-tuning; expected yaw excursion per stroke is 30–60 ° vs the 90–140 °
+  seen in roll. Value is as a diagnostic column (`cpm_yaw`) alongside the
+  roll-based `cpm`, not as a replacement.
+- **FFT-based CPM.** Trivially correct on `padbad` (offline analysis nailed
+  30 CPM); shape-insensitive. Latency is the killer — ±1 CPM resolution at
+  100 Hz needs a 60 s window, so it lags real pace changes by half the window.
+  Best home is PadDis (dual-core, has ESP-DSP) or PadViz post-processing.
+  Useful as a lagging reality-check displayed next to the peak-detector output.
+
+### 16.7 Applied to Firmware — 12 Jul 2026
+
+- **Fix 1 (`detector.reset()` on timeout)** added to `PadLog.ino` in the
+  `else if (detector.isTimedOut(nowUs) && !timeoutActive)` branch, alongside
+  the existing `g_strokeStreak=0` / `g_cpm=0` / `g_hz=0.0f` clears. Fires
+  after 3 s of inactivity — no in-progress stroke is disrupted.
+- **Fix 2 (30° prominence gate)** added to `StrokeDetector.h/.cpp`:
+  - New member variables `_minSincePeak`, `_maxSinceTrough`.
+  - New static const `PROMINENCE_DEG = 30.0f`.
+  - `update()` tracks the running min-since-last-peak / max-since-last-trough on
+    every sample after the HPF stage.
+  - `_onExtrema()` checks the candidate against the running excursion before
+    the amplitude gate; on acceptance the tracker resets to `val`.
+  - `reset()` zeros both trackers.
+- **Sim-test copy** at `firmware/test/paddlestroke_sim_test/StrokeDetector.{h,cpp}`
+  synced from production. On-hardware ST-01..ST-20 = 20/20 pass (COM13).
+- **PadLog** reflashed to COM3 with fixes. Still labelled v8.8 — algorithm
+  change only, payload struct unchanged so no PadDis/BoatLog coordination
+  needed.
+
+### 16.8 On-Water Verification Plan
+
+Five-segment protocol mirroring the 11 Jul session that surfaced the failure:
+
+1. Calibration run with the two-piece paddle.
+2. Normal (60° right-hand feather) paddling, 2 min.
+3. Left-hand feather, 2 min.
+4. Zero feather, 2 min. Expected: reported CPM is still poor (sub-90° roll
+   amplitude — this segment is not what the fixes target).
+5. Back to normal right-hand feather, 2 min or more.
+
+**Pass criteria:**
+- Segment 5 CPM must recover to within ±3 CPM of the true stroke rate within
+  ~15 s of paddling resuming. On 11 Jul this segment stuck at ~87 CPM
+  throughout; with Fix 1 the detector state clears between segments 4 and 5.
+- Segments 2, 3, 5 CPM must not drift high over the segment duration. If Fix 2
+  is doing its job, joint-play notches on the two-piece paddle are rejected
+  and CPM tracks the true rate.
+
+**Post-processing:** run `visualisation/stroke_spectral.py` on the new
+paddle CSVs to get the true rate per segment. Compare against the CSV's
+`cpm` column. If reported ≈ spectral within ±3 CPM across all segments,
+both fixes are validated.
+
+*Note on doze/wake:* the standard test protocol previously included a doze
+cycle, but doze is currently disabled at PadLog.ino line 28
+(`#define DOZE_DISABLED`), so `DOZE:` / `WAKE:` banners will not appear.
+Skip that step until doze is re-enabled.
