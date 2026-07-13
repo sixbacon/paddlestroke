@@ -78,6 +78,8 @@ Expected output ends with `Results: 20 passed, 0 failed`.
 
 The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `firmware/test/paddlestroke_sim_test/` are copies of those in `firmware/production/PadLog/`. Keep them in sync when changing the algorithm.
 
+For offline algorithm iteration against field CSVs there is a Python toolkit in `visualisation/stroke_*.py` (spec §16.5): `stroke_spectral.py` gives ground-truth CPM per file, `stroke_detector_sim.py` is a faithful Python port of StrokeDetector, `stroke_regression.py` ports the 20-test suite for quick pre-C++ checks, `stroke_acf.py` is the ACF cross-check prototype. Prototype algorithm changes there first; on-hardware sim remains authoritative for timing.
+
 ## Development Status
 
 - **Phase 1** — Algorithm + 20-test sim suite: complete
@@ -89,6 +91,7 @@ The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `firmware/test/padd
 - **Phase 7** — ESPnow full-IMU data link + CYD SD logging: complete (6 May 2026). All tests T-23–T-31 passed. Bug fixed: yaw wrap at ±180° caused EulerErr=360° (corrected with wrap-aware subtraction in RX sketch).
 - **Phase 8** — Production integration: complete (v8.6 flashed 18 May 2026). v8.1: hardware validated 12 May 2026. v8.2: streak gate, separate rate buffers, asymmetry bar. v8.3: doze/wake bug fixed (accelerometer left active in doze blocked RV wakeup events). v8.4: isRateMature gate + rolling-midpoint asymmetry. Field test 18 May 2026 revealed feather rotation artefacts inflating CPM ~1.7×. v8.5 (PadDis only): CSV_COLUMNS_REDUCED directive; 20-second CPM display EMA. v8.6: AMPLITUDE_GATE_DEG 45°→90°; Option 3 consecutive-event asymmetry; dark display theme. v8.7 (PadDis only): asymmetry bar removed; CPM EMA 20s→10s; yellow SD-absent warning. v8.8 (PadDis only): CSV_COLUMNS_REDUCED commented out — full 15-col CSV for PadViz4 position-tracking data collection. v8.9 (PadDis only): boat unit ESPnow integration; CPM 1dp display; speed/time/GPS warning; BoatLog00.CSV; GPS time stamped into paddle CSV. v8.10 (PadDis only): add rx_ms column (CYD-side ESPnow reception timestamp, captured in receive callback) to both paddle and boat CSVs — common clock domain enables sub-10 ms sync in post-processing.
 - **Phase 9** — Pending: blade entry/exit detection using accel_x/accel_y transients to detect blade catch and release independently of roll oscillation. Design not started.
+- **Detector robustness (12–13 Jul 2026, spec §16)** — 11 Jul field test with a two-piece paddle: joint-play shoulder notches drove reported CPM to 87 vs true 30. Fixes applied 12 Jul (commit 87f49d9): 30° prominence gate in StrokeDetector + `detector.reset()` on timeout in PadLog.ino; sim suite 20/20 on hardware; on-water verification pending (five-segment protocol, spec §16.8). 13 Jul algorithm review: peak detector kept — it is the only source of per-stroke events at ~1-stroke latency; an autocorrelation (ACF) cross-check was prototyped and validated offline (`visualisation/stroke_acf.py`, spec §16.9) — on the 11 Jul data it flags the padbad failure 100 % of the time with a 1–3 % nuisance rate during good paddling. Firmware port of the ACF arbiter is unscheduled until §16.8 passes. Known limit: zero-feather (symmetric) roll waveforms are half-period ambiguous for **any** roll-only algorithm — resolving needs relative yaw (§16.6) or Phase 9 accel transients. Full alternatives survey (zero-crossing, FFT, PLL, matched filter) in spec §16.6/§16.9.
 - **Phase 10** — Magnetometer calibration support: complete (9 Jul 2026, commit d8ce219). Coordinated release PadLog v8.8 / BoatLog v1.1 / PadDis v8.11 per spec §15.6. Enables `SH2_MAGNETIC_FIELD_CALIBRATED` at 10 Hz on both TX units, on-change `MAG_CAL:` serial, `sh2_saveDcdNow()` on first status=3. Payload struct grows: paddle 60→64 B (mag_cal + pad), boat 58→74 B (accel_x/y/z + mag_cal + pad — boat accel forwarding was previously read and discarded, spec §15.2.5 rider). New CSV columns: paddle gains `mag_cal`, boat gains `boat_accel_x/y/z,mag_cal`. PadDis SD paddle-log prefix renamed `ImuLog → PadLog`. Bench-verified 9 Jul 2026; T-41..T-46 hardware tests need cleaner mag environment or on-water session (see spec §15.7).
 
 ## Production Sketches
@@ -123,6 +126,7 @@ accel_x/y/z, mag_cal, _pad[3]
 
 - Cycle rate valid range: **0.25 – 2.5 Hz** (0.4 s – 4.0 s period)
 - Amplitude gate: peak-to-trough roll must be **≥ 90°** for a 60° feathered paddle (raised from 45° in v8.6 — field test 18 May 2026 showed feather rotation events reach 70–85° in filtered space, inflating CPM ~1.7× at 45°)
+- Prominence gate: a candidate extremum must sit **≥ 30°** beyond the running excursion since the last accepted same-type extremum (added 12 Jul 2026 — two-piece paddle joint play created shoulder notches that cleared the amplitude gate, spec §16.3)
 - Rate averaging: rolling window over the last **4 qualifying cycles** per buffer (separate peak/trough buffers, up to 8 values total)
 - Streak gate: CPM not reported until **3 consecutive qualifying strokes** detected AND both rate buffers hold ≥ 2 entries (`isRateMature()`)
 - IMU sample rate: minimum 50 Hz, 100 Hz preferred
@@ -228,8 +232,8 @@ ESP-NOW hardware CRC-32 validates every 802.11 frame. Corrupted packets are drop
 After every firmware change, run this minimum check before committing:
 1. PadDis shows CPM within 5 s of PadLog power-on (ESPnow link)
 2. Paddle at steady rate — CPM updates and stabilises on PadDis
-3. Hold still for doze timeout — `DOZE:` banner appears on PadLog serial
-4. Paddle briskly — `WAKE:` banner appears and CPM resumes
+3. Hold still for doze timeout — `DOZE:` banner appears on PadLog serial (**skip while doze is disabled** — `#define DOZE_DISABLED` at PadLog.ino line 28)
+4. Paddle briskly — `WAKE:` banner appears and CPM resumes (skip while doze is disabled)
 5. Confirm SD CSV created on PadDis with correct headers
 
 ## Git
