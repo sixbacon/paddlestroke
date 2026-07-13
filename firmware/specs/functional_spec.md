@@ -2392,6 +2392,40 @@ cycle, but doze is currently disabled at PadLog.ino line 28
 (`#define DOZE_DISABLED`), so `DOZE:` / `WAKE:` banners will not appear.
 Skip that step until doze is re-enabled.
 
+**Result — 13 Jul 2026: PASS.** Session recorded with the two-piece paddle
+(`PadLog20260713.CSV`, 35.5 min; segment line ranges in `notes20260713.txt`).
+Analysis script: `visualisation/stroke_field_verify.py` (spectral truth,
+reported-CPM error, ACF arbiter, recovery time per segment).
+
+| Segment | dur (s) | true CPM | rep>0 | rep median | med \|err\| | ACF median | arbiter flags | recovery |
+|---|---|---|---|---|---|---|---|---|
+| 2 right feather | 301 | 35.2 | 100 % | 35.0 | 0.8 | 35.3 | 0 % | 18.2 s |
+| 3 left feather | 239 | 31.9 | 100 % | 32.0 | 0.1 | 31.6 | 0 % | 0 s |
+| 4 zero feather | 260 | 65.5* | 0 % | — | — | 65.3* | — | — |
+| 5 right feather | 251 | 33.0 | 100 % | 33.0 | 1.0 | 32.9 | 0 % | **0 s** |
+
+\* zero-feather spectral/ACF read the stroke rate (2× the ~33 CPM cycle
+rate) — the documented roll-only half-period ambiguity. The firmware
+reported **nothing** during this segment (roll swing below the 90°
+amplitude gate), which the protocol accepted as expected behaviour.
+
+- **Criterion 1 (segment 5 recovery ≤ ~15 s): PASS** — reported CPM was
+  already within ±3 CPM at the start of segment 5's steady paddling, and
+  during the whole zero→right transition (100 s, including the paddle
+  change) reported values stayed 32–34 CPM. On 11 Jul this segment stuck
+  at 87.
+- **Criterion 2 (no drift high in segments 2/3/5): PASS** — median
+  \|reported − true\| ≤ 1.0 CPM in all three; maximum nonzero CPM across
+  the entire 35-minute file was 49 (brief bursts during launch/turn
+  manoeuvring), nothing resembling the 87-CPM runaway.
+- The ACF arbiter (§16.9) flagged 0 % of estimates in every reporting
+  segment — reported and ACF rates agree throughout, consistent with the
+  1–3 % nuisance rate measured on the 11 Jul good files.
+
+**Fix 1 + Fix 2 are validated on water. The §16.9 ACF arbiter firmware
+port is now unblocked** (still optional — this session gave it nothing to
+catch).
+
 ### 16.9 ACF Cross-Check Prototype — 13 Jul 2026 (validated offline, not in firmware)
 
 Prototype of the §16.6 frequency-domain cross-check, implemented in
