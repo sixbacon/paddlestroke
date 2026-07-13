@@ -2578,3 +2578,45 @@ events, so `stroke_count` does not advance; intermediate feather angles
 preferring the peak detector whenever it is mature. Session-to-session
 pitch offset shifts (§ Phase 9 notes, +14° trough shift 20→21 May) are
 irrelevant here — the ACF window is mean-removed.
+
+### 16.11 GRV Data-Collection Release — 14 Jul 2026 (PadLog v8.9 / BoatLog v1.2 / PadDis v8.12)
+
+Coordinated release adding the BNO085 **Game Rotation Vector** (accel+gyro
+fusion only, no magnetometer) to both TX payloads and both CSVs.
+
+**Why log it now:** GRV cannot be reconstructed offline — the fused
+Rotation Vector already has the mag corrections mixed in and raw gyro is
+not logged. Phase 9 catch-geometry work will need paddle-vs-boat relative
+yaw, and yaw is the one mag-steered component; the decision between fused
+RV yaw and mag-free GRV yaw should be made from real on-water data
+(fused-vs-GRV comparison per unit, against the logged `mag_cal`). Logging
+GRV from now on means every ordinary session builds that dataset without a
+dedicated trip. Not used by any display or algorithm — data collection
+only.
+
+**Changes per sketch:**
+
+| Sketch | Version | Change |
+|---|---|---|
+| PadLog | v8.8 → v8.9 | `SH2_GAME_ROTATION_VECTOR` at 100 Hz; latest quat cached and sent in each payload; GRV report disabled in `armDozeWakeup()` (same RV-starvation failure mode as the v8.3 accel fix); payload 64 → 80 B (`grv_qw..grv_qz` before `mag_cal`) |
+| BoatLog | v1.1 → v1.2 | Same report + cache + payload fields; payload 74 → 90 B |
+| PadDis | v8.11 → v8.12 | Both structs updated; CSV columns **appended at end**: paddle `grv_qw,grv_qx,grv_qy,grv_qz`, boat `boat_grv_qw..boat_grv_qz` (name-based parsers unaffected; index-based parsers see existing columns unchanged); reduced column set unchanged (GRV is research data, full set only); row buffers 220→280 / 280→340 |
+
+Quaternion (16 B) chosen over a derived yaw angle (4 B): the paddle's
+large pitch excursions make Euler yaw gimbal-prone, and the quaternion
+keeps all post-processing options open. Both payloads remain far under
+the 250 B ESPnow limit. GRV fields are identity (1,0,0,0) until the first
+GRV report arrives.
+
+**Bench verification (before next field session):**
+1. Standard test protocol (§ CLAUDE.md) — link up, CPM stabilises, CSVs
+   created with the new headers.
+2. Confirm paddle and boat CSV `*grv_*` columns are populated (non-identity)
+   and the quaternion norm ≈ 1.
+3. Confirm two concurrent 100 Hz rotation reports don't starve anything:
+   packet rate still ~100 Hz (`seq` gaps < 1 %), `CYCLE_RATE:` output
+   unaffected. The BNO085 is designed for concurrent reports but this is
+   the doze/wake lesson (v8.3): verify, don't assume.
+4. GRV sanity: with both units static side by side, each unit's GRV should
+   be constant (slow drift only); rotating a unit 90° should move its GRV
+   accordingly.

@@ -5,7 +5,7 @@
 #include <TinyGPSPlus.h>
 
 #define SKETCH_NAME    "BoatLog"
-#define SKETCH_VERSION "1.1"
+#define SKETCH_VERSION "1.2"
 
 // Define to disable ESPnow and echo raw NMEA to serial — for GPS bench testing only.
 // Comment out for normal operation.
@@ -25,10 +25,11 @@ struct __attribute__((packed)) BoatDataPayload {
     float    kayak_qw, kayak_qx, kayak_qy, kayak_qz;
     float    kayak_roll, kayak_pitch, kayak_yaw;
     float    accel_x, accel_y, accel_z;   // m/s², raw (includes gravity) — v1.1
+    float    grv_qw, grv_qx, grv_qy, grv_qz;  // game rotation vector (mag-free) — v1.2, spec §16.11
     uint8_t  mag_cal;                     // magnetometer accuracy 0–3 — v1.1
     uint8_t  _pad[3];                     // reserved, must be zero
 };
-static_assert(sizeof(BoatDataPayload) == 74, "BoatDataPayload size mismatch — check struct");
+static_assert(sizeof(BoatDataPayload) == 90, "BoatDataPayload size mismatch — check struct");
 
 // ── BNO085 pins (VSPI — same as PadLog) ──────────────────────────────────────
 #define BNO_CS    5
@@ -64,6 +65,12 @@ static bool     gpsPrinted  = false;   // T2 one-shot print flag
 static uint8_t  g_mag_cal       = 0;
 static uint8_t  g_mag_lastPrint = 255;   // sentinel — force first emit
 static bool     g_dcdSaved      = false;
+
+// Latest game rotation vector (mag-free) — identity until first report
+static float    g_grv_qw = 1.0f;
+static float    g_grv_qx = 0.0f;
+static float    g_grv_qy = 0.0f;
+static float    g_grv_qz = 0.0f;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 struct Euler { float yaw, pitch, roll; };
@@ -107,6 +114,9 @@ static int ukUtcOffsetHours(int y, int m, int d, int h) {
 static void enableReports() {
     bno.enableReport(SH2_ARVR_STABILIZED_RV, REPORT_US);
     bno.enableReport(SH2_ACCELEROMETER,       REPORT_US);
+    if (!bno.enableReport(SH2_GAME_ROTATION_VECTOR, REPORT_US)) {
+        Serial.println("GRV report enable failed");
+    }
     if (!bno.enableReport(SH2_MAGNETIC_FIELD_CALIBRATED, 100000UL)) {
         Serial.println("MAG report enable failed");
     }
@@ -209,6 +219,15 @@ void loop() {
         return;
     }
 
+    // Store latest game rotation vector (mag-free); used in next RV packet
+    if (sensorValue.sensorId == SH2_GAME_ROTATION_VECTOR) {
+        g_grv_qw = sensorValue.un.gameRotationVector.real;
+        g_grv_qx = sensorValue.un.gameRotationVector.i;
+        g_grv_qy = sensorValue.un.gameRotationVector.j;
+        g_grv_qz = sensorValue.un.gameRotationVector.k;
+        return;
+    }
+
     // Mag calibration status — accuracy is the low 2 bits of `.status`
     if (sensorValue.sensorId == SH2_MAGNETIC_FIELD_CALIBRATED) {
         g_mag_cal = sensorValue.status & 0x03;
@@ -286,6 +305,10 @@ void loop() {
     p.accel_x      = g_accel_x;
     p.accel_y      = g_accel_y;
     p.accel_z      = g_accel_z;
+    p.grv_qw       = g_grv_qw;
+    p.grv_qx       = g_grv_qx;
+    p.grv_qy       = g_grv_qy;
+    p.grv_qz       = g_grv_qz;
     p.mag_cal      = g_mag_cal;
     p._pad[0] = p._pad[1] = p._pad[2] = 0;
 

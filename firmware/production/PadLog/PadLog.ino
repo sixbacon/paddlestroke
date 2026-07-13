@@ -7,7 +7,7 @@
 #include "StrokeDetector.h"
 
 #define SKETCH_NAME    "PadLog"
-#define SKETCH_VERSION "8.8"
+#define SKETCH_VERSION "8.9"
 
 // ── Payload struct — must match PadDis (PadDis.ino) exactly ──────────────────
 struct __attribute__((packed)) ImuDataPayload {
@@ -19,10 +19,11 @@ struct __attribute__((packed)) ImuDataPayload {
     uint32_t stroke_count;                 // cumulative qualifying strokes
     uint32_t cpm;                          // current stroke rate CPM
     float    hz;                           // current stroke rate Hz
+    float    grv_qw, grv_qx, grv_qy, grv_qz;  // game rotation vector (mag-free) — v8.9, spec §16.11
     uint8_t  mag_cal;                      // magnetometer accuracy 0–3
     uint8_t  _pad[3];                      // reserved, must be zero
 };
-static_assert(sizeof(ImuDataPayload) == 64, "Payload size mismatch — check struct");
+static_assert(sizeof(ImuDataPayload) == 80, "Payload size mismatch — check struct");
 
 // ── Temporary diagnostic flags ────────────────────────────────────────────────
 #define DOZE_DISABLED       // comment out to restore doze mode
@@ -75,6 +76,12 @@ static uint8_t            g_mag_cal       = 0;
 static uint8_t            g_mag_lastPrint = 255;   // sentinel — force first emit
 static bool               g_dcdSaved      = false;
 
+// Latest game rotation vector (mag-free) — identity until first report
+static float              g_grv_qw        = 1.0f;
+static float              g_grv_qx        = 0.0f;
+static float              g_grv_qy        = 0.0f;
+static float              g_grv_qz        = 0.0f;
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 struct Euler { float yaw, pitch, roll; };
 
@@ -98,6 +105,9 @@ static void printTimestamp() {
 static void enableNormalReports() {
     bno.enableReport(SH2_ARVR_STABILIZED_RV, NORMAL_REPORT_US);
     bno.enableReport(SH2_ACCELEROMETER,       NORMAL_REPORT_US);
+    if (!bno.enableReport(SH2_GAME_ROTATION_VECTOR, NORMAL_REPORT_US)) {
+        Serial.println("GRV report enable failed");
+    }
     if (!bno.enableReport(SH2_MAGNETIC_FIELD_CALIBRATED, 100000UL)) {
         Serial.println("MAG report enable failed");
     }
@@ -139,6 +149,10 @@ static void sendImuPayload(const sh2_RotationVectorWAcc_t& rv, const Euler& e) {
     p.stroke_count = g_strokeCount;
     p.cpm          = g_cpm;
     p.hz           = g_hz;
+    p.grv_qw       = g_grv_qw;
+    p.grv_qx       = g_grv_qx;
+    p.grv_qy       = g_grv_qy;
+    p.grv_qz       = g_grv_qz;
     p.mag_cal      = g_mag_cal;
     p._pad[0] = p._pad[1] = p._pad[2] = 0;
     esp_now_send(broadcast, (uint8_t*)&p, sizeof(p));
@@ -146,7 +160,8 @@ static void sendImuPayload(const sh2_RotationVectorWAcc_t& rv, const Euler& e) {
 
 // ── Doze mode ─────────────────────────────────────────────────────────────────
 static void armDozeWakeup() {
-    bno.enableReport(SH2_ACCELEROMETER,       0);            // stop accel — was blocking RV events
+    bno.enableReport(SH2_ACCELEROMETER,        0);           // stop accel — was blocking RV events
+    bno.enableReport(SH2_GAME_ROTATION_VECTOR, 0);           // stop GRV — same failure mode (v8.3)
     bno.enableReport(SH2_ARVR_STABILIZED_RV, DOZE_REPORT_US);
     sh2_SensorValue_t dummy;
     unsigned long drainEnd = millis() + 100;
@@ -267,6 +282,15 @@ void loop() {
         g_accel_x = sensorValue.un.accelerometer.x;
         g_accel_y = sensorValue.un.accelerometer.y;
         g_accel_z = sensorValue.un.accelerometer.z;
+        return;
+    }
+
+    // Store latest game rotation vector (mag-free); used in next RV packet
+    if (sensorValue.sensorId == SH2_GAME_ROTATION_VECTOR) {
+        g_grv_qw = sensorValue.un.gameRotationVector.real;
+        g_grv_qx = sensorValue.un.gameRotationVector.i;
+        g_grv_qy = sensorValue.un.gameRotationVector.j;
+        g_grv_qz = sensorValue.un.gameRotationVector.k;
         return;
     }
 

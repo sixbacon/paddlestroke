@@ -5,8 +5,12 @@
 #include <SD.h>
 
 #define SKETCH_NAME    "PadDis"
-#define SKETCH_VERSION "8.11"
+#define SKETCH_VERSION "8.12"
 
+// v8.12 (spec §16.11): game rotation vector (mag-free quaternion) added to both
+// payloads and both CSVs (columns appended at end: grv_qw..grv_qz paddle,
+// boat_grv_qw..boat_grv_qz boat). Payloads grow paddle 64→80 B, boat 74→90 B —
+// PadLog v8.9 / BoatLog v1.2 / PadDis v8.12 must ship together.
 // v8.11 (Phase 10): mag_cal column on both CSVs + boat_accel_x/y/z columns on
 // boat CSV. Payload structs grow by 4 bytes (paddle) and 16 bytes (boat) —
 // PadLog v8.8 / BoatLog v1.1 / PadDis v8.11 must ship together.
@@ -26,10 +30,11 @@ struct __attribute__((packed)) ImuDataPayload {
     uint32_t stroke_count;
     uint32_t cpm;
     float    hz;
+    float    grv_qw, grv_qx, grv_qy, grv_qz;
     uint8_t  mag_cal;
     uint8_t  _pad[3];
 };
-static_assert(sizeof(ImuDataPayload) == 64, "ImuDataPayload size mismatch — check struct");
+static_assert(sizeof(ImuDataPayload) == 80, "ImuDataPayload size mismatch — check struct");
 
 // ── Boat payload — must match BoatLog exactly ─────────────────────────────────
 struct __attribute__((packed)) BoatDataPayload {
@@ -45,10 +50,11 @@ struct __attribute__((packed)) BoatDataPayload {
     float    kayak_qw, kayak_qx, kayak_qy, kayak_qz;
     float    kayak_roll, kayak_pitch, kayak_yaw;
     float    accel_x, accel_y, accel_z;
+    float    grv_qw, grv_qx, grv_qy, grv_qz;
     uint8_t  mag_cal;
     uint8_t  _pad[3];
 };
-static_assert(sizeof(BoatDataPayload) == 74, "BoatDataPayload size mismatch — check struct");
+static_assert(sizeof(BoatDataPayload) == 90, "BoatDataPayload size mismatch — check struct");
 
 // ── Pin assignments ───────────────────────────────────────────────────────────
 #define TFT_BL_PIN  21
@@ -283,7 +289,8 @@ void setup() {
                             "q_w,q_x,q_y,q_z,"
                             "roll,pitch,yaw,"
                             "stroke_count,cpm,"
-                            "gps_utc_sec,gps_uk_offset,rx_ms,mag_cal");
+                            "gps_utc_sec,gps_uk_offset,rx_ms,mag_cal,"
+                            "grv_qw,grv_qx,grv_qy,grv_qz");
 #endif
             Serial.print("Paddle logging to "); Serial.println(fname);
             sdReady = true;
@@ -305,7 +312,8 @@ void setup() {
                                 "gps_lat,gps_lon,gps_speed_ms,gps_cog_deg,gps_fix,"
                                 "kayak_qw,kayak_qx,kayak_qy,kayak_qz,"
                                 "kayak_roll,kayak_pitch,kayak_yaw,rx_ms,"
-                                "boat_accel_x,boat_accel_y,boat_accel_z,mag_cal");
+                                "boat_accel_x,boat_accel_y,boat_accel_z,mag_cal,"
+                                "boat_grv_qw,boat_grv_qx,boat_grv_qy,boat_grv_qz");
             Serial.print("Boat logging to "); Serial.println(bfname);
             boatSdReady = true;
         }
@@ -364,16 +372,18 @@ void loop() {
                 g_gps_utc_sec, (uint32_t)g_gps_uk_offset,
                 pktRxMs, (uint32_t)pkt.mag_cal);
 #else
-            char row[220];
+            char row[280];
             int n = snprintf(row, sizeof(row),
-                "%u,%u,%.5f,%.5f,%.5f,%.8f,%.8f,%.8f,%.8f,%.5f,%.5f,%.5f,%u,%u,%u,%u,%u,%u\n",
+                "%u,%u,%.5f,%.5f,%.5f,%.8f,%.8f,%.8f,%.8f,%.5f,%.5f,%.5f,%u,%u,%u,%u,%u,%u,"
+                "%.8f,%.8f,%.8f,%.8f\n",
                 pkt.seq, pkt.timestamp_ms,
                 pkt.accel_x, pkt.accel_y, pkt.accel_z,
                 pkt.q_w, pkt.q_x, pkt.q_y, pkt.q_z,
                 pkt.roll, pkt.pitch, pkt.yaw,
                 pkt.stroke_count, pkt.cpm,
                 g_gps_utc_sec, (uint32_t)g_gps_uk_offset,
-                pktRxMs, (uint32_t)pkt.mag_cal);
+                pktRxMs, (uint32_t)pkt.mag_cal,
+                pkt.grv_qw, pkt.grv_qx, pkt.grv_qy, pkt.grv_qz);
 #endif
             logFile.write((const uint8_t*)row, n);
         }
@@ -417,11 +427,12 @@ void loop() {
         lastBoatRxMs = now;
 
         if (boatSdReady) {
-            char row[280];
+            char row[340];
             int n = snprintf(row, sizeof(row),
                 "%u,%u,%u,%u,%.6f,%.6f,%.4f,%.2f,%u,"
                 "%.8f,%.8f,%.8f,%.8f,%.5f,%.5f,%.5f,%u,"
-                "%.5f,%.5f,%.5f,%u\n",
+                "%.5f,%.5f,%.5f,%u,"
+                "%.8f,%.8f,%.8f,%.8f\n",
                 bpkt.seq, bpkt.timestamp_ms,
                 bpkt.gps_utc_sec, (uint32_t)bpkt.gps_uk_offset,
                 (double)bpkt.gps_lat, (double)bpkt.gps_lon,
@@ -433,7 +444,9 @@ void loop() {
                 (double)bpkt.kayak_yaw,
                 bpktRxMs,
                 (double)bpkt.accel_x, (double)bpkt.accel_y, (double)bpkt.accel_z,
-                (uint32_t)bpkt.mag_cal);
+                (uint32_t)bpkt.mag_cal,
+                (double)bpkt.grv_qw, (double)bpkt.grv_qx,
+                (double)bpkt.grv_qy, (double)bpkt.grv_qz);
             boatLogFile.write((const uint8_t*)row, n);
         }
 
