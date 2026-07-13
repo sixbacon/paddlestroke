@@ -34,7 +34,7 @@ TOL_CPM = 3.0   # spec 16.8 recovery tolerance
 
 
 def load(fn):
-    ts, roll, cpm = [], [], []
+    ts, roll, cpm, seq = [], [], [], []
     with open(fn, encoding='utf-8-sig') as f:
         f.readline()
         r = csv.DictReader(f)
@@ -43,9 +43,27 @@ def load(fn):
                 ts.append(int(row['timestamp_ms']))
                 roll.append(float(row['roll']))
                 cpm.append(float(row['cpm']))
+                seq.append(int(row['seq']))
             except (ValueError, KeyError):
                 pass
-    return np.array(ts), np.array(roll), np.array(cpm)
+    return np.array(ts), np.array(roll), np.array(cpm), np.array(seq)
+
+
+def seq_gap_report(seq):
+    """ESPnow packet-loss check. Pre-v8.13 PadDis files start with a ~2000
+    packet gap (20 s splash-screen ring overflow); v8.13+ should show no
+    gap > ~10 anywhere. Verify on the first post-v8.13 field session."""
+    if len(seq) < 2:
+        print('seq gaps: not enough data')
+        return
+    d = np.diff(seq)
+    loss = 100.0 * (d - 1).sum() / (seq[-1] - seq[0])
+    gaps = np.where(d > 10)[0]
+    print(f'seq: overall loss {loss:.2f}%  |  gaps >10 packets: {len(gaps)}')
+    for g in gaps[:5]:
+        print(f'  gap of {int(d[g])} packets at row {g}')
+    if len(gaps) == 0:
+        print('  no significant gaps')
 
 
 def recovery_time_s(ts, cpm, true_cpm):
@@ -57,8 +75,9 @@ def recovery_time_s(ts, cpm, true_cpm):
 
 
 def main():
-    ts, roll, cpm = load(FILE)
+    ts, roll, cpm, seq = load(FILE)
     print(f'{FILE}: {len(ts)} rows, {(ts[-1] - ts[0]) / 1000.0:.0f} s span')
+    seq_gap_report(seq)
 
     hdr = (f"{'segment':8s}  {'dur':>5s}  {'true':>6s}  {'win_range':>12s}  "
            f"{'rep%>0':>6s}  {'rep_med':>7s}  {'|err|med':>8s}  "
