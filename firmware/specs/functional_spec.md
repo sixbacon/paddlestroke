@@ -2631,3 +2631,21 @@ received a packet stays empty (no header).
 4. GRV sanity: with both units static side by side, each unit's GRV should
    be constant (slow drift only); rotating a unit 90° should move its GRV
    accordingly.
+
+**Bench result — 13 Jul 2026: PASS.** All three units flashed and checked
+the same evening (paddle `/PadLog11.CSV`, boat `/BoatLog08.CSV`, 205 s):
+
+- Headers correct on both files, TX versions stamped:
+  `# PadDis v8.12 paddle | PadLog v8.9`, `# PadDis v8.12 boat | BoatLog v1.2`.
+- GRV columns populated on every row (no identity rows — the GRV report
+  beat the first packet), quaternion norm 1.0 ± 5×10⁻⁵ on both units, and
+  clear rotation signatures on all axes from the hand-rotation test.
+- No `GRV report enable failed` on either TX; PadLog's `CYCLE_RATE:`
+  timeout line confirms the RV stream still flows alongside the second
+  100 Hz rotation report.
+- Packet rate ~100 Hz. Apparent seq loss of 9.7 % is entirely one
+  ~1975-packet gap at row 30 of both files, spanning rx_ms 1.0 → 20.8 s:
+  the CYD's 20 s splash screen, during which received packets overflow the
+  32-entry ring. This is pre-existing PadDis behaviour, not a GRV-release
+  regression. Steady-state loss after the splash: 0.15 % paddle / 0.08 %
+  boat — comfortably inside the T-1 < 1 % criterion.
