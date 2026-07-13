@@ -2333,7 +2333,7 @@ paddles. Neither is scheduled.
   need re-tuning; expected yaw excursion per stroke is 30–60 ° vs the 90–140 °
   seen in roll. Value is as a diagnostic column (`cpm_yaw`) alongside the
   roll-based `cpm`, not as a replacement.
-  **Superseded 14 Jul 2026 — see §16.10:** plain paddle *pitch* carries the
+  **Superseded 13 Jul 2026 — see §16.10:** plain paddle *pitch* carries the
   full-cycle rate in every regime including zero feather, so no boat link,
   no PadDis-side computation, and no magnetometer exposure is needed.
 - **FFT-based CPM.** Trivially correct on `padbad` (offline analysis nailed
@@ -2411,7 +2411,7 @@ reported-CPM error, ACF arbiter, recovery time per segment).
 rate) — the documented roll-only half-period ambiguity. The firmware
 reported **nothing** during this segment (roll swing below the 90°
 amplitude gate), which the protocol accepted as expected behaviour.
-(Resolved the next day: the pitch channel reads the true cycle rate in
+(Resolved the same evening: the pitch channel reads the true cycle rate in
 this segment — §16.10.)
 
 - **Criterion 1 (segment 5 recovery ≤ ~15 s): PASS** — reported CPM was
@@ -2491,7 +2491,7 @@ Interpretation:
   distinguish a full cycle from a half cycle — the information is not in the
   signal. Resolving it needs a second signal (relative yaw per §16.6, or
   Phase 9 accel transients). The feathered-paddle configurations this
-  project targets are unaffected. **Resolved 14 Jul 2026 — see §16.10:**
+  project targets are unaffected. **Resolved 13 Jul 2026 — see §16.10:**
   the second signal is paddle pitch, already on the sensor; the same ACF
   fed pitch reads the true cycle rate in every regime.
 - **Latency:** first estimate at ~10 s (80 % buffer fill), then 1 Hz. For
@@ -2505,9 +2505,9 @@ arbiter flags, either zero the reported CPM or set a flag bit alongside it
 (payload change — would need a coordinated version bump per §15.6).
 Sequencing: hold until the §16.8 on-water test verifies Fix 1 + Fix 2, so
 the three changes are evaluated independently.
-**Update 14 Jul 2026: the port should be fed pitch, not roll — see §16.10.**
+**Update 13 Jul 2026: the port should be fed pitch, not roll — see §16.10.**
 
-### 16.10 Pitch Channel Resolves the Zero-Feather Ambiguity — 14 Jul 2026 (offline finding)
+### 16.10 Pitch Channel Resolves the Zero-Feather Ambiguity — 13 Jul 2026 (offline finding)
 
 Triggered by an external suggestion (Claude.ai conversation, 13 Jul) to
 replace the roll input with a *rotational energy* composite
@@ -2579,7 +2579,7 @@ preferring the peak detector whenever it is mature. Session-to-session
 pitch offset shifts (§ Phase 9 notes, +14° trough shift 20→21 May) are
 irrelevant here — the ACF window is mean-removed.
 
-### 16.11 GRV Data-Collection Release — 14 Jul 2026 (PadLog v8.9 / BoatLog v1.2 / PadDis v8.12)
+### 16.11 GRV Data-Collection Release — 13 Jul 2026 (PadLog v8.9 / BoatLog v1.2 / PadDis v8.12)
 
 Coordinated release adding the BNO085 **Game Rotation Vector** (accel+gyro
 fusion only, no magnetometer) to both TX payloads and both CSVs.
