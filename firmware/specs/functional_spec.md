@@ -2333,6 +2333,9 @@ paddles. Neither is scheduled.
   need re-tuning; expected yaw excursion per stroke is 30–60 ° vs the 90–140 °
   seen in roll. Value is as a diagnostic column (`cpm_yaw`) alongside the
   roll-based `cpm`, not as a replacement.
+  **Superseded 14 Jul 2026 — see §16.10:** plain paddle *pitch* carries the
+  full-cycle rate in every regime including zero feather, so no boat link,
+  no PadDis-side computation, and no magnetometer exposure is needed.
 - **FFT-based CPM.** Trivially correct on `padbad` (offline analysis nailed
   30 CPM); shape-insensitive. Latency is the killer — ±1 CPM resolution at
   100 Hz needs a 60 s window, so it lags real pace changes by half the window.
@@ -2408,6 +2411,8 @@ reported-CPM error, ACF arbiter, recovery time per segment).
 rate) — the documented roll-only half-period ambiguity. The firmware
 reported **nothing** during this segment (roll swing below the 90°
 amplitude gate), which the protocol accepted as expected behaviour.
+(Resolved the next day: the pitch channel reads the true cycle rate in
+this segment — §16.10.)
 
 - **Criterion 1 (segment 5 recovery ≤ ~15 s): PASS** — reported CPM was
   already within ±3 CPM at the start of segment 5's steady paddling, and
@@ -2486,7 +2491,9 @@ Interpretation:
   distinguish a full cycle from a half cycle — the information is not in the
   signal. Resolving it needs a second signal (relative yaw per §16.6, or
   Phase 9 accel transients). The feathered-paddle configurations this
-  project targets are unaffected.
+  project targets are unaffected. **Resolved 14 Jul 2026 — see §16.10:**
+  the second signal is paddle pitch, already on the sensor; the same ACF
+  fed pitch reads the true cycle rate in every regime.
 - **Latency:** first estimate at ~10 s (80 % buffer fill), then 1 Hz. For
   comparison the peak detector's maturity gate needs 3–4 strokes ≈ 6–8 s at
   30 CPM, so the arbiter comes online roughly one estimate behind the value
@@ -2498,3 +2505,76 @@ arbiter flags, either zero the reported CPM or set a flag bit alongside it
 (payload change — would need a coordinated version bump per §15.6).
 Sequencing: hold until the §16.8 on-water test verifies Fix 1 + Fix 2, so
 the three changes are evaluated independently.
+**Update 14 Jul 2026: the port should be fed pitch, not roll — see §16.10.**
+
+### 16.10 Pitch Channel Resolves the Zero-Feather Ambiguity — 14 Jul 2026 (offline finding)
+
+Triggered by an external suggestion (Claude.ai conversation, 13 Jul) to
+replace the roll input with a *rotational energy* composite
+(`wx² + wy² + wz²`) so the detector would be axis-agnostic and work at zero
+feather. **Rejected, with data:** squaring discards sign, and sign is what
+distinguishes a left stroke from a right one. Any energy-type signal is
+periodic at the *stroke* rate for every paddle — it would universalise the
+half-period ambiguity instead of fixing it. The 13 Jul session confirms:
+the squared-character channels (`|accel|`, `accel_z`) peak at 2× the true
+cycle rate even during *feathered* paddling. (The suggestion also assumed a
+hull-mounted sensor; ours is on the paddle shaft, and the zero-feather roll
+signal is strong, not weak — merely symmetric.)
+
+Reviewing that suggestion produced the real finding. Per-channel spectral
+peaks on the 13 Jul segments:
+
+| Channel | right feather (true 35.2) | zero feather (true ~32.8) |
+|---|---|---|
+| roll | 35.2 ✓ | 65.5 (2×) |
+| **pitch** | 35.2 ✓ | **32.8 ✓** (std 27°) |
+| **yaw** | 35.2 ✓ | **32.8 ✓** (std 42°) |
+| accel_z, \|accel\| | 70.4 (2×) | 65.5 (2×) |
+
+**Paddle pitch (and yaw) carry the true full-cycle rate in every regime.**
+The half-period limit stated in §16.6/§16.9 is a *roll-only* limit, not a
+sensor limit — and the second signal needed to resolve it is already on the
+paddle unit. No boat link, no relative yaw, no magnetometer exposure
+(pitch is mag-immune; yaw is not, which is one reason to prefer pitch).
+This is consistent with the 20 May 2026 finding that pitch classifies
+left-vs-right strokes at 92 %: pitch is asymmetric between sides even when
+roll is not.
+
+**Validation — the §16.9 ACF estimator re-run with pitch as input, no other
+changes (both sessions):**
+
+| Data | ACF on roll | ACF on pitch | true |
+|---|---|---|---|
+| 13 Jul right1 | 35.3 | 35.3 | 35.2 |
+| 13 Jul left | 31.6 | 31.6 | 31.9 |
+| 13 Jul **zero** | 65.3 (2×) | **32.7** | 32.8 |
+| 13 Jul right2 | 32.9 | 32.9 | 33.0 |
+| 11 Jul padcal | 35.7 (7 % valid) | 35.5 (6 % valid) | — (manoeuvres) |
+| 11 Jul padleft | 28.4 | 28.4 | ~28.5 |
+| 11 Jul **padzero** | 57.6 (2×) | **29.6** | ~29 |
+| 11 Jul padbad | 30.1 | 30.1 | ~30 |
+
+Pitch-fed ACF is correct in all eight cases, still catches padbad, and
+still stays silent during padcal manoeuvring (activity/quality gates work
+unchanged for pitch — paddling pitch std is ~27°, well over the 10° gate).
+
+**Consequence for the §16.9 firmware port — one change, two problems solved.**
+Feed `CadenceACF` pitch instead of roll:
+
+1. *Arbiter* (unchanged role): flags peak-detector runaways — padbad still
+   caught at 100 %.
+2. *Zero-feather fallback:* zero/small feather is detected **implicitly and
+   for free** — it is exactly the regime where the roll peak detector goes
+   silent (roll swing below the 90° amplitude gate) while the pitch ACF
+   stays valid. Rule: if the peak detector has reported nothing for N s
+   (it already tracks this via the 3 s timeout) and the pitch ACF is valid,
+   display the ACF CPM. An explicit regime check is also available if ever
+   needed: ACF-on-roll ≈ 2 × ACF-on-pitch identifies a symmetric waveform.
+
+Caveats for the fallback mode: first estimate ~10–12 s after paddling
+starts (ring-buffer fill) vs ~6–8 s for the peak detector; no per-stroke
+events, so `stroke_count` does not advance; intermediate feather angles
+(between 0° and 60°) are untested — mode switching should be hysteretic,
+preferring the peak detector whenever it is mature. Session-to-session
+pitch offset shifts (§ Phase 9 notes, +14° trough shift 20→21 May) are
+irrelevant here — the ACF window is mean-removed.
