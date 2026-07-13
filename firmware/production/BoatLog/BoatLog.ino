@@ -5,7 +5,13 @@
 #include <TinyGPSPlus.h>
 
 #define SKETCH_NAME    "BoatLog"
-#define SKETCH_VERSION "1.2"
+// Version as numbers — sent in the payload so PadDis can stamp the TX
+// version into the CSV header. SKETCH_VERSION derives from these.
+#define SKETCH_VER_MAJOR 1
+#define SKETCH_VER_MINOR 2
+#define STR2(x) #x
+#define STR(x) STR2(x)
+#define SKETCH_VERSION STR(SKETCH_VER_MAJOR) "." STR(SKETCH_VER_MINOR)
 
 // Define to disable ESPnow and echo raw NMEA to serial — for GPS bench testing only.
 // Comment out for normal operation.
@@ -27,7 +33,8 @@ struct __attribute__((packed)) BoatDataPayload {
     float    accel_x, accel_y, accel_z;   // m/s², raw (includes gravity) — v1.1
     float    grv_qw, grv_qx, grv_qy, grv_qz;  // game rotation vector (mag-free) — v1.2, spec §16.11
     uint8_t  mag_cal;                     // magnetometer accuracy 0–3 — v1.1
-    uint8_t  _pad[3];                     // reserved, must be zero
+    uint8_t  fw_major, fw_minor;          // BoatLog version — v1.2, stamped into CSV header by PadDis
+    uint8_t  _pad[1];                     // reserved, must be zero
 };
 static_assert(sizeof(BoatDataPayload) == 90, "BoatDataPayload size mismatch — check struct");
 
@@ -310,7 +317,9 @@ void loop() {
     p.grv_qy       = g_grv_qy;
     p.grv_qz       = g_grv_qz;
     p.mag_cal      = g_mag_cal;
-    p._pad[0] = p._pad[1] = p._pad[2] = 0;
+    p.fw_major     = SKETCH_VER_MAJOR;
+    p.fw_minor     = SKETCH_VER_MINOR;
+    p._pad[0]      = 0;
 
 #ifndef GPS_TEST_MODE
     esp_now_send(broadcast, (uint8_t*)&p, sizeof(p));

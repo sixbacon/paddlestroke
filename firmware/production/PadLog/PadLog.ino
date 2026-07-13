@@ -7,7 +7,13 @@
 #include "StrokeDetector.h"
 
 #define SKETCH_NAME    "PadLog"
-#define SKETCH_VERSION "8.9"
+// Version as numbers — sent in the payload so PadDis can stamp the TX
+// version into the CSV header. SKETCH_VERSION derives from these.
+#define SKETCH_VER_MAJOR 8
+#define SKETCH_VER_MINOR 9
+#define STR2(x) #x
+#define STR(x) STR2(x)
+#define SKETCH_VERSION STR(SKETCH_VER_MAJOR) "." STR(SKETCH_VER_MINOR)
 
 // ── Payload struct — must match PadDis (PadDis.ino) exactly ──────────────────
 struct __attribute__((packed)) ImuDataPayload {
@@ -21,7 +27,8 @@ struct __attribute__((packed)) ImuDataPayload {
     float    hz;                           // current stroke rate Hz
     float    grv_qw, grv_qx, grv_qy, grv_qz;  // game rotation vector (mag-free) — v8.9, spec §16.11
     uint8_t  mag_cal;                      // magnetometer accuracy 0–3
-    uint8_t  _pad[3];                      // reserved, must be zero
+    uint8_t  fw_major, fw_minor;           // PadLog version — v8.9, stamped into CSV header by PadDis
+    uint8_t  _pad[1];                      // reserved, must be zero
 };
 static_assert(sizeof(ImuDataPayload) == 80, "Payload size mismatch — check struct");
 
@@ -154,7 +161,9 @@ static void sendImuPayload(const sh2_RotationVectorWAcc_t& rv, const Euler& e) {
     p.grv_qy       = g_grv_qy;
     p.grv_qz       = g_grv_qz;
     p.mag_cal      = g_mag_cal;
-    p._pad[0] = p._pad[1] = p._pad[2] = 0;
+    p.fw_major     = SKETCH_VER_MAJOR;
+    p.fw_minor     = SKETCH_VER_MINOR;
+    p._pad[0]      = 0;
     esp_now_send(broadcast, (uint8_t*)&p, sizeof(p));
 }
 

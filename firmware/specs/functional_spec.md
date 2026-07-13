@@ -2608,9 +2608,20 @@ keeps all post-processing options open. Both payloads remain far under
 the 250 B ESPnow limit. GRV fields are identity (1,0,0,0) until the first
 GRV report arrives.
 
+**TX version stamping (same release):** two former pad bytes in each
+payload now carry the TX firmware version (`fw_major, fw_minor` — payload
+sizes unchanged; on the TX side `SKETCH_VERSION` is derived from the same
+two numeric defines, so string and bytes cannot diverge). PadDis writes
+each CSV header on the **first received packet** of that stream instead of
+at startup, so the comment line names the firmware that generated the
+data: `# PadDis v8.12 paddle | PadLog v8.9` and
+`# PadDis v8.12 boat | BoatLog v1.2`. A log file whose stream never
+received a packet stays empty (no header).
+
 **Bench verification (before next field session):**
 1. Standard test protocol (§ CLAUDE.md) — link up, CPM stabilises, CSVs
-   created with the new headers.
+   created with the new headers, including the TX version in each comment
+   line (`| PadLog v8.9`, `| BoatLog v1.2`).
 2. Confirm paddle and boat CSV `*grv_*` columns are populated (non-identity)
    and the quaternion norm ≈ 1.
 3. Confirm two concurrent 100 Hz rotation reports don't starve anything:

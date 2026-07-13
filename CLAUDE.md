@@ -108,15 +108,17 @@ For offline algorithm iteration against field CSVs there is a Python toolkit in 
 **Paddle payload struct** (80 bytes, float — must be identical in PadLog and PadDis):
 ```
 seq, timestamp_ms, accel_x/y/z, q_w/x/y/z, roll/pitch/yaw, stroke_count, cpm, hz,
-grv_qw/x/y/z, mag_cal, _pad[3]
+grv_qw/x/y/z, mag_cal, fw_major, fw_minor, _pad[1]
 ```
 
 **Boat payload struct** (90 bytes — must be identical in BoatLog and PadDis):
 ```
 seq, timestamp_ms, gps_utc_sec, gps_lat, gps_lon, gps_speed_ms, gps_cog_deg,
 gps_fix, gps_uk_offset, kayak_qw/x/y/z, kayak_roll/pitch/yaw,
-accel_x/y/z, grv_qw/x/y/z, mag_cal, _pad[3]
+accel_x/y/z, grv_qw/x/y/z, mag_cal, fw_major, fw_minor, _pad[1]
 ```
+
+`fw_major`/`fw_minor` carry the TX sketch version (from `SKETCH_VER_MAJOR/MINOR`, which also generate `SKETCH_VERSION` — single source of truth).
 
 **Key display findings (5 May 2026 / updated 30 Jun 2026):**
 - `setRotation(2)` gives correct landscape orientation on this unit (not rotation 1)
@@ -143,7 +145,7 @@ Paddle CSV files auto-numbered `/PadLog00.CSV` … `/PadLog99.CSV` on PadDis SD 
 - **Reduced** (re-enable for field use): `timestamp_ms, roll, pitch, yaw, stroke_count, cpm, gps_utc_sec, gps_uk_offset, rx_ms, mag_cal`
 - **Full** (v8.12 default — directive commented out): `seq, timestamp_ms, accel_x, accel_y, accel_z, q_w, q_x, q_y, q_z, roll, pitch, yaw, stroke_count, cpm, gps_utc_sec, gps_uk_offset, rx_ms, mag_cal, grv_qw, grv_qx, grv_qy, grv_qz`
 
-`gps_utc_sec` and `gps_uk_offset` are 0 when no GPS fix is active. `rx_ms` is CYD-side `millis()` captured at the moment the ESPnow receive callback fires — same clock domain on both paddle and boat log rows, so post-processing sync is a straight nearest-`rx_ms` match (< 10 ms typical). `mag_cal` is the BNO085 magnetometer accuracy 0–3 (see spec §15). First line of every file: `# PadDis v8.12 paddle` / `# PadDis v8.12 boat`. `cpm` column is raw (un-EMAd).
+`gps_utc_sec` and `gps_uk_offset` are 0 when no GPS fix is active. `rx_ms` is CYD-side `millis()` captured at the moment the ESPnow receive callback fires — same clock domain on both paddle and boat log rows, so post-processing sync is a straight nearest-`rx_ms` match (< 10 ms typical). `mag_cal` is the BNO085 magnetometer accuracy 0–3 (see spec §15). First line of every file names both RX and TX firmware: `# PadDis v8.12 paddle | PadLog v8.9` / `# PadDis v8.12 boat | BoatLog v1.2`. Headers are written on the **first received packet** of each stream (not at startup) so the TX version can be included; a stream that never received packets leaves an empty file. `cpm` column is raw (un-EMAd).
 
 **Boat log** (auto-numbered `/BoatLog00.CSV`): `seq, timestamp_ms, gps_utc_sec, gps_uk_offset, gps_lat, gps_lon, gps_speed_ms, gps_cog_deg, gps_fix, kayak_qw, kayak_qx, kayak_qy, kayak_qz, kayak_roll, kayak_pitch, kayak_yaw, rx_ms, boat_accel_x, boat_accel_y, boat_accel_z, mag_cal, boat_grv_qw, boat_grv_qx, boat_grv_qy, boat_grv_qz`
 

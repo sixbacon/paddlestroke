@@ -11,6 +11,9 @@
 // payloads and both CSVs (columns appended at end: grv_qw..grv_qz paddle,
 // boat_grv_qw..boat_grv_qz boat). Payloads grow paddle 64→80 B, boat 74→90 B —
 // PadLog v8.9 / BoatLog v1.2 / PadDis v8.12 must ship together.
+// Also v8.12: TX firmware version rides in two former pad bytes; CSV headers
+// are written on FIRST RECEIVED PACKET (not at startup) so the comment line
+// can name the TX version: "# PadDis v8.12 paddle | PadLog v8.9".
 // v8.11 (Phase 10): mag_cal column on both CSVs + boat_accel_x/y/z columns on
 // boat CSV. Payload structs grow by 4 bytes (paddle) and 16 bytes (boat) —
 // PadLog v8.8 / BoatLog v1.1 / PadDis v8.11 must ship together.
@@ -32,7 +35,8 @@ struct __attribute__((packed)) ImuDataPayload {
     float    hz;
     float    grv_qw, grv_qx, grv_qy, grv_qz;
     uint8_t  mag_cal;
-    uint8_t  _pad[3];
+    uint8_t  fw_major, fw_minor;
+    uint8_t  _pad[1];
 };
 static_assert(sizeof(ImuDataPayload) == 80, "ImuDataPayload size mismatch — check struct");
 
@@ -52,7 +56,8 @@ struct __attribute__((packed)) BoatDataPayload {
     float    accel_x, accel_y, accel_z;
     float    grv_qw, grv_qx, grv_qy, grv_qz;
     uint8_t  mag_cal;
-    uint8_t  _pad[3];
+    uint8_t  fw_major, fw_minor;
+    uint8_t  _pad[1];
 };
 static_assert(sizeof(BoatDataPayload) == 90, "BoatDataPayload size mismatch — check struct");
 
@@ -114,6 +119,39 @@ static bool   sdReady     = false;
 static bool   boatSdReady = false;
 static File   logFile;
 static File   boatLogFile;
+
+// CSV headers are written on the first received packet of each stream so the
+// comment line can carry the TX firmware version (v8.12).
+static bool   padHeaderDone  = false;
+static bool   boatHeaderDone = false;
+
+static void writePadHeader(uint8_t fwMajor, uint8_t fwMinor) {
+    logFile.printf("# " SKETCH_NAME " v" SKETCH_VERSION " paddle | PadLog v%u.%u\n",
+                   (unsigned)fwMajor, (unsigned)fwMinor);
+#ifdef CSV_COLUMNS_REDUCED
+    logFile.println("timestamp_ms,roll,pitch,yaw,stroke_count,cpm,"
+                    "gps_utc_sec,gps_uk_offset,rx_ms,mag_cal");
+#else
+    logFile.println("seq,timestamp_ms,"
+                    "accel_x,accel_y,accel_z,"
+                    "q_w,q_x,q_y,q_z,"
+                    "roll,pitch,yaw,"
+                    "stroke_count,cpm,"
+                    "gps_utc_sec,gps_uk_offset,rx_ms,mag_cal,"
+                    "grv_qw,grv_qx,grv_qy,grv_qz");
+#endif
+}
+
+static void writeBoatHeader(uint8_t fwMajor, uint8_t fwMinor) {
+    boatLogFile.printf("# " SKETCH_NAME " v" SKETCH_VERSION " boat | BoatLog v%u.%u\n",
+                       (unsigned)fwMajor, (unsigned)fwMinor);
+    boatLogFile.println("seq,timestamp_ms,gps_utc_sec,gps_uk_offset,"
+                        "gps_lat,gps_lon,gps_speed_ms,gps_cog_deg,gps_fix,"
+                        "kayak_qw,kayak_qx,kayak_qy,kayak_qz,"
+                        "kayak_roll,kayak_pitch,kayak_yaw,rx_ms,"
+                        "boat_accel_x,boat_accel_y,boat_accel_z,mag_cal,"
+                        "boat_grv_qw,boat_grv_qx,boat_grv_qy,boat_grv_qz");
+}
 
 static bool          hasReceived     = false;
 static int           displayedCpmX10 = -1;
@@ -279,19 +317,7 @@ void setup() {
         if (!logFile) {
             Serial.println("Paddle log open failed");
         } else {
-            logFile.println("# " SKETCH_NAME " v" SKETCH_VERSION " paddle");
-#ifdef CSV_COLUMNS_REDUCED
-            logFile.println("timestamp_ms,roll,pitch,yaw,stroke_count,cpm,"
-                            "gps_utc_sec,gps_uk_offset,rx_ms,mag_cal");
-#else
-            logFile.println("seq,timestamp_ms,"
-                            "accel_x,accel_y,accel_z,"
-                            "q_w,q_x,q_y,q_z,"
-                            "roll,pitch,yaw,"
-                            "stroke_count,cpm,"
-                            "gps_utc_sec,gps_uk_offset,rx_ms,mag_cal,"
-                            "grv_qw,grv_qx,grv_qy,grv_qz");
-#endif
+            // Header written on first received packet (carries PadLog version)
             Serial.print("Paddle logging to "); Serial.println(fname);
             sdReady = true;
         }
@@ -307,13 +333,7 @@ void setup() {
         if (!boatLogFile) {
             Serial.println("Boat log open failed");
         } else {
-            boatLogFile.println("# " SKETCH_NAME " v" SKETCH_VERSION " boat");
-            boatLogFile.println("seq,timestamp_ms,gps_utc_sec,gps_uk_offset,"
-                                "gps_lat,gps_lon,gps_speed_ms,gps_cog_deg,gps_fix,"
-                                "kayak_qw,kayak_qx,kayak_qy,kayak_qz,"
-                                "kayak_roll,kayak_pitch,kayak_yaw,rx_ms,"
-                                "boat_accel_x,boat_accel_y,boat_accel_z,mag_cal,"
-                                "boat_grv_qw,boat_grv_qx,boat_grv_qy,boat_grv_qz");
+            // Header written on first received packet (carries BoatLog version)
             Serial.print("Boat logging to "); Serial.println(bfname);
             boatSdReady = true;
         }
@@ -362,6 +382,10 @@ void loop() {
         lastRxMs    = now;
 
         if (sdReady) {
+            if (!padHeaderDone) {
+                writePadHeader(pkt.fw_major, pkt.fw_minor);
+                padHeaderDone = true;
+            }
 #ifdef CSV_COLUMNS_REDUCED
             char row[96];
             int n = snprintf(row, sizeof(row),
@@ -427,6 +451,10 @@ void loop() {
         lastBoatRxMs = now;
 
         if (boatSdReady) {
+            if (!boatHeaderDone) {
+                writeBoatHeader(bpkt.fw_major, bpkt.fw_minor);
+                boatHeaderDone = true;
+            }
             char row[340];
             int n = snprintf(row, sizeof(row),
                 "%u,%u,%u,%u,%.6f,%.6f,%.4f,%.2f,%u,"
