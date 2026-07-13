@@ -2649,3 +2649,14 @@ the same evening (paddle `/PadLog11.CSV`, boat `/BoatLog08.CSV`, 205 s):
   32-entry ring. This is pre-existing PadDis behaviour, not a GRV-release
   regression. Steady-state loss after the splash: 0.15 % paddle / 0.08 %
   boat — comfortably inside the T-1 < 1 % criterion.
+
+**Splash gap fixed — PadDis v8.13 (13 Jul 2026, PadDis only, no payload
+change).** The splash wait now drains both rings to SD instead of
+`delay(SPLASH_MS)`: SD row writers were factored out of `loop()` into
+`logPaddlePacket()`/`logBoatPacket()` (the latter also owns the GPS-time
+globals, so paddle rows stamped during the splash get correct GPS time)
+and a drain loop runs for the 20 s splash with no display calls. Serial
+prints `Splash drain: N paddle + M boat packets logged` at splash end —
+bench: 1998 + 1995, i.e. the packets that previously overflowed. Display
+change in the same version: speed line shows a grey `-- kn` placeholder
+when no GPS/boat data, matching the existing `-- cpm` placeholder.

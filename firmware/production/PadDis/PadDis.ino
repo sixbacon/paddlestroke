@@ -5,8 +5,12 @@
 #include <SD.h>
 
 #define SKETCH_NAME    "PadDis"
-#define SKETCH_VERSION "8.12"
+#define SKETCH_VERSION "8.13"
 
+// v8.13 (PadDis only): splash screen no longer drops packets — the 20 s
+// splash wait drains both rings to SD instead of delay(SPLASH_MS), fixing
+// the ~2000-packet seq gap found in the §16.11 bench check. Display: speed
+// line shows "-- kn" placeholder when no GPS/boat data (matches "-- cpm").
 // v8.12 (spec §16.11): game rotation vector (mag-free quaternion) added to both
 // payloads and both CSVs (columns appended at end: grv_qw..grv_qz paddle,
 // boat_grv_qw..boat_grv_qz boat). Payloads grow paddle 64→80 B, boat 74→90 B —
@@ -153,6 +157,83 @@ static void writeBoatHeader(uint8_t fwMajor, uint8_t fwMinor) {
                         "boat_grv_qw,boat_grv_qx,boat_grv_qy,boat_grv_qz");
 }
 
+// ── Last-known GPS time (updated from boat packets) ───────────────────────────
+static uint32_t g_gps_utc_sec   = 0;
+static uint8_t  g_gps_uk_offset = 0;
+
+// SD row writers — called from loop() and from the splash-time drain, so the
+// 20 s splash wait no longer drops packets to ring overflow (v8.13).
+static void logPaddlePacket(const ImuDataPayload& pkt, uint32_t pktRxMs) {
+    if (!sdReady) return;
+    if (!padHeaderDone) {
+        writePadHeader(pkt.fw_major, pkt.fw_minor);
+        padHeaderDone = true;
+    }
+#ifdef CSV_COLUMNS_REDUCED
+    char row[96];
+    int n = snprintf(row, sizeof(row),
+        "%u,%.5f,%.5f,%.5f,%u,%u,%u,%u,%u,%u\n",
+        pkt.timestamp_ms,
+        pkt.roll, pkt.pitch, pkt.yaw,
+        pkt.stroke_count, pkt.cpm,
+        g_gps_utc_sec, (uint32_t)g_gps_uk_offset,
+        pktRxMs, (uint32_t)pkt.mag_cal);
+#else
+    char row[280];
+    int n = snprintf(row, sizeof(row),
+        "%u,%u,%.5f,%.5f,%.5f,%.8f,%.8f,%.8f,%.8f,%.5f,%.5f,%.5f,%u,%u,%u,%u,%u,%u,"
+        "%.8f,%.8f,%.8f,%.8f\n",
+        pkt.seq, pkt.timestamp_ms,
+        pkt.accel_x, pkt.accel_y, pkt.accel_z,
+        pkt.q_w, pkt.q_x, pkt.q_y, pkt.q_z,
+        pkt.roll, pkt.pitch, pkt.yaw,
+        pkt.stroke_count, pkt.cpm,
+        g_gps_utc_sec, (uint32_t)g_gps_uk_offset,
+        pktRxMs, (uint32_t)pkt.mag_cal,
+        pkt.grv_qw, pkt.grv_qx, pkt.grv_qy, pkt.grv_qz);
+#endif
+    logFile.write((const uint8_t*)row, n);
+}
+
+static void logBoatPacket(const BoatDataPayload& bpkt, uint32_t bpktRxMs) {
+    if (boatSdReady) {
+        if (!boatHeaderDone) {
+            writeBoatHeader(bpkt.fw_major, bpkt.fw_minor);
+            boatHeaderDone = true;
+        }
+        char row[340];
+        int n = snprintf(row, sizeof(row),
+            "%u,%u,%u,%u,%.6f,%.6f,%.4f,%.2f,%u,"
+            "%.8f,%.8f,%.8f,%.8f,%.5f,%.5f,%.5f,%u,"
+            "%.5f,%.5f,%.5f,%u,"
+            "%.8f,%.8f,%.8f,%.8f\n",
+            bpkt.seq, bpkt.timestamp_ms,
+            bpkt.gps_utc_sec, (uint32_t)bpkt.gps_uk_offset,
+            (double)bpkt.gps_lat, (double)bpkt.gps_lon,
+            (double)bpkt.gps_speed_ms, (double)bpkt.gps_cog_deg,
+            (uint32_t)bpkt.gps_fix,
+            (double)bpkt.kayak_qw, (double)bpkt.kayak_qx,
+            (double)bpkt.kayak_qy, (double)bpkt.kayak_qz,
+            (double)bpkt.kayak_roll, (double)bpkt.kayak_pitch,
+            (double)bpkt.kayak_yaw,
+            bpktRxMs,
+            (double)bpkt.accel_x, (double)bpkt.accel_y, (double)bpkt.accel_z,
+            (uint32_t)bpkt.mag_cal,
+            (double)bpkt.grv_qw, (double)bpkt.grv_qx,
+            (double)bpkt.grv_qy, (double)bpkt.grv_qz);
+        boatLogFile.write((const uint8_t*)row, n);
+    }
+
+    // GPS time for paddle rows — data path, must track during splash too
+    if (bpkt.gps_fix) {
+        g_gps_utc_sec   = bpkt.gps_utc_sec;
+        g_gps_uk_offset = bpkt.gps_uk_offset;
+    } else {
+        g_gps_utc_sec   = 0;
+        g_gps_uk_offset = 0;
+    }
+}
+
 static bool          hasReceived     = false;
 static int           displayedCpmX10 = -1;
 static unsigned long lastRxMs        = 0;
@@ -163,10 +244,6 @@ static unsigned long lastBoatRxMs = 0;
 // ── CPM EMA state ─────────────────────────────────────────────────────────────
 static float cpmEma    = 0.0f;
 static bool  cpmSeeded = false;
-
-// ── Last-known GPS time (updated from boat packets) ───────────────────────────
-static uint32_t g_gps_utc_sec   = 0;
-static uint8_t  g_gps_uk_offset = 0;
 
 // ── Top-line shared state (time + both circles) ───────────────────────────────
 static int  g_iconCx, g_boatIconCx, g_iconCy;
@@ -240,12 +317,14 @@ static void drawTopLine() {
 
 static void drawSpeed(float speed_ms, bool show) {
     tft.fillRect(0, LINE2_Y, tft.width(), LINE_H_LG + 2, TFT_BLACK);
-    if (!show) return;
     char buf[12];
-    snprintf(buf, sizeof(buf), "%.1f kn", (double)(speed_ms * 1.94384f));
+    if (show)
+        snprintf(buf, sizeof(buf), "%.1f kn", (double)(speed_ms * 1.94384f));
+    else
+        snprintf(buf, sizeof(buf), "-- kn");   // placeholder, matches "-- cpm"
     tft.setTextFont(4);
     tft.setTextSize(2);
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setTextColor(show ? TFT_WHITE : GREY, TFT_BLACK);
     tft.setCursor((tft.width() - tft.textWidth(buf)) / 2, LINE2_Y);
     tft.print(buf);
     tft.setTextSize(1);
@@ -352,7 +431,36 @@ void setup() {
     if (esp_now_init() != ESP_OK) fatalError("ESPnow init FAILED");
     esp_now_register_recv_cb(onReceive);
 
-    delay(SPLASH_MS);
+    // Splash wait — drain both rings to SD instead of delay(SPLASH_MS), which
+    // dropped ~2000 packets to ring overflow (§16.11 bench check, v8.13 fix).
+    // Display untouched: splash stays visible, no draw calls here.
+    {
+        unsigned long splashEnd = millis() + SPLASH_MS;
+        uint32_t nPad = 0, nBoat = 0;
+        while (millis() < splashEnd) {
+            ImuDataPayload  pkt;  uint32_t prx = 0; bool gotP = false;
+            BoatDataPayload bpkt; uint32_t brx = 0; bool gotB = false;
+            portENTER_CRITICAL(&rxMux);
+            if (rxHead != rxTail) {
+                pkt    = rxRing[rxTail].p;
+                prx    = rxRing[rxTail].rx_ms;
+                rxTail = (rxTail + 1) % RING_SIZE;
+                gotP   = true;
+            }
+            if (boatHead != boatTail) {
+                bpkt     = boatRing[boatTail].p;
+                brx      = boatRing[boatTail].rx_ms;
+                boatTail = (boatTail + 1) % BOAT_RING_SIZE;
+                gotB     = true;
+            }
+            portEXIT_CRITICAL(&rxMux);
+            if (gotP) { logPaddlePacket(pkt, prx);  nPad++;  }
+            if (gotB) { logBoatPacket(bpkt, brx);   nBoat++; }
+            if (!gotP && !gotB) delay(2);
+        }
+        Serial.printf("Splash drain: %u paddle + %u boat packets logged\n",
+                      nPad, nBoat);
+    }
 
     tft.fillScreen(TFT_BLACK);
     drawTopLine();
@@ -381,36 +489,7 @@ void loop() {
         hasReceived = true;
         lastRxMs    = now;
 
-        if (sdReady) {
-            if (!padHeaderDone) {
-                writePadHeader(pkt.fw_major, pkt.fw_minor);
-                padHeaderDone = true;
-            }
-#ifdef CSV_COLUMNS_REDUCED
-            char row[96];
-            int n = snprintf(row, sizeof(row),
-                "%u,%.5f,%.5f,%.5f,%u,%u,%u,%u,%u,%u\n",
-                pkt.timestamp_ms,
-                pkt.roll, pkt.pitch, pkt.yaw,
-                pkt.stroke_count, pkt.cpm,
-                g_gps_utc_sec, (uint32_t)g_gps_uk_offset,
-                pktRxMs, (uint32_t)pkt.mag_cal);
-#else
-            char row[280];
-            int n = snprintf(row, sizeof(row),
-                "%u,%u,%.5f,%.5f,%.5f,%.8f,%.8f,%.8f,%.8f,%.5f,%.5f,%.5f,%u,%u,%u,%u,%u,%u,"
-                "%.8f,%.8f,%.8f,%.8f\n",
-                pkt.seq, pkt.timestamp_ms,
-                pkt.accel_x, pkt.accel_y, pkt.accel_z,
-                pkt.q_w, pkt.q_x, pkt.q_y, pkt.q_z,
-                pkt.roll, pkt.pitch, pkt.yaw,
-                pkt.stroke_count, pkt.cpm,
-                g_gps_utc_sec, (uint32_t)g_gps_uk_offset,
-                pktRxMs, (uint32_t)pkt.mag_cal,
-                pkt.grv_qw, pkt.grv_qx, pkt.grv_qy, pkt.grv_qz);
-#endif
-            logFile.write((const uint8_t*)row, n);
-        }
+        logPaddlePacket(pkt, pktRxMs);
 
         if (pkt.cpm == 0) {
             cpmEma    = 0.0f;
@@ -450,41 +529,7 @@ void loop() {
         boatReceived = true;
         lastBoatRxMs = now;
 
-        if (boatSdReady) {
-            if (!boatHeaderDone) {
-                writeBoatHeader(bpkt.fw_major, bpkt.fw_minor);
-                boatHeaderDone = true;
-            }
-            char row[340];
-            int n = snprintf(row, sizeof(row),
-                "%u,%u,%u,%u,%.6f,%.6f,%.4f,%.2f,%u,"
-                "%.8f,%.8f,%.8f,%.8f,%.5f,%.5f,%.5f,%u,"
-                "%.5f,%.5f,%.5f,%u,"
-                "%.8f,%.8f,%.8f,%.8f\n",
-                bpkt.seq, bpkt.timestamp_ms,
-                bpkt.gps_utc_sec, (uint32_t)bpkt.gps_uk_offset,
-                (double)bpkt.gps_lat, (double)bpkt.gps_lon,
-                (double)bpkt.gps_speed_ms, (double)bpkt.gps_cog_deg,
-                (uint32_t)bpkt.gps_fix,
-                (double)bpkt.kayak_qw, (double)bpkt.kayak_qx,
-                (double)bpkt.kayak_qy, (double)bpkt.kayak_qz,
-                (double)bpkt.kayak_roll, (double)bpkt.kayak_pitch,
-                (double)bpkt.kayak_yaw,
-                bpktRxMs,
-                (double)bpkt.accel_x, (double)bpkt.accel_y, (double)bpkt.accel_z,
-                (uint32_t)bpkt.mag_cal,
-                (double)bpkt.grv_qw, (double)bpkt.grv_qx,
-                (double)bpkt.grv_qy, (double)bpkt.grv_qz);
-            boatLogFile.write((const uint8_t*)row, n);
-        }
-
-        if (bpkt.gps_fix) {
-            g_gps_utc_sec   = bpkt.gps_utc_sec;
-            g_gps_uk_offset = bpkt.gps_uk_offset;
-        } else {
-            g_gps_utc_sec   = 0;
-            g_gps_uk_offset = 0;
-        }
+        logBoatPacket(bpkt, bpktRxMs);
 
         static bool prevFixActive = false;
         bool thisFixActive = (bpkt.gps_fix != 0);
