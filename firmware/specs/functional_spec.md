@@ -2317,6 +2317,7 @@ git-tracked, standalone Python scripts run against the CSVs in
 | `stroke_detector_sim.py` | Pure-Python port of `StrokeDetector`, with optional prominence gate |
 | `stroke_regression.py` | Python port of the ST-01..ST-20 sim suite for algorithm iteration |
 | `stroke_chain.py` | Chain multiple CSVs through one detector to test state-carryover hypotheses |
+| `stroke_acf.py` | Firmware-shaped autocorrelation CPM estimator + disagreement arbiter (see §16.9) |
 
 These are for algorithm iteration only — production timing decisions still
 require the on-hardware sim sketch.
@@ -2337,6 +2338,10 @@ paddles. Neither is scheduled.
   100 Hz needs a 60 s window, so it lags real pace changes by half the window.
   Best home is PadDis (dual-core, has ESP-DSP) or PadViz post-processing.
   Useful as a lagging reality-check displayed next to the peak-detector output.
+  **Superseded 13 Jul 2026 by the autocorrelation variant — see §16.9**, which
+  gets the same shape-insensitivity with a 12 s window, sub-lag period
+  resolution via parabolic interpolation, and a memory/CPU budget small enough
+  to live in PadLog itself.
 
 ### 16.7 Applied to Firmware — 12 Jul 2026
 
@@ -2386,3 +2391,76 @@ both fixes are validated.
 cycle, but doze is currently disabled at PadLog.ino line 28
 (`#define DOZE_DISABLED`), so `DOZE:` / `WAKE:` banners will not appear.
 Skip that step until doze is re-enabled.
+
+### 16.9 ACF Cross-Check Prototype — 13 Jul 2026 (validated offline, not in firmware)
+
+Prototype of the §16.6 frequency-domain cross-check, implemented in
+`visualisation/stroke_acf.py` and validated against the four 11 Jul CSVs.
+Autocorrelation was chosen over FFT: same shape-insensitivity, smaller
+window (12 s vs 60 s for equivalent CPM resolution), no bin-resolution or
+windowing decisions, and the half-period check is a direct lag comparison.
+
+**Design (deliberately firmware-shaped — every step ports to plain C++ loops):**
+
+| Parameter | Value | Rationale |
+|---|---|---|
+| Downsample | 100 Hz → 10 Hz, 10-sample block average | anti-alias + 10× cost cut |
+| Ring buffer | 12 s = 120 floats (480 B) | ~6 strokes at 30 CPM |
+| Update rate | 1 estimate per second | arbiter role, not display |
+| Lag range | 0.7 – 4.0 s (86 – 15 CPM) | brackets valid cadence band |
+| ACF form | normalised cross-correlation per lag | amplitude-independent |
+| Zero-lag hill guard | search peaks only after ACF first drops below 0.30 | see below — required |
+| Fundamental pick | smallest-lag local max ≥ 0.75 × global max | full period beats half period on asymmetric (feathered) waveforms |
+| Refinement | 3-point parabolic interpolation around the peak lag | sub-lag period precision (~±1 CPM at 30 CPM) |
+| Activity gate | window std ≥ 10° roll | replaces the amplitude gate |
+| Quality gate | peak ACF ≥ 0.5, buffer ≥ 80 % full | suppresses output when not periodic |
+| **Arbiter rule** | flag when \|reported − ACF\| / ACF > 0.30 and both report | the actual cross-check |
+
+CPU cost: ~40 normalised dot products of ≤ 120 samples, once per second —
+microseconds on the ESP32. Memory: 480 B buffer + ~200 B working state.
+
+**Zero-lag hill guard (found during prototyping, mandatory for the port):**
+smooth slow motion (e.g. figure-of-eight manoeuvres in `padcal`) correlates
+trivially at short lags, so a naive argmax pins to the minimum-lag boundary
+(85.7 CPM = 60/0.7 exactly). Peaks are only meaningful after the ACF has
+first decorrelated; if it never drops below 0.30 within the lag range the
+window contains no oscillation and no estimate is emitted.
+
+**Results on the 11 Jul session (streamed, as the firmware would see it):**
+
+| File | ACF median CPM | ACF 10–90 pct | Valid | Reported mean | Arbiter flags |
+|---|---|---|---|---|---|
+| padcal | 35.7 | 31.2 – 39.0 | 7 % | 36.4 | 0 % |
+| padnormal | 31.3 | 25.9 – 34.9 | 82 % | 32.8 | 2 % |
+| padleft | 28.4 | 27.7 – 30.0 | 100 % | 28.9 | 1 % |
+| padzero | 57.6 | 29.8 – 61.4 | 100 % | 46.0 | 13 % |
+| **padbad** | **30.1** | **29.0 – 31.2** | 94 % | **87.4** | **100 %** |
+
+Interpretation:
+
+- **padbad is the headline:** the ACF held a rock-steady 30 CPM on the same
+  data that drove the peak detector to 87. The arbiter rule alone — without
+  Fix 1 or Fix 2 — would have suppressed or flagged the bad output for the
+  entire segment.
+- **No nuisance trips:** during good paddling (padnormal, padleft) the two
+  estimators agree within ~2 CPM and the arbiter fires on only 1–3 % of
+  estimates. During non-paddling manoeuvres (padcal) the activity and
+  quality gates keep the ACF silent.
+- **Known limit — half-period ambiguity on symmetric waveforms:** padzero
+  reads ~58 CPM (the half period). With zero feather, left and right strokes
+  produce near-identical roll signatures, and *no roll-only algorithm* can
+  distinguish a full cycle from a half cycle — the information is not in the
+  signal. Resolving it needs a second signal (relative yaw per §16.6, or
+  Phase 9 accel transients). The feathered-paddle configurations this
+  project targets are unaffected.
+- **Latency:** first estimate at ~10 s (80 % buffer fill), then 1 Hz. For
+  comparison the peak detector's maturity gate needs 3–4 strokes ≈ 6–8 s at
+  30 CPM, so the arbiter comes online roughly one estimate behind the value
+  it is checking.
+
+**Proposed firmware integration (not scheduled):** port into PadLog as a
+`CadenceACF` class fed from the same post-HPF roll as the detector. When the
+arbiter flags, either zero the reported CPM or set a flag bit alongside it
+(payload change — would need a coordinated version bump per §15.6).
+Sequencing: hold until the §16.8 on-water test verifies Fix 1 + Fix 2, so
+the three changes are evaluated independently.
