@@ -4,7 +4,7 @@ For each notes-defined segment: spectral ground-truth CPM, reported CPM
 stats, ACF cross-check + arbiter flag rate, and time-to-correct-CPM from
 segment start (16.8 recovery criterion, pass = within +/-3 CPM inside ~15 s).
 
-Segments below are the 13 Jul 2026 session (notes20260713.txt); edit for
+Segments below are the 16 Jul 2026 session (notes20260717.txt); edit for
 future sessions. Line numbers are 1-based CSV file lines (line 1 = comment,
 line 2 = header, so data row = line - 3).
 
@@ -20,14 +20,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from stroke_acf import acf_estimate, stream, DISAGREE          # noqa: E402
 from stroke_spectral import spectral_rate, windowed_rates      # noqa: E402
 
-FILE = 'visualisation/PadLog20260713.CSV'
+FILE = 'visualisation/PadLog20260716.csv'
 
-# (name, first_line, last_line) from notes20260713.txt
+# (name, first_line, last_line) from notes20260717.txt
+# (lines 3-3548 were a calibration segment, no figure-of-eight — excluded)
 SEGMENTS = [
-    ('right1', 55150, 85330),
-    ('left',   95100, 119000),
-    ('zero',   128000, 154000),
-    ('right2', 164000, 189100),
+    ('right1', 3548, 25542),
+    ('left',   29548, 36146),
+    ('zero',   40252, 45369),
+    ('right2', 48110, 60533),
 ]
 
 TOL_CPM = 3.0   # spec 16.8 recovery tolerance

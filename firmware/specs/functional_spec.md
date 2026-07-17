@@ -2579,6 +2579,16 @@ preferring the peak detector whenever it is mature. Session-to-session
 pitch offset shifts (§ Phase 9 notes, +14° trough shift 20→21 May) are
 irrelevant here — the ACF window is mean-removed.
 
+**Second zero-feather dataset (16 Jul 2026 session) — pitch confirmed,
+yaw eliminated.** In the 16 Jul zero-feather segment (51 s), pitch again
+peaks at the true cycle rate (32.8 CPM, std 28°) while roll reads 65.7
+(2×) — but **yaw this time also reads 65.7 (2×)**, unlike 13 Jul where it
+carried the full-cycle rate. Yaw's behaviour at zero feather is therefore
+session-dependent (it reflects stroke geometry, not paddle symmetry) and
+yaw is dropped as a candidate channel. Pitch is the only channel correct
+in both zero-feather datasets; the pitch-fed `CadenceACF` recommendation
+above is unchanged and strengthened.
+
 ### 16.11 GRV Data-Collection Release — 13 Jul 2026 (PadLog v8.9 / BoatLog v1.2 / PadDis v8.12)
 
 Coordinated release adding the BNO085 **Game Rotation Vector** (accel+gyro
@@ -2660,3 +2670,28 @@ prints `Splash drain: N paddle + M boat packets logged` at splash end —
 bench: 1998 + 1995, i.e. the packets that previously overflowed. Display
 change in the same version: speed line shows a grey `-- kn` placeholder
 when no GPS/boat data, matching the existing `-- cpm` placeholder.
+
+**Field result — 16 Jul 2026: PASS (first field session on v8.13).**
+Session `PadLog20260716.csv` / `BoatLog20260716.csv` (12.4 min logged,
+segments in `notes20260717.txt`), analysed with
+`visualisation/stroke_field_verify.py`:
+
+- **Splash fix confirmed in the field.** The CYD was powered ~9 min after
+  the TX units (first paddle row seq 53200, timestamp 552 s) — exactly the
+  condition that previously produced the ~2000-packet startup gap. Result:
+  paddle seq loss 0.01 %, boat 0.28 %, **no gap > 10 packets in either
+  file**. The pending v8.13 check is closed.
+- Detector behaviour consistent with §16.8: right1 median reported 36.0 vs
+  true 36.0 (median |err| 2.0 — cadence drifted 32–38 within the segment),
+  left 34.0 vs 33.6 (0.6), right2 37.0 vs 37.7 (1.3); zero-feather segment
+  correctly silent (roll swing below the 90° gate; spectral/ACF read
+  65.7 = stroke rate); ACF arbiter 0 % flags everywhere; no runaway.
+- **First field GRV dataset collected** (the §16.11 purpose): GRV columns
+  populated on every row of both files, quaternion norm 1.0 ± 5×10⁻⁵, no
+  identity rows.
+- **Paddle `mag_cal` reached 3 for 75 % of the session** (2 for the rest) —
+  first observed status 3, on water where the bench mag environment was
+  too dirty (§15.7). Boat unit stayed at 2 throughout. This is field
+  evidence for the T-44 column-population check; `DCD_SAVED` emission
+  (serial-only) remains unverified.
+- Boat GPS: 100 % fix, speeds plausible (max 2.95 m/s).
