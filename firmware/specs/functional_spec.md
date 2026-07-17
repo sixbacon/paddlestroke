@@ -1742,8 +1742,28 @@ feasible with data already recorded:**
 - Which physical blade is +X vs −X, and mount offsets, need the Phase 10
   per-session calibration; the §13.4 pitch classifier can also assign
   sides at 92 %.
-- Only the right1 segment analysed; repeat on left-handed and
-  zero-feather segments before generalising.
+
+**Generalisation check — left-handed and zero-feather segments (same
+session, same script with a segment argument):**
+
+- **Left-handed** (36 cycles, 1.76 s, roll-anchored): structurally
+  identical to right1 — four HF bumps per cycle (entries ~0.94 / ~0.47,
+  exits ~0.32 / ~0.78, jitter ±31–116 ms), the sharp exit again carrying
+  a ~+15 m/s² vertical spike, surge maxima after entries and minima at
+  exits. Feasibility holds for left-handed paddling unchanged.
+- **Zero feather** (26 cycles, 1.83 s, **pitch-anchored** — roll is
+  half-period ambiguous here, §16.10, so cycles must be segmented on
+  pitch): all four events present and the tip-height mapping is again
+  fully consistent (+X exit ~0.19, −X entry ~0.38, −X exit ~0.72,
+  +X entry ~0.87; jitter ±44–90 ms; surge corroborates). Notably the
+  **entries are the weaker bumps at zero feather** (blade slices in
+  cleanly) while exits dominate — a detector should not assume the entry
+  is the loudest event. Since the events are counted per cycle, this
+  also provides an independent zero-feather cadence signal, though the
+  §16.12 pitch-fed ACF remains the planned CPM fallback.
+
+Remaining before design: video ground-truth of the labels; blade-side
+identity via Phase 10 calibration or the §13.4 pitch classifier.
 
 ---
 
