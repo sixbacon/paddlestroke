@@ -1761,6 +1761,11 @@ session, same script with a segment argument):**
   is the loudest event. Since the events are counted per cycle, this
   also provides an independent zero-feather cadence signal, though the
   §16.12 pitch-fed ACF remains the planned CPM fallback.
+- **right2** (76 cycles, 1.60 s): phase-for-phase identical to right1
+  (bumps 0.32/0.46/0.80/0.98 vs 0.31/0.46/0.80/0.99, sharp exit
+  ±44 ms, same +18 m/s² exit spike and surge pattern) despite a 20-min
+  gap and slightly higher cadence — the event phases are stable
+  properties of the stroke, not of the segment.
 
 Remaining before design: video ground-truth of the labels; blade-side
 identity via Phase 10 calibration or the §13.4 pitch classifier.
