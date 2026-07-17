@@ -2695,3 +2695,54 @@ segments in `notes20260717.txt`), analysed with
   evidence for the T-44 column-population check; `DCD_SAVED` emission
   (serial-only) remains unverified.
 - Boat GPS: 100 % fix, speeds plausible (max 2.95 m/s).
+
+### 16.12 CadenceACF Firmware Port — Implementation Plan (agreed 17 Jul 2026)
+
+Implements the §16.9 arbiter and the §16.10 zero-feather fallback in one
+release. Display decisions fixed with the user on 17 Jul 2026.
+
+**PadLog (v8.9 → v8.10):**
+
+1. Port `CadenceACF` from `visualisation/stroke_acf.py` to
+   `CadenceACF.h/.cpp` alongside `StrokeDetector` — decimated,
+   mean-removed **pitch** window (~12 s), ACF peak search over the
+   0.4–4 s lag range with parabolic interpolation, activity gate
+   (pitch std ≥ 10°) and peak-quality gate. ~480 B state, µs per update.
+   Keep a copy in `firmware/test/paddlestroke_sim_test/` in sync, as with
+   StrokeDetector.
+2. Feed it the pitch PadLog already computes each sample (decimated).
+3. Reporting logic in PadLog.ino — the former `_pad[1]` payload byte
+   becomes `cpm_source` (payload size unchanged at 80 B):
+   - `0` = peak detector (normal). Peak detector mature → its CPM,
+     regardless of ACF state (hysteresis: prefer the peak detector
+     whenever mature).
+   - `1` = ACF fallback (zero/small feather). Peak-detector 3 s timeout
+     active AND pitch-ACF valid → send ACF CPM. `stroke_count` does NOT
+     advance in this mode.
+   - `2` = suppressed (arbiter). Both estimators valid but disagreeing
+     by > ~25 % → runaway suspected (the 11 Jul padbad case); cpm value
+     still sent for the CSV but flagged suppressed.
+
+**PadDis (v8.13 → v8.14, coordinated — payload semantics change, size
+does not, so a stale PadDis simply ignores the byte):**
+
+- `cpm_source == 0`: CPM in **white** (as now).
+- `cpm_source == 1`: CPM in **yellow** (`0x07FF` on this BGR panel) —
+  chosen for sunlight visibility; signals "estimate, no per-stroke
+  events".
+- `cpm_source == 2`: display **`?? cpm`** instead of the runaway number.
+- CSV: log `cpm_source` as a new final column in the full paddle set.
+
+**Test ladder (in order):**
+
+1. `visualisation/stroke_regression.py` — add zero-feather case (expect
+   ACF CPM ≈ truth, source 1) and padbad-style case (expect source 2)
+   against the 16 Jul / 11 Jul field data; 16 Jul zero segment is the
+   offline acceptance data (expect ~32.8 CPM where v8.9 shows nothing).
+2. On-hardware sim suite: add the same two cases to the 20-test suite.
+3. Bench: standard §12.0 protocol + verify yellow CPM appears when
+   pitch-only synthetic motion is injected (or on-water).
+4. Field: zero-feather segment shows yellow CPM at the true rate;
+   normal paddling stays white; no `?? cpm` during good paddling
+   (nuisance-flag rate was 0–3 % offline — if the field rate annoys,
+   raise the disagreement threshold before touching anything else).
