@@ -21,6 +21,9 @@ class BoatFrameData {
     float   roll, pitch, yaw;
     long    rxMs;
 
+    // Boat Game Rotation Vector — PadDis v8.13+ 25-col files only.
+    float   grvQw = 1, grvQx, grvQy, grvQz;
+
     // Field indices for GraphPanel: 0=roll, 1=pitch, 2=yaw, 3=speedMs, 4=cogDeg.
     float field(int f) {
         switch (f) {
@@ -38,10 +41,12 @@ class BoatSource {
     private ArrayList<BoatFrameData> frames = new ArrayList<BoatFrameData>();
     private String                   srcName = "";
     boolean                          hasRxMs = false;
+    boolean                          hasGrv  = false;
 
     void loadCSV(String path) {
         frames.clear();
         hasRxMs = false;
+        hasGrv  = false;
         String[] lines = loadStrings(path);
         if (lines == null) {
             println("BoatSource: cannot load " + path);
@@ -57,14 +62,16 @@ class BoatSource {
             if (line.length() == 0)      continue;
             if (line.charAt(0) == '#')    continue;
             if (line.startsWith("seq") || line.startsWith("timestamp")) {
-                if (line.contains("rx_ms")) hasRxMs = true;
+                if (line.contains("rx_ms"))       hasRxMs = true;
+                if (line.contains("boat_grv_qw")) hasGrv  = true;
                 continue;
             }
             BoatFrameData bfd = parseLine(line);
             if (bfd != null) frames.add(bfd);
         }
         println("BoatSource: loaded " + frames.size() + " frames from " + srcName
-                + (hasRxMs ? "  (v8.10 rx_ms)" : "  (v8.9 or older)"));
+                + (hasRxMs ? "  (rx_ms)" : "  (v8.9 or older)")
+                + (hasGrv  ? " (grv)"    : ""));
     }
 
     private BoatFrameData parseLine(String line) {
@@ -87,6 +94,13 @@ class BoatSource {
             bfd.pitch      = float(trim(t[14]));
             bfd.yaw        = float(trim(t[15]));
             if (t.length >= 17) bfd.rxMs = Long.parseLong(trim(t[16]));
+            // v8.13 25-col: 17..19 boat_accel, 20 mag_cal, 21..24 boat_grv.
+            if (t.length >= 25) {
+                bfd.grvQw = float(trim(t[21]));
+                bfd.grvQx = float(trim(t[22]));
+                bfd.grvQy = float(trim(t[23]));
+                bfd.grvQz = float(trim(t[24]));
+            }
         } catch (Exception e) {
             return null;
         }

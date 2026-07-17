@@ -16,6 +16,12 @@ class FrameData {
     long  gpsUtcSec;
     long  rxMs;
 
+    // Game Rotation Vector (mag-free quaternion) — PadDis v8.13+ 22-col
+    // files only (identity otherwise). Used by CatchEvents for the
+    // relative-yaw path (firmware spec §16.11: fused yaw carries an
+    // in-band cycle-periodic mag artefact; GRV does not).
+    float grvQw = 1, grvQx, grvQy, grvQz;
+
     // Paddle centre offset from the shaft rest position (metres, world_LH
     // = sensor Z-up frame). Populated by DataSource.computePaddleCentreMotion
     // as a post-pass over the loaded frames. Consumed by the render code in
@@ -45,10 +51,12 @@ class DataSource {
     private String               srcName = "";
     private String               srcPath = "";
     boolean                      hasRxMs = false;
+    boolean                      hasGrv  = false;
 
     void loadCSV(String path) {
         frames.clear();
         hasRxMs = false;
+        hasGrv  = false;
         String[] lines = loadStrings(path);
         if (lines == null) {
             println("DataSource: cannot load " + path);
@@ -67,14 +75,16 @@ class DataSource {
             if (line.length() == 0)      continue;
             if (line.charAt(0) == '#')    continue;
             if (line.startsWith("seq") || line.startsWith("timestamp")) {
-                if (line.contains("rx_ms")) hasRxMs = true;
+                if (line.contains("rx_ms"))  hasRxMs = true;
+                if (line.contains("grv_qw")) hasGrv  = true;
                 continue;
             }
             FrameData fd = parseLine(line);
             if (fd != null) frames.add(fd);
         }
         println("DataSource: loaded " + frames.size() + " frames from " + srcName
-                + (hasRxMs ? "  (v8.10 rx_ms)" : "  (v8.9 or older)"));
+                + (hasRxMs ? "  (rx_ms)" : "  (v8.9 or older)")
+                + (hasGrv  ? " (grv)"    : ""));
         computePaddleCentreMotion();
     }
 
@@ -182,6 +192,13 @@ class DataSource {
             fd.cpm         = float(trim(t[13]));
             if (t.length >= 15) fd.gpsUtcSec = Long.parseLong(trim(t[14]));
             if (t.length >= 17) fd.rxMs      = Long.parseLong(trim(t[16]));
+            // v8.13 22-col: 17 = mag_cal, 18..21 = grv_qw..grv_qz.
+            if (t.length >= 22) {
+                fd.grvQw = float(trim(t[18]));
+                fd.grvQx = float(trim(t[19]));
+                fd.grvQy = float(trim(t[20]));
+                fd.grvQz = float(trim(t[21]));
+            }
         } catch (Exception e) {
             return null;
         }

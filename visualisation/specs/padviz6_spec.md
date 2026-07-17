@@ -880,3 +880,39 @@ Sanity check: right-blade dots must cluster starboard.
 1. §13.1 overlay + §13.2 menu (small, independent UI changes)
 2. §13.3 engine (the bulk; validate against the Python reference)
 3. §13.4 panel (trivial once §13.3 exists)
+
+### 13.6 Implementation status — BUILT 17 Jul 2026, compiles clean
+
+All four items implemented in one pass; `processing-java --build` passes.
+
+- **Files:** `Checklist.pde` rewritten as the floating overlay (complete =
+  paddle + sidecar; boat row encouraged, not required); `Menu.pde` new —
+  fires each row by synthesising the keystroke, so the keyboard handler
+  stays the single source of command behaviour; `CatchEvents.pde` new;
+  `EntryExitPanel.pde` new; `DataSource`/`BoatSource` parse the v8.13
+  `grv_*` columns (`hasGrv` from the header); `PadViz6.pde` wires layout
+  (HUD/compass/overlay translate right by `leftPanelWidth()`; axis legend
+  stays window-anchored), mouse priority (menu → overlay → graph → panel
+  → orbit), ESC closes the menu instead of quitting, and
+  `rebuildCatchEvents()` runs on paddle load / boat load / sidecar build.
+- **Engine detail that differs from the Python prototype:** no cycle
+  segmentation at all. Each blade's tip-height series is scanned for runs
+  below −0.05 m; the run splits at its minimum — descending half holds the
+  entry, rising half the exit; the HF-envelope peak in each half
+  time-stamps the event, gated at ≥ max(1.3 × median env, 0.8 m/s²).
+  Regime-independent (no roll-vs-pitch anchor switch needed). Filters are
+  RBJ biquads run forward-backward (zero phase, offline).
+- **Algorithm validated against the 16 Jul session** (Python port of the
+  exact Java pipeline, biquads included): event counts within a few % of
+  the theoretical 4/cycle in all four segments (right1 515/~530, left
+  148/~150, zero 106/~112, right2 305/~299); calibration segment nearly
+  silent (17). Boat-frame XY with GRV relative yaw and a **whole-file-mean
+  datum** (no sidecar): right1 medians — right entry (+0.69, +0.64) m,
+  right exit (+0.57, −0.84) m, left entry (−0.77, +0.47) m, left exit
+  (−0.49, −0.91) m; y-IQRs ±3–6 cm. Entries forward, exits aft,
+  starboard/port correct — the implied ~1.5 m in-water arc is the §13.3
+  stroke-length measurement working. The whole-file datum is good enough
+  that the panel is meaningful even before the sidecar is built.
+- **Not yet done:** on-screen visual check by the user (panel layout,
+  overlay flow, menu ergonomics); zero-feather XY sanity on screen;
+  per-event stroke-length numbers/labels (future — the dots come first).

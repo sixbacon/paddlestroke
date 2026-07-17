@@ -15,8 +15,11 @@ DataSource  paddleData;   // null until user loads a paddle CSV
 BoatSource  boatData;     // null until user loads a boat CSV
 SyncMap     sync;         // paddle-frame -> boat-frame lookup; rebuilt on load
 GraphPanel  graph;        // bottom strip; visible when a paddle CSV is loaded
-Checklist   checklist;    // bottom strip; visible while no paddle CSV is loaded
+Checklist   checklist;    // startup overlay; visible until sidecar built (v0.14)
 Sidecar     sidecar;      // per-session calibration; null until built or loaded
+Menu        menu;         // Commands pull-down (v0.14, spec §13.2)
+CatchEvents catchEvents;  // blade entry/exit detector (v0.14, spec §13.3)
+EntryExitPanel eePanel;   // left 20% boat-frame scatter (v0.14, spec §13.4)
 
 // Height of the graph panel at the bottom of the window (px).
 // Anything above it belongs to the 3D scene + HUD.
@@ -77,7 +80,9 @@ void setup() {
 
     sync      = new SyncMap();
     graph     = new GraphPanel(0, height - GRAPH_H, width, GRAPH_H);
-    checklist = new Checklist(0, height - GRAPH_H, width, GRAPH_H);
+    checklist = new Checklist();
+    menu      = new Menu();
+    eePanel   = new EntryExitPanel();
 
     surface.setResizable(true);
     surface.setTitle("PadViz6");
@@ -89,23 +94,26 @@ void setup() {
 
 void draw() {
     background(20);
-    // Keep the bottom strip bounds locked to the window each frame so
-    // resize immediately re-lays out whichever strip is showing.
-    if (graph     != null) graph    .setBounds(0, height - GRAPH_H, width, GRAPH_H);
-    if (checklist != null) checklist.setBounds(0, height - GRAPH_H, width, GRAPH_H);
+    // Keep the graph bounds locked to the window each frame so resize
+    // immediately re-lays out the strip.
+    if (graph != null) graph.setBounds(0, height - GRAPH_H, width, GRAPH_H);
     stepPlayback();
     drawScene3D();
 
-    // 2D HUD + graph overlay
+    // 2D overlays, back to front: entry/exit panel (left), HUD (shifted
+    // right of the panel), graph strip, startup overlay, menu, flash.
     camera();
     hint(DISABLE_DEPTH_TEST);
+    if (isPanelVisible()) eePanel.draw(catchEvents, paddleFrameIdx);
+    pushMatrix();
+    translate(leftPanelWidth(), 0);
     drawHUD();
     drawAxisCompass();
-    // Checklist takes priority over the graph while onboarding is incomplete
-    // (so the user can watch rows auto-tick). Once all three rows are done
-    // the graph replaces it for regular analysis use.
-    if      (isChecklistVisible()) checklist.draw();
-    else if (isGraphVisible())     graph.draw(paddleData, boatData, sync, paddleFrameIdx);
+    popMatrix();
+    drawAxisLegend();
+    if (isGraphVisible()) graph.draw(paddleData, boatData, sync, paddleFrameIdx);
+    if (isChecklistVisible()) checklist.draw();
+    if (menu != null) menu.draw();
     drawRefFlash();
     hint(ENABLE_DEPTH_TEST);
 }
@@ -119,14 +127,27 @@ boolean isGraphVisible() {
         && paddleData.frameCount() > 0;
 }
 
-// Startup checklist takes the bottom strip only until the paddle CSV is
-// loaded. Once paddle data is present the graph takes over — this is
-// essential so the user can drag the graph cursor to their intended rest
-// moment before pressing C to build the sidecar. Remaining onboarding
-// steps (load boat, build sidecar) are surfaced via the top-line HUD
-// hint instead.
+// Startup overlay (v0.14) — floats over the 3D view until the calibration
+// sequence is complete (paddle loaded + sidecar built/auto-loaded), then
+// dismisses after a short delay. The graph appears independently as soon
+// as the paddle CSV loads, so the user can seek while the overlay guides.
 boolean isChecklistVisible() {
-    return checklist != null && !(paddleData != null && paddleData.frameCount() > 0);
+    return checklist != null && checklist.shouldStayVisible();
+}
+
+// Entry/exit panel (v0.14) — left 20 % of the window in data slices.
+boolean isPanelVisible() {
+    return eePanel != null
+        && sliceMode >= 1
+        && paddleData != null
+        && paddleData.frameCount() > 0
+        && catchEvents != null;
+}
+
+// Width in px of the entry/exit panel, 0 when hidden. HUD, compass, menu
+// and the startup overlay all shift right by this amount.
+int leftPanelWidth() {
+    return isPanelVisible() ? int(width * 0.20f) : 0;
 }
 
 // ── 3D scene ──────────────────────────────────────────────────────────────────
@@ -315,9 +336,8 @@ void getCameraBasis(float[] eye, float[] fwd, float[] right, float[] up) {
 // to the screen render as a disc-in-ring (out of screen) or an X (into
 // screen); those with meaningful projected length render as coloured lines.
 void drawAxisCompass() {
-    // Bottom of the 3D area — above whichever bottom strip is showing.
-    boolean stripVisible = isGraphVisible() || isChecklistVisible();
-    int bottom = stripVisible ? (height - GRAPH_H) : height;
+    // Bottom of the 3D area — above the graph strip when it's showing.
+    int bottom = isGraphVisible() ? (height - GRAPH_H) : height;
     int ox = 92;
     int oy = bottom - 30;
     int L  = 80;
@@ -405,7 +425,8 @@ void drawHUD() {
     }
     String viewName = String.format("cam az=%+.0f°  el=%+.0f°  d=%.0f",
                                      camAzimDeg, camElevDeg, camDist);
-    text("PadViz6   " + modeName + "   [" + viewName + "]", 20, 16);
+    // x=150 leaves room for the Commands menu button at x=20 (v0.14).
+    text("PadViz6   " + modeName + "   [" + viewName + "]", 150, 16);
 
     // Sidecar indicator — sits to the right of the mode name if active.
     if (sidecar != null && sidecar.valid) {
@@ -421,18 +442,9 @@ void drawHUD() {
                            sidecar.yawDatumDeg),
              20, 38);
         textSize(13);
-    } else if (paddleData != null && paddleData.frameCount() > 0 && sliceMode >= 1) {
-        // No sidecar yet — coach the user through the seek-then-C flow. The
-        // graph strip is now visible below the 3D scene; the current paddle
-        // frame index is the search-start point that C will use.
-        fill(230, 220, 140);
-        textSize(12);
-        int fi = constrain(paddleFrameIdx, 0, paddleData.frameCount() - 1);
-        text("SIDECAR not built — drag the graph cursor to the intended rest moment, then press C  "
-                + "(search will start at paddle frame " + fi + ")",
-             20, 38);
-        textSize(13);
     }
+    // (v0.14: the "SIDECAR not built" hint is gone — the startup overlay
+    //  stays on screen through the seek-and-C step instead.)
 
     textSize(13);
     if      (sliceMode == 0) drawHUD_slice0();
@@ -440,8 +452,8 @@ void drawHUD() {
     else if (sliceMode == 2) drawHUD_sliceB();
     else                     drawHUD_sliceC();
 
-    // Right-column axis legend — labels change with slice mode.
-    drawAxisLegend();
+    // (Axis legend is drawn by draw() outside the panel translate so it
+    //  stays anchored to the window's right edge.)
 
     // Footer
     fill(160);
@@ -478,17 +490,9 @@ void drawHUD_slice0() {
     fill(180);
     text(String.format("step  = %8.2f", cal.stepDeg),  20, 138);
 
-    fill(180, 200, 180);
+    fill(140);
     textSize(12);
-    int y = 176;
-    text("y/Y P/p R/r  nudge yaw/pitch/roll +/- step", 20, y); y += 16;
-    text("[ / ]        step size /2 / x2",             20, y); y += 16;
-    text("Z            zero all",                      20, y); y += 16;
-    text("S            save data/model_calibration.json", 20, y); y += 16;
-    text("L            list current triple to console", 20, y); y += 16;
-    text("0/1/2/3       Slice 0 / A paddle / B kayak / C combined", 20, y); y += 16;
-    text("V            toggle side / top view",        20, y); y += 16;
-    text("p / b        open paddle / boat CSV (lowercase)", 20, y);
+    text("key bindings: Commands menu (top-left)", 20, 176);
 }
 
 void drawHUD_sliceA() {
@@ -510,7 +514,6 @@ void drawHUD_sliceA() {
     text(String.format("euler  roll=%7.2f  pitch=%7.2f  yaw=%7.2f", fd.roll, fd.pitch, fd.yaw), 20, 132);
 
     drawRefStatus(refFramePad, 150);
-    drawPlaybackKeys(180);
 }
 
 void drawHUD_sliceB() {
@@ -548,7 +551,6 @@ void drawHUD_sliceB() {
                        bfd.gpsFix ? "yes" : "no", bfd.speedMs, bfd.cogDeg, bfd.gpsUtcSec), 20, gpsY);
 
     drawRefStatus(refFrameBoat, gpsY + 20);
-    drawPlaybackKeys(gpsY + 48);
 }
 
 void drawHUD_sliceC() {
@@ -607,7 +609,6 @@ void drawHUD_sliceC() {
         text("refs = identity  (K captures paddle + matched boat rest simultaneously; U clears)", 20, y);
     }
 
-    drawPlaybackKeys(y + 22);
 }
 
 void drawRefStatus(int refFrame, int yPos) {
@@ -618,26 +619,6 @@ void drawRefStatus(int refFrame, int yPos) {
         fill(200);
         text("ref = identity  (raw absolute quaternion — K to capture rest)", 20, yPos);
     }
-}
-
-void drawPlaybackKeys(int yStart) {
-    fill(180, 200, 180);
-    textSize(12);
-    int y = yStart;
-    text("Space   play / pause",                    20, y); y += 16;
-    text("Left/Right   step 100 frames",            20, y); y += 16;
-    text(", / .        step 1 frame",               20, y); y += 16;
-    text("Home / End   jump to start / end",        20, y); y += 16;
-    text("k            capture reference (mean of +-50 frames)", 20, y); y += 16;
-    text("u            clear reference (back to raw quat)",      20, y); y += 16;
-    text("S            reset graph zoom to full range",          20, y); y += 16;
-    text("E            export merged CSV over current zoom",     20, y); y += 16;
-    text("C            build session sidecar (rest-window search from current frame)", 20, y); y += 16;
-    text("0/1/2/3      Slice 0 / A / B / C",            20, y); y += 16;
-    text("Backspace / -   return to previous slice",    20, y); y += 16;
-    text("V            cycle side / top-down preset",   20, y); y += 16;
-    text("mouse drag   orbit camera",                   20, y); y += 16;
-    text("mouse wheel  zoom in / out",                  20, y);
 }
 
 // ── Playback / input ─────────────────────────────────────────────────────────
@@ -664,6 +645,12 @@ void stepPlayback() {
 }
 
 void keyPressed() {
+    // ESC closes the Commands menu instead of quitting the sketch.
+    if (key == ESC && menu != null && menu.open) {
+        menu.handleEscape();
+        key = 0;
+        return;
+    }
     // Slice/view/load switches — always active.
     // Slice switching is on digits 0/1/2/3 only. The compass letters P/K/W
     // are pure labels — earlier versions bound Shift+letter to the switch,
@@ -831,6 +818,7 @@ void onPaddleFileSelected(File selection) {
     rebuildSync();
     tryAutoLoadSidecar(paddleData.sourcePath());
     applySidecarToDisplay();
+    rebuildCatchEvents();
     if (paddleData.frameCount() > 0) {
         // If a boat CSV is already loaded, go straight into combined view.
         switchSlice((boatData != null && boatData.frameCount() > 0) ? 3 : 1);
@@ -847,9 +835,21 @@ void onBoatFileSelected(File selection) {
     // A sidecar loaded earlier from the paddle CSV can now finish applying
     // its boat rest quaternion, since we've just gained boat data.
     applySidecarToDisplay();
+    rebuildCatchEvents();
     if (boatData.frameCount() > 0) {
         switchSlice((paddleData != null && paddleData.frameCount() > 0) ? 3 : 2);
     }
+}
+
+// v0.14 — recompute blade entry/exit events whenever the inputs change
+// (paddle CSV, boat CSV, or sidecar — the sidecar sets the yaw datum).
+void rebuildCatchEvents() {
+    if (paddleData == null || paddleData.frameCount() == 0) {
+        catchEvents = null;
+        return;
+    }
+    catchEvents = new CatchEvents();
+    catchEvents.compute(paddleData, boatData, sync, sidecar);
 }
 
 void rebuildSync() {
@@ -970,27 +970,22 @@ void setPlaying(boolean p) {
 // everything above it is the 3D scene, where left-drag orbits the camera and
 // the mouse wheel zooms.
 
-boolean pointerInBottomStrip() {
-    return mouseY >= (height - GRAPH_H)
-        && (isGraphVisible() || isChecklistVisible());
-}
-
 boolean pointerInGraph() {
     return isGraphVisible() && mouseY >= (height - GRAPH_H);
 }
 
 void mousePressed() {
-    if (pointerInBottomStrip()) {
+    // Overlay priority (v0.14): menu button/drop-down, then the startup
+    // overlay, then the graph strip, then the entry/exit panel (consumed,
+    // no interaction yet), then 3D orbit.
+    if (menu != null && menu.mousePressed(mouseX, mouseY)) return;
+    if (isChecklistVisible() && checklist.mousePressed(mouseX, mouseY)) return;
+    if (pointerInGraph()) {
         int localY = mouseY - (height - GRAPH_H);
-        // Same priority as draw() — checklist wins over graph while
-        // onboarding is incomplete.
-        if (isChecklistVisible()) {
-            checklist.mousePressed(mouseX, localY);
-        } else if (isGraphVisible()) {
-            graph.mousePressed(mouseX, localY, paddleData, mouseButton);
-        }
+        graph.mousePressed(mouseX, localY, paddleData, mouseButton);
         return;
     }
+    if (mouseX < leftPanelWidth() && mouseY < height - GRAPH_H) return;
     // 3D scene — left-drag orbits.
     if (mouseButton == LEFT) {
         dragMouseX  = mouseX;
@@ -1080,6 +1075,9 @@ void buildAndSaveSidecar() {
         qRefBoat     = built.qRestBoat;
         refFrameBoat = (built.restBoatStart + built.restBoatEnd) / 2;
     }
+
+    // Sidecar changed — the entry/exit yaw datum depends on it.
+    rebuildCatchEvents();
 
     // Auto-save to <paddle-basename>.session.json in the paddle CSV's folder.
     String savePath = deriveSidecarPath(paddleData.sourcePath());
