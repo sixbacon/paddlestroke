@@ -1633,7 +1633,10 @@ If 45° sessions show intermittent CPM, the amplitude gate value (currently 90°
 
 ## 13. Phase 9 — Blade Entry/Exit Detection
 
-*Status: pending — design not started.*
+*Status: feasibility PROVEN offline on 16 Jul 2026 field data (§13.5,
+analysed 17 Jul 2026) — entry and exit both produce phase-locked,
+per-stroke-detectable accelerometer transients. Firmware/algorithm design
+not started.*
 
 Phase 9 adds stroke quality metrics by detecting the moment the blade enters the water (catch) and exits the water (release) independently of the roll oscillation cycle already used for CPM. These events are not cleanly visible in the roll signal but should be detectable as transients in `accel_x` and `accel_y` (lateral and forward accelerometer channels), which are already included in the ESPnow payload and logged to the SD card.
 
@@ -1668,6 +1671,79 @@ Analysis of 20 May 2026 field data (§3.5) identified pitch as a reliable, param
 - IQR overlap = 0°; `pitch < 0` threshold gives 92% accuracy with no calibration.
 
 **How to apply in Phase 9:** Use `pitch < 0` at each `stroke_count` event to determine which blade side just completed its pull. This label can be used to time-align accelerometer transients per blade side for catch/release detection.
+
+---
+
+### 13.5 Feasibility Study — 16 Jul 2026 Data (analysed 17 Jul 2026)
+
+Offline analysis of the right1 segment (129 stroke cycles, 1.66 s cycle,
+3.7 min) with `visualisation/stroke_catch_explore.py` (writes
+`catch_ensemble.png`, `catch_strip.png`, `tip_height.png`). Method:
+segment cycles by low-passed roll peaks/troughs, ensemble-average
+candidate signals against stroke phase, and overlay blade-tip kinematics
+computed from orientation (shaft = sensor X axis; roll is rotation about
+the shaft; tip offset ±1.05 m).
+
+**Result: the high-frequency (8–30 Hz) envelope of paddle |accel| shows
+exactly four bumps per cycle, and each falls precisely where the tip
+kinematics place an entry or an exit:**
+
+| phase (0 = roll peak) | tip geometry at that moment | event | HF amplitude (m/s²) | per-cycle jitter |
+|---|---|---|---|---|
+| ~0.99 | −X blade descending, ~0.5 m below shaft centre | side-B **entry** | 1.6 | ±84 ms |
+| ~0.31 | −X blade rising through waterline | side-B **exit** | 1.5 | ±96 ms |
+| ~0.46 | +X blade descending below waterline level | side-A **entry** | 2.5 | ±67 ms |
+| ~0.80 | +X blade rising out | side-A **exit** | 3.3 | ±33 ms |
+
+Independent corroboration:
+
+- **Boat surge** (`boat_accel_y` band-passed 0.3–5 Hz, synced to the
+  paddle timeline via `rx_ms`): maxima at phase 0.07 / 0.53 — right
+  after each entry — minima at 0.30 / 0.78, at each exit. The two power
+  phases sit exactly between the detected entry/exit pairs. Surge is
+  extremely clean (±0.8 m/s², small cycle-to-cycle spread) but on its
+  own gives only power-phase timing, not blade side or geometry.
+- **World-frame vertical linear acceleration** of the shaft centre
+  (accel rotated by the fused quaternion, gravity removed): a sharp
+  +18 m/s² spike coincides with the strongest exit (~0.78–0.80, the
+  blade unloading), with structure at the entries.
+- Jerk (d|a|/dt) mirrors the HF envelope.
+- The known L/R asymmetry is visible: one side's transients are
+  1.5–2× stronger than the other's.
+
+**Consequences — the stroke-length / entry-exit-plotting chain is
+feasible with data already recorded:**
+
+1. *Event times*: gate by tip height (orientation says which blade is
+   near the water and moving down/up), time-stamp with the HF envelope
+   peak. Ensemble jitter ±33–96 ms is an upper bound on per-stroke
+   timing; the sharp events localise better individually.
+2. *Blade position relative to the boat* at entry/exit: shaft direction
+   × ±1.05 m rotated into the boat frame using **GRV-based relative yaw**
+   (§16.11 verdict — the fused yaw's cycle-periodic mag error sits
+   exactly in this band). Shaft-centre position relative to the cockpit
+   assumed fixed, or taken from the PadViz6 accel-derived estimate.
+3. *In-water stroke length per side*: boat travel during the power phase
+   (GPS speed × duration, ≈ 1 m at cruise) minus the blade's sweep
+   relative to the boat (relative-yaw change × 1.05 m).
+4. *Plotting entry/exit points on the water*: boat GPS position
+   interpolated to the event `rx_ms`, plus boat heading (GRV yaw +
+   Phase 10 yaw datum, or COG while moving), plus the blade offset from
+   step 2. Absolute placement limited by GPS (~metres); the left/right
+   pattern and stroke-to-stroke spacing limited only by event timing
+   (centimetres–decimetres).
+
+**Caveats / next steps before design:**
+
+- The entry/exit labels rest on kinematic reasoning, internally
+  consistent across four signals but not ground-truthed. One short video
+  clip of a few strokes (synced by three deliberate blade slaps) would
+  confirm the assignment cheaply.
+- Which physical blade is +X vs −X, and mount offsets, need the Phase 10
+  per-session calibration; the §13.4 pitch classifier can also assign
+  sides at 92 %.
+- Only the right1 segment analysed; repeat on left-handed and
+  zero-feather segments before generalising.
 
 ---
 
