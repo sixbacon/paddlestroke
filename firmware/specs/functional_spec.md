@@ -2710,27 +2710,57 @@ disagreement = mag steering + gyro drift) and a residual *tilt*
 | Paddle | 1.2° / 4.8° | +1.3°/min | −67°..+77° | +48° (t+32.5 min), −26°, −22° |
 | Boat | 0.2° / 3.9° | +0.55°/min | −29°..+139° | **+116°** (t+36.7 min), −46°, +30° |
 
-Conclusions:
+**Paddling-only re-analysis (user-flagged: the full files include car
+transport after the session — the 20–116° 1-s steps above all fall in
+that post-paddling period and are shore/car mag artefacts, not paddling
+behaviour).** Same swing-twist analysis restricted to the trimmed
+session (12.4 min) and the two right-feather segments, boat sliced to
+the same period via `rx_ms`:
+
+| Unit / window | tilt median / p95 | twist drift | twist swing | top 1-s twist move |
+|---|---|---|---|---|
+| Boat, all paddling | 0.1° / 0.4° | −0.4°/min | −5°..+12° | 2.2° |
+| Boat, right2 | 0.1° / 0.3° | 0.0°/min | ±0.1° | 0.1° |
+| Paddle, all paddling | 1.4° / 4.5° | −0.7°/min | −11°..+60° | 12.7° |
+| Paddle, right1 | 1.6° / 4.9° | +1.8°/min | −3°..+54° | 9.5° |
+| Paddle, right2 | 1.6° / 5.7° | +4.1°/min | −3°..+14° | 6.9° |
+
+Spectral analysis of the paddle twist (detrended): **a clear component
+at exactly the paddling cycle rate** (peak 36.0 CPM in right1 vs true
+36.0; 37.7 in right2 vs true 37.7) carrying 17–22 % of the variance,
+the rest slow wander. Its amplitude shrinks 8.6° → 1.2° std from right1
+to right2 as `mag_cal` settles at 3 — a mag-calibration signature, not
+filter dynamics (a fusion-lag artefact would be constant).
+
+Conclusions (revised):
 
 1. **Roll/pitch mag-immunity confirmed at quaternion level** — tilt
-   disagreement is ~1° median on the paddle, ~0.2° on the boat (p95 < 5°,
-   transient filter-lag during fast motion). The detection path (roll peak
-   detector, pitch ACF) is untouched by mag state, as claimed in §16.10.
-2. **Fused yaw is step-corrected by the mag filter** — heading jumps of
-   20–116° within 1 s appear on both units (the +116° boat step at
-   mag_cal 2 is unmistakably a filter re-reference, not physical motion).
-   Such steps landing mid-stroke would be fatal for stroke-scale
-   relative-yaw features.
-3. **GRV heading drift is slow and benign** — the twist *median* rate is
-   ≈ 0 everywhere, with linear drift +0.55°/min (boat) / +1.3°/min
-   (paddle): tens of seconds of stability, ample for high-pass or
-   per-stroke differencing.
+   disagreement ~1.5° median on the paddle, ~0.1° on the boat during
+   paddling. The detection path (roll peak detector, pitch ACF) is
+   untouched by mag state, as claimed in §16.10.
+2. **During paddling there are no fused-yaw step corrections** — the
+   dramatic steps were car/shore artefacts. The boat's fused and GRV
+   headings agree to a few degrees throughout paddling; on the boat
+   either source would work.
+3. **The paddle's fused yaw carries a cycle-periodic mag artefact** —
+   fused-vs-GRV heading differs periodically at the stroke cycle rate
+   (±5–10° early in the session, ~1° once mag cal converges). GRV is
+   gyro-driven at these timescales and cannot generate stroke-periodic
+   yaw error; orientation-dependent heading error from imperfect
+   soft-iron calibration does exactly this. This artefact sits **in the
+   stroke band** — it cannot be high-passed away and would alias
+   directly into catch-geometry features.
+4. GRV heading drift during paddling: ≤ 4°/min on the paddle (upper
+   bound — the twist drift includes any fused wander too), ≤ 0.4°/min
+   on the boat. Benign against per-stroke baselines.
 
-**Provisional Phase 9 verdict: use GRV yaw on both units and high-pass
-(or per-stroke-baseline) the paddle−boat difference; do not build catch
-geometry on fused yaw.** To be ratified once a calibrated session (Phase
-10 rest-window yaw datum) allows an absolute cross-check, but the step
-behaviour alone already rules fused yaw out for stroke-scale work.
+**Provisional Phase 9 verdict (unchanged conclusion, corrected
+grounds): use GRV yaw on both units with a high-pass / per-stroke
+baseline on the paddle−boat difference.** Fused yaw is ruled out not by
+step corrections (a transport artefact) but by the paddle-side
+cycle-periodic mag error, which lives at exactly the frequency catch
+detection cares about and varies with calibration state. Ratify on a
+Phase 10-calibrated session.
 
 ### 16.12 CadenceACF Firmware Port — Implementation Plan (agreed 17 Jul 2026)
 
