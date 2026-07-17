@@ -2689,12 +2689,48 @@ segments in `notes20260717.txt`), analysed with
 - **First field GRV dataset collected** (the §16.11 purpose): GRV columns
   populated on every row of both files, quaternion norm 1.0 ± 5×10⁻⁵, no
   identity rows.
-- **Paddle `mag_cal` reached 3 for 75 % of the session** (2 for the rest) —
-  first observed status 3, on water where the bench mag environment was
-  too dirty (§15.7). Boat unit stayed at 2 throughout. This is field
-  evidence for the T-44 column-population check; `DCD_SAVED` emission
-  (serial-only) remains unverified.
+- **Paddle `mag_cal` reached 3** — first observed status 3, on water where
+  the bench mag environment was too dirty (§15.7). Over the full untrimmed
+  session (43.3 min incl. calibration start): paddle 0/1/2/3 =
+  3/31/35/32 % (75 % at 3 within the trimmed good-paddling window); boat
+  0/1/2/3 = 22/14/62/1 % — it did briefly reach 3 but sits at 2 for most
+  of the session. Field evidence for the T-44 column-population check;
+  `DCD_SAVED` emission (serial-only) remains unverified.
 - Boat GPS: 100 % fix, speeds plausible (max 2.95 m/s).
+
+**First fused-vs-GRV yaw analysis — 17 Jul 2026 (the decision data this
+release exists for).** Quaternion-level, gimbal-free: relative rotation
+`q_rel = q_fused ⊗ q_grv⁻¹` per unit over the full 43.3 min files,
+swing-twist decomposed about world-vertical into a *twist* (heading
+disagreement = mag steering + gyro drift) and a residual *tilt*
+(roll/pitch disagreement).
+
+| Unit | tilt median / p95 | twist linear drift | twist swing | largest 1-s twist steps |
+|---|---|---|---|---|
+| Paddle | 1.2° / 4.8° | +1.3°/min | −67°..+77° | +48° (t+32.5 min), −26°, −22° |
+| Boat | 0.2° / 3.9° | +0.55°/min | −29°..+139° | **+116°** (t+36.7 min), −46°, +30° |
+
+Conclusions:
+
+1. **Roll/pitch mag-immunity confirmed at quaternion level** — tilt
+   disagreement is ~1° median on the paddle, ~0.2° on the boat (p95 < 5°,
+   transient filter-lag during fast motion). The detection path (roll peak
+   detector, pitch ACF) is untouched by mag state, as claimed in §16.10.
+2. **Fused yaw is step-corrected by the mag filter** — heading jumps of
+   20–116° within 1 s appear on both units (the +116° boat step at
+   mag_cal 2 is unmistakably a filter re-reference, not physical motion).
+   Such steps landing mid-stroke would be fatal for stroke-scale
+   relative-yaw features.
+3. **GRV heading drift is slow and benign** — the twist *median* rate is
+   ≈ 0 everywhere, with linear drift +0.55°/min (boat) / +1.3°/min
+   (paddle): tens of seconds of stability, ample for high-pass or
+   per-stroke differencing.
+
+**Provisional Phase 9 verdict: use GRV yaw on both units and high-pass
+(or per-stroke-baseline) the paddle−boat difference; do not build catch
+geometry on fused yaw.** To be ratified once a calibrated session (Phase
+10 rest-window yaw datum) allows an absolute cross-check, but the step
+behaviour alone already rules fused yaw out for stroke-scale work.
 
 ### 16.12 CadenceACF Firmware Port — Implementation Plan (agreed 17 Jul 2026)
 
