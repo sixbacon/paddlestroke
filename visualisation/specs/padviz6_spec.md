@@ -1,8 +1,8 @@
 # PadViz6 — Disciplined Orientation Specification
 
-**Version:** 0.13
-**Date:** 2026-07-09
-**Status:** Slices 0–C + bottom GraphPanel with two-click zoom (right-click), double-right-click revert, `S`-key zoom reset, and merged CSV export (curated + all-fields). Corner axis compass (2D, ~1/3 the old on-screen size) with a `P`/`K`/`W` frame letter that also acts as the slice-switch shortcut. §7 expanded (v0.7) from single yaw-alignment rotation to a three-offset per-session procedure — sensor-mount roll/pitch (from accel) + magnetic-yaw datum (from mean quats) — with pre-session magnetometer figure-8 and DCD save. Requires three firmware additions listed in §7.8 (formalised in firmware spec §15, v2.7). v0.8: the three 8 Jul 2026 field-use notes (§12.10) are now DONE — `k`/`u` HUD flash, Slice B hint to `W`, and Backspace/`-` back-slice ping-pong. v0.9: free-orbit camera — left-drag orbits, wheel zooms, V snaps to side/top preset; 2D axis compass now rotates in step with the 3D camera basis. v0.10: first-pass session sidecar builder (`Sidecar.pde`, C key) — rest-window detector + mean-based mount offsets + yaw datum + JSON save per §7.5. Slice-switch letter shortcuts P/K/W dropped (Caps-Lock case ambiguity); digits 0/1/2/3 only. v0.11: startup onboarding checklist (`Checklist.pde`) in the bottom strip when no paddle CSV is loaded — three rows auto-ticked and clickable. v0.12: sidecar auto-load — on paddle-CSV open, look for a sibling `<basename>.session.json`, parse it, and reseed rest-window references so the correction is active without pressing C. Third checklist row auto-ticks in that case; boat CSV load extends the seeding to the boat side. v0.13 (9 Jul 2026): three field-use fixes driven by the 9 Jul session — (a) C-key rest-window search now starts at the current playback frame (was frame 0), so the user can seek to the intended still moment before building; (b) checklist strip hides as soon as the paddle CSV loads (was blocking the graph until sidecar built), and a yellow "SIDECAR not built — seek then press C" HUD hint appears in its place; (c) `DataSource.computePaddleCentreMotion` — accel double-integration with a three-stage HPF cascade (fc ≈ 0.3 Hz) drives a per-frame paddle-centre offset (±0.3 m clamped) that translates the mesh in Slices A + C during render, so the shaft midpoint visibly swings with the stroke.
+**Version:** 0.14
+**Date:** 2026-07-17
+**Status:** Slices 0–C + bottom GraphPanel with two-click zoom (right-click), double-right-click revert, `S`-key zoom reset, and merged CSV export (curated + all-fields). Corner axis compass (2D, ~1/3 the old on-screen size) with a `P`/`K`/`W` frame letter that also acts as the slice-switch shortcut. §7 expanded (v0.7) from single yaw-alignment rotation to a three-offset per-session procedure — sensor-mount roll/pitch (from accel) + magnetic-yaw datum (from mean quats) — with pre-session magnetometer figure-8 and DCD save. Requires three firmware additions listed in §7.8 (formalised in firmware spec §15, v2.7). v0.8: the three 8 Jul 2026 field-use notes (§12.10) are now DONE — `k`/`u` HUD flash, Slice B hint to `W`, and Backspace/`-` back-slice ping-pong. v0.9: free-orbit camera — left-drag orbits, wheel zooms, V snaps to side/top preset; 2D axis compass now rotates in step with the 3D camera basis. v0.10: first-pass session sidecar builder (`Sidecar.pde`, C key) — rest-window detector + mean-based mount offsets + yaw datum + JSON save per §7.5. Slice-switch letter shortcuts P/K/W dropped (Caps-Lock case ambiguity); digits 0/1/2/3 only. v0.11: startup onboarding checklist (`Checklist.pde`) in the bottom strip when no paddle CSV is loaded — three rows auto-ticked and clickable. v0.12: sidecar auto-load — on paddle-CSV open, look for a sibling `<basename>.session.json`, parse it, and reseed rest-window references so the correction is active without pressing C. Third checklist row auto-ticks in that case; boat CSV load extends the seeding to the boat side. v0.13 (9 Jul 2026): three field-use fixes driven by the 9 Jul session — (a) C-key rest-window search now starts at the current playback frame (was frame 0), so the user can seek to the intended still moment before building; (b) checklist strip hides as soon as the paddle CSV loads (was blocking the graph until sidecar built), and a yellow "SIDECAR not built — seek then press C" HUD hint appears in its place; (c) `DataSource.computePaddleCentreMotion` — accel double-integration with a three-stage HPF cascade (fc ≈ 0.3 Hz) drives a per-frame paddle-centre offset (±0.3 m clamped) that translates the mesh in Slices A + C during render, so the shaft midpoint visibly swings with the stroke. v0.14 (17 Jul 2026, §13): startup checklist becomes a floating overlay above the graph strip (graph appears on paddle-CSV load, overlay stays through seek-and-`C`); left key-list HUD replaced by a Commands pull-down menu; new `CatchEvents.pde` offline blade entry/exit detector (port of firmware spec §13.5 feasibility method); new `EntryExitPanel.pde` — left 20 % boat-frame top-down scatter of entry/exit points, red = right blade, green = left, filled = entry, hollow = exit, accumulating with playback.
 
 ---
 
@@ -796,3 +796,87 @@ Once the paddle CSV is loaded, the graph replaces the checklist (essential — t
 
 **Render integration.** Slices A and C both translate by `(posX, posY, posZ) · MODEL_SCALE` (300 px/m — shared with paddle OBJ scale) *before* the cal triple and quaternion. In Slice C the offset is applied after the kayak orientation and paddle-lift translate, so the paddle floats in kayak body coords rather than magnetic world.
 - Checklist auto-dismisses 2.5 s after the last box ticks; during that window a countdown message shows at the bottom of the strip.
+
+---
+
+## 13. v0.14 — Catch/Release Visualisation (17 Jul 2026)
+
+Four work items, agreed 17 Jul 2026. Motivating analysis: firmware spec
+§13.5 (blade entry/exit feasibility on the 16 Jul 2026 field data —
+phase-locked 8–30 Hz accel transients, tip-height gating, all four events
+in every regime) and §16.11 (relative yaw must come from GRV, not fused).
+
+### 13.1 Startup overlay (Checklist.pde rework)
+
+The bottom-strip checklist becomes a floating panel drawn over the 3D
+view, horizontally centred, sitting just above the graph strip. Rows (with
+live ticks, clickable as before):
+
+1. Load paddle CSV (`p`)
+2. Load boat CSV (`b`) — dimmed until row 1 done
+3. "Drag the graph cursor to the start of the calibration (rest) data,
+   then press `C`" — dimmed until row 1 done
+
+The graph strip is therefore free to appear the moment the paddle CSV
+loads, and the overlay persists through the seek-and-`C` step (v0.13's
+weakness: the instructions vanished exactly when the user needed them).
+The overlay dismisses when a sidecar is built (`C`) or auto-loaded
+(`.session.json` found at CSV open). The yellow "SIDECAR not built" HUD
+hint is deleted as redundant. `C` semantics unchanged (search starts at
+current playback frame).
+
+### 13.2 Commands pull-down (Menu.pde, new)
+
+The static left-edge key-list HUD is removed. A "Commands ▾" button in
+the top-left of the 3D area opens a drop-down listing all bindings
+(grouped: Files / Playback / Camera / Calibration / Export), each row
+`key — description`; clicking a row invokes the same handler as the key.
+Click-away or `Esc` closes. Keyboard bindings are unchanged — the menu is
+for discoverability. Frees the left edge for §13.4.
+
+### 13.3 Catch-event engine (CatchEvents.pde, new)
+
+Offline detection at CSV-load time (pattern precedent:
+`computePaddleCentreMotion`). Port of the §13.5 (firmware spec) method:
+
+- **Signals:** |accel| → 8–30 Hz Butterworth band-pass (two cascaded
+  2nd-order biquads) → 50 ms RMS envelope. Cycle anchor = 2 Hz low-passed
+  roll; switch to pitch when the roll swing is below ~60° (zero feather —
+  roll is half-period ambiguous, firmware spec §16.10).
+- **Gating:** shaft direction = body X rotated by the paddle quaternion;
+  tip height = ±1.05 m × world-z component. Entry window = blade low and
+  descending; exit window = blade low and rising (windows ~±150 ms around
+  the phase predicted from the previous cycle; §13.5 jitter 33–96 ms).
+- **Events:** HF-envelope peak inside each gated window →
+  `{frame, rx_ms, side, ENTRY|EXIT, xyBoat}`.
+- **Side assignment:** +X/−X blade → paddler right/left via the pitch
+  classifier at roll extrema (firmware spec §13.4, 92 % uncalibrated);
+  sidecar mount data overrides when present.
+- **Blade XY in boat frame:** horizontal projection of the shaft
+  direction × ±1.05 m, rotated by GRV relative yaw (paddle GRV yaw −
+  boat GRV yaw, yaw-datum'd by the sidecar). Shaft centre = cockpit
+  origin for now. Requires `grv_*` CSV columns (PadLog v8.9+ /
+  BoatLog v1.2+, 16 Jul 2026 onward); older files → §13.4 panel shows
+  "no GRV data". No boat CSV loaded → fallback: paddle GRV yaw minus its
+  own 30 s rolling baseline (assumes steady boat heading), flagged
+  approximate in the panel.
+- **Validation:** run against the 16 Jul right1 segment and compare event
+  times with `visualisation/stroke_catch_explore.py` output before
+  trusting the panel.
+
+### 13.4 Entry/exit panel (EntryExitPanel.pde, new)
+
+Left 20 % of the window, full height from top down to the graph strip;
+the 3D view compresses to the right 80 % (GraphPanel untouched,
+full-width). Top-down boat-frame plot, X = starboard (right on screen),
+Y = forward (up on screen), kayak outline for scale. One dot per event:
+**red = right blade, green = left blade; filled = entry, hollow ring =
+exit.** Dots accumulate as the playback cursor passes each event's time
+(scrubbing back rewinds them); a full play-through shows the whole run.
+Sanity check: right-blade dots must cluster starboard.
+
+### 13.5 Implementation order
+
+1. §13.1 overlay + §13.2 menu (small, independent UI changes)
+2. §13.3 engine (the bulk; validate against the Python reference)
+3. §13.4 panel (trivial once §13.3 exists)
