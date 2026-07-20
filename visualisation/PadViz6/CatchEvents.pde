@@ -214,8 +214,16 @@ class CatchEvents {
         float sgn  = rightBlade ? 1 : -1;
         float a    = phi[best] - psiRef[best] - datum;
         float r    = BLADE_L * hMag[best] * sgn;
+        // xB/yB are blade position relative to the shaft centre in the
+        // boat frame (+X stbd, +Y bow — matches EntryExitPanel). The shaft
+        // centre itself sits PADDLE_BOW_OFFSET_M forward of the boat's own
+        // centre/cockpit (PadViz6.pde, global — same value drawSliceC()'s
+        // 3D mesh uses), so that offset carries into yB too, or the panel
+        // would silently assume the paddler sits with the shaft directly
+        // over the boat's centre (found 20 Jul 2026 — the 3D view moved
+        // when this constant was added, the panel didn't).
         e.xB = r * cos(a);
-        e.yB = r * sin(a);
+        e.yB = r * sin(a) + PADDLE_BOW_OFFSET_M;
         events.add(e);
     }
 

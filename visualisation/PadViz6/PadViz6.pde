@@ -29,6 +29,15 @@ final int GRAPH_H = 220;
 // OBJ scale (Model3D.loadPaddle uses 300) and the kayak vertex scale.
 final float MODEL_SCALE = 300;
 
+// Average paddle-centre position relative to the boat's centre, toward the
+// bow — a measured physical fact (user, 20 Jul 2026), not a tuned display
+// offset. Kayak-body +Y = bow (Model3D.drawKayak()'s convention, shared by
+// CatchEvents' boat-frame xB/yB). Global so drawSliceC()'s 3D mesh
+// translate and CatchEvents.addEventIfLoud()'s entry/exit placement use
+// the same single value — they were briefly out of sync (found 20 Jul
+// 2026: the 3D view moved, the entry/exit panel didn't).
+final float PADDLE_BOW_OFFSET_M = 0.45f;
+
 // Slice / view state
 int     sliceMode  = 0;   // 0 = Slice 0 (calibration), 1 = Slice A, 2 = Slice B, 3 = Slice C (combined)
 
@@ -251,6 +260,27 @@ void drawSliceC() {
         qRelDisp = qMul(qConj(qRelRef), qRel);
     }
 
+    // Same yaw-datum manual override as the entry/exit panel (Sidecar.
+    // yawManualAdjustDeg, n/N/g — spec §13.7). It's the same physical
+    // quantity — a paddle-vs-boat heading disagreement the rest-window
+    // subtraction above doesn't fully capture (e.g. the paddle's
+    // magnetometer calibration was still converging during the rest
+    // window — see calibration_phase10 memory: mag_cal reached 3 for only
+    // 75 % of one field session). Found 20 Jul 2026: the entry/exit panel
+    // and this 3D relative-orientation render are two independent
+    // computations, so fixing CatchEvents' datum alone left this render
+    // still off. Applied here as an extra rotation about the kayak's own
+    // Z (deck-up) axis, composed on the outside of qRelDisp so it spins
+    // the paddle around the kayak's vertical without touching its tilt.
+    // Sign matches CatchEvents: a positive nudge rotates clockwise
+    // (viewed from above), correcting the anticlockwise error reported
+    // 20 Jul 2026.
+    if (sidecar != null && sidecar.yawManualAdjustDeg != 0) {
+        float corrRad = -radians(sidecar.yawManualAdjustDeg);
+        float[] qYawCorr = { cos(corrRad / 2), 0, 0, sin(corrRad / 2) };
+        qRelDisp = qMul(qYawCorr, qRelDisp);
+    }
+
     // Kayak in world (boat-IMU frame; no paddle cal triple).
     // worldRH ← kayakLH
     pushMatrix();
@@ -263,12 +293,8 @@ void drawSliceC() {
     // location. 300 px/m matches the paddle and kayak model scale.
     final float PADDLE_LIFT_M = 0.3f;
 
-    // Average paddle-centre position relative to the boat's centre, toward
-    // the bow — a measured physical fact (user, 20 Jul 2026), unlike
-    // PADDLE_LIFT_M above which is a pure display convenience. Kayak-body
-    // +Y = bow (see Model3D.drawKayak()), so this is a +Y translate.
-    final float PADDLE_BOW_OFFSET_M = 0.45f;
-
+    // PADDLE_BOW_OFFSET_M (global, top of file) — same +Y bow translate,
+    // shared with CatchEvents.addEventIfLoud()'s entry/exit placement.
     translate(0, PADDLE_BOW_OFFSET_M * MODEL_SCALE, PADDLE_LIFT_M * MODEL_SCALE);
 
     // Paddle-centre offset from accel double-integration. Applied in kayak-
@@ -507,12 +533,15 @@ void drawHUD_slice0() {
     fill(180);
     text(String.format("step  = %8.2f", cal.stepDeg),  20, 138);
 
-    // Entry/exit yaw datum — a data-record calibration, not the model-mesh
-    // triple above. CatchEvents auto-computes it (rest window mean, or
-    // whole-file mean if no sidecar); n/N nudge a manual correction on top,
-    // saved into the sidecar so it persists (notes 20 Jul 2026, spec §13.7).
+    // Paddle-vs-boat yaw datum — a data-record calibration, not the
+    // model-mesh triple above. Drives two independent renders: CatchEvents'
+    // entry/exit placement (auto value = rest-window or whole-file mean),
+    // and drawSliceC()'s 3D paddle-vs-kayak relative orientation (via an
+    // extra Z-axis rotation on qRelDisp). n/N nudge one manual correction
+    // that both consume, saved into the sidecar so it persists (notes
+    // 20 Jul 2026, spec §13.7).
     fill(200, 220, 255);
-    text("Entry/exit yaw datum (data record)", 20, 168);
+    text("Paddle-vs-boat yaw datum (data record)", 20, 168);
     if (catchEvents != null) {
         String src    = catchEvents.datumFromSidecar ? "rest window" : "whole-file mean";
         float  manual = (sidecar != null) ? sidecar.yawManualAdjustDeg : 0;
@@ -525,7 +554,7 @@ void drawHUD_slice0() {
         fill(140);
         textSize(11);
         text("n/N nudge by step   g reset manual to 0   (needs C run at least once)", 20, 248);
-        text("works in any slice — switch to 1/2/3 to watch the panel while nudging", 20, 264);
+        text("affects the entry/exit panel AND Slice C's 3D paddle-vs-kayak view", 20, 264);
         textSize(13);
     } else {
         fill(150);

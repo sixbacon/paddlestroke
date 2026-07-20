@@ -1015,3 +1015,45 @@ issues, all addressed:
    accel-derived paddle-centre wobble (§12.12) is applied on top, unchanged
    — it oscillates around this new base position instead of around the
    kayak origin. Slice A (paddle alone, no kayak reference) is unaffected.
+
+7. **The manual yaw datum didn't reach the 3D view.** User feedback after
+   items 4–6 landed: the entry/exit panel now looks right, but "it is the
+   visualisation of the paddle relative to the boat that is out" — i.e.
+   `drawSliceC()`'s 3D paddle-vs-kayak render, not the 2D panel. These are
+   two independent computations: the panel uses `CatchEvents`' own
+   circular-mean datum (fixed by items 4/5); the 3D view uses `qRelDisp`,
+   built from the rest-window mean-quat subtraction (`qRelRef`, §7.6) with
+   no manual-correction path at all. Fixed by applying the *same*
+   `sidecar.yawManualAdjustDeg` value as an extra rotation on `qRelDisp`
+   about the kayak's own Z (deck-up) axis, composed on the outside so it
+   spins the paddle around the kayak's vertical without touching tilt:
+   `qRelDisp = qMul(qYawCorr, qRelDisp)` where `qYawCorr` is a pure-Z
+   quaternion built from `-radians(yawManualAdjustDeg)` — negated to match
+   the same rotational sense already validated against the entry/exit
+   panel (positive nudge → clockwise correction, viewed from above).
+   **Sign not independently verified for the 3D view** — if `n` moves the
+   panel the right way but rotates the paddle the wrong way in Slice C,
+   flip the sign in that one line. One HUD block and one manual value now
+   drive both renders (relabelled "Paddle-vs-boat yaw datum" from
+   "Entry/exit yaw datum").
+   - **Underlying suspected cause, not yet root-caused:** the rest-window
+     subtraction assumes the paddle-vs-boat relative yaw measured at rest
+     stays valid through the whole session. If the paddle's magnetometer
+     calibration was still converging during the rest window (field
+     evidence: mag_cal reached 3 for only 75 % of one session, see
+     calibration_phase10 memory), the captured rest-window relative yaw
+     would carry whatever bias existed at that lower-confidence moment,
+     baking a constant offset into every subsequent frame. Untested.
+
+8. **Item 6's bow offset only reached the 3D view, not the panel.** User
+   asked directly whether the +0.45 m bow offset (item 6) had been applied
+   to the entry/exit panel too — it hadn't. `drawSliceC()`'s mesh translate
+   and `CatchEvents.addEventIfLoud()`'s `xB`/`yB` computation are separate
+   code paths (same pattern as item 7's bug): the panel's `e.yB = r *
+   sin(a)` implicitly places the shaft centre at the boat's own
+   centre/cockpit, with no reference to the measured offset at all.
+   `PADDLE_BOW_OFFSET_M` promoted from a `drawSliceC()`-local constant to a
+   global (top of `PadViz6.pde`, next to `MODEL_SCALE`) so both places read
+   the same value; `addEventIfLoud` now computes `e.yB = r * sin(a) +
+   PADDLE_BOW_OFFSET_M` (bow = +Y in both the 3D kayak-body frame and the
+   panel's boat-frame convention, so it's the same axis both places).
