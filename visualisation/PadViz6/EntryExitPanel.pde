@@ -6,13 +6,23 @@
 //   red  = right blade      green = left blade
 //   filled = water entry    hollow ring = exit
 // Dots accumulate as the playback cursor passes each event's frame, so a
-// play-through builds the pattern and scrubbing back rewinds it.
+// play-through builds the pattern and scrubbing back rewinds it. Right-
+// click anywhere in the panel clears the accumulated dots (notes 20 Jul
+// 2026) — events before the click's playback frame are hidden until the
+// panel is cleared again or a new CSV/sidecar is loaded.
 
 class EntryExitPanel {
     static final float RANGE_X_M = 1.7f;   // half-range drawn, metres
 
     final int COL_RIGHT = color(255, 80, 80);
     final int COL_LEFT  = color(80, 220, 100);
+
+    // Events with padFrame < clearAtFrame are hidden — set by clear().
+    int clearAtFrame = 0;
+
+    void clear(int atFrame) {
+        clearAtFrame = atFrame;
+    }
 
     void draw(CatchEvents ce, int curFrame) {
         int w = leftPanelWidth();
@@ -31,6 +41,11 @@ class EntryExitPanel {
         fill(200, 220, 255);
         textSize(14);  textAlign(LEFT, TOP);
         text("Blade entry / exit", 10, 10);
+        textSize(9);
+        fill(120);
+        textAlign(RIGHT, TOP);
+        text("R-click: clear", w - 8, 12);
+        textAlign(LEFT, TOP);
         textSize(10);
         int ly = 30;
         fill(COL_RIGHT);  ellipse(16, ly + 4, 8, 8);
@@ -92,6 +107,7 @@ class EntryExitPanel {
         if (ce != null) {
             for (CatchEvent e : ce.events) {
                 if (e.padFrame > curFrame) break;   // sorted by frame
+                if (e.padFrame < clearAtFrame) continue;   // cleared by R-click
                 float sx = cxp + e.xB * scale;
                 float sy = cyp - e.yB * scale;
                 if (sy < plotTop || sy > plotBot) continue;
@@ -115,7 +131,8 @@ class EntryExitPanel {
         if (ce == null) {
             text("no events computed", 10, h - 40);
         } else {
-            text(shown + " / " + ce.events.size() + " events shown", 10, h - 40);
+            String clearNote = (clearAtFrame > 0) ? ("  (cleared @" + clearAtFrame + ")") : "";
+            text(shown + " / " + ce.events.size() + " events shown" + clearNote, 10, h - 40);
             // Wrap the status string across two lines if needed.
             String s = ce.status;
             int cut = s.indexOf(" | heading");

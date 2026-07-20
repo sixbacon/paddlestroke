@@ -19,6 +19,13 @@
 // project_paddle_mount_diagnosis — the colours swap; that is a mount fact,
 // not a software correction to make here.)
 //
+// The yaw datum (step 3) is auto-computed per file/sidecar and can be off
+// by tens of degrees on some sessions (found 20 Jul 2026). Sidecar.
+// yawManualAdjustDeg is a user-nudged correction on top of it, saved with
+// the sidecar so it persists — a stop-gap until a more reliable automatic
+// method exists (spec §13.7). See PadViz6.pde's nudgeManualYawDatum() and
+// the Slice 0 HUD (drawHUD_slice0()) for the interactive side.
+//
 // All filtering is offline forward-backward (zero phase), run once per
 // CSV/sidecar change. ~µs per frame; 260 k-row files are fine.
 
@@ -36,6 +43,11 @@ class CatchEvents {
     boolean grvUsed = false;
     boolean boatUsed = false;
     boolean datumFromSidecar = false;
+
+    // Auto-computed yaw datum (degrees, before any manual override) — kept
+    // for the Slice 0 HUD readout (spec §13.7). The value actually used to
+    // place events includes sidecar.yawManualAdjustDeg on top of this.
+    float   datumAutoDeg = 0;
 
     static final float BLADE_L   = 1.05f;  // m, shaft centre → blade centre
     static final float LOW_T     = -0.05f; // m, tip-below-centre gate
@@ -132,6 +144,13 @@ class CatchEvents {
             sC += cos(d);  sS += sin(d);
         }
         float datum = atan2(sS, sC);
+        datumAutoDeg = degrees(datum);
+
+        // Manual override on top of the auto datum (spec §13.7) — saved in
+        // the sidecar so it persists with this data record. 0 if no sidecar
+        // or it hasn't been nudged.
+        float manualDeg = (sc != null) ? sc.yawManualAdjustDeg : 0;
+        float datumEff  = datum + radians(manualDeg);
 
         // ── event scan per blade ───────────────────────────────────────
         int minRun = round(MIN_RUN_S * fs);
@@ -155,9 +174,9 @@ class CatchEvents {
                 if (len < minRun || len > maxRun) continue;
 
                 // Entry = strongest impact while descending; exit while rising.
-                addEventIfLoud(fr, env, envGate, phi, psiRef, datum, hMag,
+                addEventIfLoud(fr, env, envGate, phi, psiRef, datumEff, hMag,
                                runStart, minIdx, rightBlade, true);
-                addEventIfLoud(fr, env, envGate, phi, psiRef, datum, hMag,
+                addEventIfLoud(fr, env, envGate, phi, psiRef, datumEff, hMag,
                                minIdx, runEnd, rightBlade, false);
             }
         }
@@ -173,8 +192,9 @@ class CatchEvents {
         String headR = boatUsed ? (boatGrv ? "boat GRV" : "boat fused")
                                 : "rolling baseline (no boat — approx)";
         String dat   = datumFromSidecar ? "sidecar rest" : "whole-file mean (approx)";
+        String man   = (manualDeg != 0) ? String.format("  manual=%+.1f°", manualDeg) : "";
         status = events.size() + " events | quat: " + src + " | heading: " + headR
-               + " | datum: " + dat;
+               + " | datum: " + dat + man;
         println("CatchEvents: " + status);
     }
 

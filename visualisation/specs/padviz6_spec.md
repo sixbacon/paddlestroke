@@ -1,8 +1,8 @@
 # PadViz6 — Disciplined Orientation Specification
 
-**Version:** 0.14
-**Date:** 2026-07-17
-**Status:** Slices 0–C + bottom GraphPanel with two-click zoom (right-click), double-right-click revert, `S`-key zoom reset, and merged CSV export (curated + all-fields). Corner axis compass (2D, ~1/3 the old on-screen size) with a `P`/`K`/`W` frame letter that also acts as the slice-switch shortcut. §7 expanded (v0.7) from single yaw-alignment rotation to a three-offset per-session procedure — sensor-mount roll/pitch (from accel) + magnetic-yaw datum (from mean quats) — with pre-session magnetometer figure-8 and DCD save. Requires three firmware additions listed in §7.8 (formalised in firmware spec §15, v2.7). v0.8: the three 8 Jul 2026 field-use notes (§12.10) are now DONE — `k`/`u` HUD flash, Slice B hint to `W`, and Backspace/`-` back-slice ping-pong. v0.9: free-orbit camera — left-drag orbits, wheel zooms, V snaps to side/top preset; 2D axis compass now rotates in step with the 3D camera basis. v0.10: first-pass session sidecar builder (`Sidecar.pde`, C key) — rest-window detector + mean-based mount offsets + yaw datum + JSON save per §7.5. Slice-switch letter shortcuts P/K/W dropped (Caps-Lock case ambiguity); digits 0/1/2/3 only. v0.11: startup onboarding checklist (`Checklist.pde`) in the bottom strip when no paddle CSV is loaded — three rows auto-ticked and clickable. v0.12: sidecar auto-load — on paddle-CSV open, look for a sibling `<basename>.session.json`, parse it, and reseed rest-window references so the correction is active without pressing C. Third checklist row auto-ticks in that case; boat CSV load extends the seeding to the boat side. v0.13 (9 Jul 2026): three field-use fixes driven by the 9 Jul session — (a) C-key rest-window search now starts at the current playback frame (was frame 0), so the user can seek to the intended still moment before building; (b) checklist strip hides as soon as the paddle CSV loads (was blocking the graph until sidecar built), and a yellow "SIDECAR not built — seek then press C" HUD hint appears in its place; (c) `DataSource.computePaddleCentreMotion` — accel double-integration with a three-stage HPF cascade (fc ≈ 0.3 Hz) drives a per-frame paddle-centre offset (±0.3 m clamped) that translates the mesh in Slices A + C during render, so the shaft midpoint visibly swings with the stroke. v0.14 (17 Jul 2026, §13): startup checklist becomes a floating overlay above the graph strip (graph appears on paddle-CSV load, overlay stays through seek-and-`C`); left key-list HUD replaced by a Commands pull-down menu; new `CatchEvents.pde` offline blade entry/exit detector (port of firmware spec §13.5 feasibility method); new `EntryExitPanel.pde` — left 20 % boat-frame top-down scatter of entry/exit points, red = right blade, green = left, filled = entry, hollow = exit, accumulating with playback.
+**Version:** 0.15
+**Date:** 2026-07-20
+**Status:** v0.15 (20 Jul 2026, §13.7): four field-use fixes from the user's on-screen check of v0.14 — pitch nudge moved off the double-bound `p`/`P` to `i`/`I`; playback speed multiplier (`>` doubles, `<` resets to x1); entry/exit panel right-click clears accumulated dots; entry/exit yaw-datum manual override (`n`/`N` nudge, `g` reset, shown in Slice 0, saved in the sidecar) as an explicit stop-gap for a ~30° automatic-datum error found on replay. Slices 0–C + bottom GraphPanel with two-click zoom (right-click), double-right-click revert, `S`-key zoom reset, and merged CSV export (curated + all-fields). Corner axis compass (2D, ~1/3 the old on-screen size) with a `P`/`K`/`W` frame letter that also acts as the slice-switch shortcut. §7 expanded (v0.7) from single yaw-alignment rotation to a three-offset per-session procedure — sensor-mount roll/pitch (from accel) + magnetic-yaw datum (from mean quats) — with pre-session magnetometer figure-8 and DCD save. Requires three firmware additions listed in §7.8 (formalised in firmware spec §15, v2.7). v0.8: the three 8 Jul 2026 field-use notes (§12.10) are now DONE — `k`/`u` HUD flash, Slice B hint to `W`, and Backspace/`-` back-slice ping-pong. v0.9: free-orbit camera — left-drag orbits, wheel zooms, V snaps to side/top preset; 2D axis compass now rotates in step with the 3D camera basis. v0.10: first-pass session sidecar builder (`Sidecar.pde`, C key) — rest-window detector + mean-based mount offsets + yaw datum + JSON save per §7.5. Slice-switch letter shortcuts P/K/W dropped (Caps-Lock case ambiguity); digits 0/1/2/3 only. v0.11: startup onboarding checklist (`Checklist.pde`) in the bottom strip when no paddle CSV is loaded — three rows auto-ticked and clickable. v0.12: sidecar auto-load — on paddle-CSV open, look for a sibling `<basename>.session.json`, parse it, and reseed rest-window references so the correction is active without pressing C. Third checklist row auto-ticks in that case; boat CSV load extends the seeding to the boat side. v0.13 (9 Jul 2026): three field-use fixes driven by the 9 Jul session — (a) C-key rest-window search now starts at the current playback frame (was frame 0), so the user can seek to the intended still moment before building; (b) checklist strip hides as soon as the paddle CSV loads (was blocking the graph until sidecar built), and a yellow "SIDECAR not built — seek then press C" HUD hint appears in its place; (c) `DataSource.computePaddleCentreMotion` — accel double-integration with a three-stage HPF cascade (fc ≈ 0.3 Hz) drives a per-frame paddle-centre offset (±0.3 m clamped) that translates the mesh in Slices A + C during render, so the shaft midpoint visibly swings with the stroke. v0.14 (17 Jul 2026, §13): startup checklist becomes a floating overlay above the graph strip (graph appears on paddle-CSV load, overlay stays through seek-and-`C`); left key-list HUD replaced by a Commands pull-down menu; new `CatchEvents.pde` offline blade entry/exit detector (port of firmware spec §13.5 feasibility method); new `EntryExitPanel.pde` — left 20 % boat-frame top-down scatter of entry/exit points, red = right blade, green = left, filled = entry, hollow = exit, accumulating with playback.
 
 ---
 
@@ -745,21 +745,28 @@ Slices A / B / C additional:
 | Space | Play / pause |
 | ← / → | Step 100 frames |
 | `,` / `.` | Step 1 frame |
+| `>` | Double playback speed (caps at x8) — v0.15 |
+| `<` | Reset playback speed to x1 — v0.15 |
 | Home / End | Jump to start / end |
 | `k` (lowercase) | Capture reference — mean quat over ±50 frames |
 | `u` (lowercase) | Clear reference — back to raw quat |
 | `S` (Shift+s) | Reset graph zoom to full range (also pushed to history) |
 | `E` (Shift+e) | Export merged CSV over current zoom |
 | `C` (Shift+c) | Build session sidecar (rest-window detect + mount offsets + yaw datum) and auto-save as `<basename>.session.json` next to the paddle CSV. Search starts at the current playback frame (v0.13). |
+| Mouse right-click in entry/exit panel (left 20%, slice ≥ 1) | Clear accumulated dots from current playback frame back — v0.15 |
 
-Slice 0 (calibration) — routed through `cal.handleKey()`:
+Slice 0 (calibration) — routed through `cal.handleKey()`, plus the v0.15
+entry/exit yaw-datum override (handled directly in `keyPressed()`, not
+`cal.handleKey()` — it edits the sidecar, not the model triple):
 | Key | Action |
 |-----|--------|
-| `y` / `Y` `p` / `P` `r` / `R` | Nudge yaw / pitch / roll by ± step |
-| `[` / `]` | Halve / double step |
-| `Z` | Zero all three |
+| `y` / `Y` `i` / `I` `r` / `R` | Nudge model-mesh yaw / pitch / roll by ± step (pitch moved off `p`/`P` in v0.15 — `p` is the global "open paddle CSV" key and always won the dispatch, so `p` for pitch-increase was dead) |
+| `[` / `]` | Halve / double step (shared by both nudge groups below) |
+| `Z` | Zero all three model-triple values |
 | `S` | Save `data/model_calibration.json` |
 | `L` | List current triple to console |
+| `n` / `N` | Nudge entry/exit yaw-datum manual override by ± step (§13.7) — requires a sidecar (`C` run first) |
+| `g` | Reset entry/exit yaw-datum manual override to 0 |
 
 Graph panel mouse gestures (Slices A/B/C only, when a paddle CSV is loaded):
 - **Left-click chart** — move playback cursor to x, pause playback (drag to scrub).
@@ -913,6 +920,73 @@ All four items implemented in one pass; `processing-java --build` passes.
   starboard/port correct — the implied ~1.5 m in-water arc is the §13.3
   stroke-length measurement working. The whole-file datum is good enough
   that the panel is meaningful even before the sidecar is built.
-- **Not yet done:** on-screen visual check by the user (panel layout,
-  overlay flow, menu ergonomics); zero-feather XY sanity on screen;
-  per-event stroke-length numbers/labels (future — the dots come first).
+- **Not yet done:** zero-feather XY sanity on screen; per-event
+  stroke-length numbers/labels (future — the dots come first).
+
+### 13.7 v0.15 — field-use fixes from the on-screen check (20 Jul 2026)
+
+The user's on-screen check (flagged "not yet done" above) surfaced four
+issues, all addressed:
+
+1. **`p` was bound twice.** `keyPressed()` handles `p` = "open paddle CSV"
+   globally, before slice-specific keys are dispatched — so in Slice 0 the
+   pitch-increase binding (`case 'p'` in `Calibration.handleKey`) was dead
+   code; every press opened the file picker instead. Fix: pitch now uses
+   `i`/`I` (`Calibration.pde`); `p`/`P` stay exclusively the paddle/boat
+   CSV loaders. `Menu.pde`'s Slice 0 key-list info row updated to match.
+
+2. **No fast replay.** Added a playback-speed multiplier (`playbackSpeed`,
+   default 1). `>` doubles it (capped at x8), `<` resets to x1. `stepPlayback()`
+   keeps a drift-free real-time tick count (`nReal`, unchanged 100 Hz
+   bookkeeping) and scales only the frame-advance count by the multiplier,
+   so speed changes mid-playback don't accumulate timing error. Shown in
+   the HUD mode line as `speed=x2` (and `(paused)` if stepping while
+   paused) whenever it's off x1.
+
+3. **Entry/exit panel had no way to reset the accumulated dots.**
+   `EntryExitPanel` gained `clearAtFrame` (default 0) — events with
+   `padFrame < clearAtFrame` are skipped in `draw()`. Right-clicking
+   anywhere in the panel calls `clear(paddleFrameIdx)`, hiding everything
+   before the current playback position; a `R-click: clear` hint is drawn
+   top-right of the panel. The marker also resets to 0 on a fresh paddle
+   CSV load and a fresh `C` sidecar build (new data record), but *not* on
+   every yaw-datum nudge (item 4) — nudging only moves existing dots, it
+   doesn't invalidate which ones are "cleared".
+
+4. **Entry/exit yaw datum manual override.** On replay the user found the
+   boat-frame plot's heading read **~30° anticlockwise** of the true
+   orientation, and the left blade's events sat consistently farther from
+   centre than the right's even during asymmetric paddling where that
+   wasn't expected — both point at the automatic yaw datum (`CatchEvents`'
+   circular mean of shaft-heading-minus-boat-heading, §13.3 step 3) being
+   wrong on at least this session, not at a code defect in the placement
+   formula itself (right and left use the identical formula with opposite
+   sign — see `CatchEvents.addEventIfLoud`). Per §11's discipline (no
+   empirical corrections baked into the algorithm without a physical
+   basis), the fix is an explicit, visible, user-driven override rather
+   than a silent nudge:
+   - `Sidecar` gains `yawManualAdjustDeg` (degrees, default 0), saved/loaded
+     in the sidecar JSON (`yaw_manual_adjust_deg`) so it persists with that
+     data record. Distinct from the existing `yawDatumDeg` (paddle-vs-boat
+     rest offset, informational, §7.6) — this new field is consumed
+     directly by `CatchEvents.compute()`, added to its own auto-computed
+     datum before placing every event.
+   - `CatchEvents` exposes `datumAutoDeg` (the value before the manual
+     adjustment) so the two can be shown side by side.
+   - Slice 0 (`drawHUD_slice0()`) gained a second block, "Entry/exit yaw
+     datum (data record)", showing the auto value (and whether it came
+     from the sidecar rest window or a whole-file fallback mean), the
+     current manual adjustment, and their wrapped sum. `n`/`N` nudge the
+     manual value by the same step size as the model-triple keys
+     (`cal.stepDeg`, adjustable with `[`/`]`); `g` resets it to 0. Nudging
+     requires a sidecar to already exist (`C` run at least once) — the
+     override lives inside it. Every nudge triggers `rebuildCatchEvents()`
+     (fast — offline biquad filtering over the whole CSV, unnoticeable at
+     interactive keypress rates) and a quiet re-save of the sidecar.
+   - **Open question, not resolved by this change:** whether correcting the
+     yaw fixes the left-deeper-than-right asymmetry too, or whether that is
+     a separate, real effect (paddling style, blade geometry, or a second
+     miscalibration) — to be checked once the user has re-run `C` and
+     nudged the datum on a known session. This is a stated stop-gap "until
+     a better calibration routine can be devised" (user, 20 Jul 2026), not
+     a claimed fix for the underlying automatic-datum algorithm.

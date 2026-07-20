@@ -28,6 +28,15 @@ class Sidecar {
     float pitchOffsetBoatDeg = 0;
     float yawDatumDeg        = 0;    // paddle yaw − boat yaw at rest (wrapped ±180°)
 
+    // Manual override on top of CatchEvents' own auto-computed yaw datum
+    // (entry/exit boat-frame heading — see CatchEvents.datumAutoDeg). Field
+    // use 20 Jul 2026 found the auto value can be off by tens of degrees;
+    // until a more reliable automatic method exists (spec §13.7), n/N in
+    // Slice 0 nudge this value and it is saved with the sidecar so it
+    // persists with this data record. Distinct from yawDatumDeg above,
+    // which is the paddle-vs-boat rest offset and unrelated to entry/exit.
+    float yawManualAdjustDeg = 0;
+
     int   restPadStart  = -1, restPadEnd  = -1;
     int   restBoatStart = -1, restBoatEnd = -1;
     float restDurationS   = 0;
@@ -78,6 +87,7 @@ class Sidecar {
         root.setJSONObject("boat_mount_offset_deg", boatOff);
 
         root.setFloat("yaw_datum_offset_deg", yawDatumDeg);
+        root.setFloat("yaw_manual_adjust_deg", yawManualAdjustDeg);
 
         // Only set the sub-keys we actually know. Missing = unknown; the
         // reader treats absence and null the same way (see loadFromFile).
@@ -115,6 +125,9 @@ class Sidecar {
             rollOffsetBoatDeg  = boat.getFloat("roll");
             pitchOffsetBoatDeg = boat.getFloat("pitch");
             yawDatumDeg = root.getFloat("yaw_datum_offset_deg");
+            // Older sidecar files predate this field — default to no adjustment.
+            yawManualAdjustDeg = root.hasKey("yaw_manual_adjust_deg")
+                                  ? root.getFloat("yaw_manual_adjust_deg") : 0;
 
             if (root.hasKey("mag_cal_status_at_rest")) {
                 JSONObject mag = root.getJSONObject("mag_cal_status_at_rest");

@@ -62,6 +62,8 @@ class Menu {
         items.add(new MenuItem("->",    "Step forward 100 frames",(char) 0, RIGHT));
         items.add(new MenuItem(",",     "Step back 1 frame",     ',', 0));
         items.add(new MenuItem(".",     "Step forward 1 frame",  '.', 0));
+        items.add(new MenuItem(">",     "Fast replay (x2, repeatable)", '>', 0));
+        items.add(new MenuItem("<",     "Reset replay speed to x1",     '<', 0));
         items.add(new MenuItem("Home",  "Jump to start",         (char) 0, 36));
         items.add(new MenuItem("End",   "Jump to end",           (char) 0, 35));
         items.add(header("SLICES"));
@@ -82,11 +84,15 @@ class Menu {
         items.add(new MenuItem("S", "Reset graph zoom to full range", 'S', 0));
         items.add(info("click",   "seek playback cursor"));
         items.add(info("R-click", "x2 = zoom to span; double = revert"));
+        items.add(header("ENTRY/EXIT PANEL"));
+        items.add(info("R-click", "clear accumulated entry/exit dots"));
         if (sliceMode == 0) {
             items.add(header("SLICE 0 KEYS"));
-            items.add(info("y/Y p/P r/R", "nudge yaw / pitch / roll"));
+            items.add(info("y/Y i/I r/R", "nudge model yaw / pitch / roll"));
             items.add(info("[ / ]", "halve / double step"));
             items.add(info("Z / S / L", "zero / save / list triple"));
+            items.add(info("n/N", "nudge entry/exit yaw datum (manual)"));
+            items.add(info("g", "reset entry/exit yaw datum to 0"));
         }
     }
 

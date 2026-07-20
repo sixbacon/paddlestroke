@@ -64,8 +64,12 @@ class Calibration {
             // Lowercase = increase, uppercase (Shift) = decrease.
             case 'y': yawDeg   += stepDeg; break;
             case 'Y': yawDeg   -= stepDeg; break;
-            case 'p': pitchDeg += stepDeg; break;
-            case 'P': pitchDeg -= stepDeg; break;
+            // Pitch uses i/I, not p/P — lowercase p is already the global
+            // "open paddle CSV" shortcut and always wins in keyPressed()'s
+            // dispatch order, so p/P here was dead for the increase case
+            // and confusing for the decrease case (spec/notes 20 Jul 2026).
+            case 'i': pitchDeg += stepDeg; break;
+            case 'I': pitchDeg -= stepDeg; break;
             case 'r': rollDeg  += stepDeg; break;
             case 'R': rollDeg  -= stepDeg; break;
 

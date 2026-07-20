@@ -50,6 +50,12 @@ int     boatFrameIdx   = 0;
 boolean playing        = false;
 int     lastAdvanceMs  = 0;
 
+// Playback speed multiplier — '>' doubles it (capped), '<' resets to x1.
+// Real-time bookkeeping in stepPlayback() stays decoupled from this so
+// there's no drift when the speed changes mid-playback (notes 20 Jul 2026).
+float   playbackSpeed    = 1.0f;
+final float PLAYBACK_SPEED_MAX = 8.0f;
+
 // Reference-pose subtraction — separate for paddle and boat.
 // When active, each frame renders q_ref_conj * q_current so that the
 // captured frame appears in the Slice 0 identity pose.
@@ -89,7 +95,8 @@ void setup() {
     println("PadViz6 —  0=Slice0 cal   1=SliceA paddle   2=SliceB kayak   3=SliceC world   V=cycle preset   Backspace/-=back");
     println("Camera:  left-drag orbits   mouse wheel zooms   V snaps to side/top preset");
     println("Load:  p=paddle CSV   b=boat CSV");
-    println("Slices A/B/C:  Space=play/pause   Left/Right=step 100   ,/.=step 1   k=capture ref   u=clear ref   S=reset zoom   E=export   C=build session sidecar");
+    println("Slices A/B/C:  Space=play/pause   Left/Right=step 100   ,/.=step 1   >/<=fast x2/reset speed   k=capture ref   u=clear ref   S=reset zoom   E=export   C=build session sidecar");
+    println("Slice 0:  y/Y i/I r/R=nudge model triple   n/N=nudge entry-exit yaw datum   g=reset it   [/]=step   Z/S/L=zero/save/list");
 }
 
 void draw() {
@@ -425,8 +432,11 @@ void drawHUD() {
     }
     String viewName = String.format("cam az=%+.0f°  el=%+.0f°  d=%.0f",
                                      camAzimDeg, camElevDeg, camDist);
+    String speedStr = (sliceMode >= 1 && playbackSpeed != 1.0f)
+                       ? String.format("   speed=x%.0f%s", playbackSpeed, playing ? "" : " (paused)")
+                       : "";
     // x=150 leaves room for the Commands menu button at x=20 (v0.14).
-    text("PadViz6   " + modeName + "   [" + viewName + "]", 150, 16);
+    text("PadViz6   " + modeName + "   [" + viewName + "]" + speedStr, 150, 16);
 
     // Sidecar indicator — sits to the right of the mode name if active.
     if (sidecar != null && sidecar.valid) {
@@ -490,9 +500,33 @@ void drawHUD_slice0() {
     fill(180);
     text(String.format("step  = %8.2f", cal.stepDeg),  20, 138);
 
+    // Entry/exit yaw datum — a data-record calibration, not the model-mesh
+    // triple above. CatchEvents auto-computes it (rest window mean, or
+    // whole-file mean if no sidecar); n/N nudge a manual correction on top,
+    // saved into the sidecar so it persists (notes 20 Jul 2026, spec §13.7).
+    fill(200, 220, 255);
+    text("Entry/exit yaw datum (data record)", 20, 168);
+    if (catchEvents != null) {
+        String src    = catchEvents.datumFromSidecar ? "rest window" : "whole-file mean";
+        float  manual = (sidecar != null) ? sidecar.yawManualAdjustDeg : 0;
+        float  total  = wrapDeg180(catchEvents.datumAutoDeg + manual);
+        fill(255);
+        text(String.format("auto (%s)  = %+7.2f°", src, catchEvents.datumAutoDeg), 20, 190);
+        text(String.format("manual adjust      = %+7.2f°", manual), 20, 208);
+        fill(180, 255, 180);
+        text(String.format("effective total    = %+7.2f°", total), 20, 226);
+        fill(140);
+        textSize(11);
+        text("n/N nudge by step   g reset manual to 0   (needs C run at least once)", 20, 248);
+        textSize(13);
+    } else {
+        fill(150);
+        text("no data loaded — press p to load a paddle CSV, then C", 20, 190);
+    }
+
     fill(140);
     textSize(12);
-    text("key bindings: Commands menu (top-left)", 20, 176);
+    text("key bindings: Commands menu (top-left)", 20, 272);
 }
 
 void drawHUD_sliceA() {
@@ -626,9 +660,13 @@ void drawRefStatus(int refFrame, int yPos) {
 void stepPlayback() {
     if (!playing) return;
     int now = millis();
-    int nAdvance = (now - lastAdvanceMs) / 10;   // 100 Hz
+    // Real-time 100 Hz tick count, tracked drift-free regardless of speed —
+    // playbackSpeed only scales how many frames each tick advances.
+    int nReal = (now - lastAdvanceMs) / 10;
+    if (nReal <= 0) return;
+    lastAdvanceMs += nReal * 10;
+    int nAdvance = round(nReal * playbackSpeed);
     if (nAdvance <= 0) return;
-    lastAdvanceMs += nAdvance * 10;
 
     if ((sliceMode == 1 || sliceMode == 3)
             && paddleData != null && paddleData.frameCount() > 0) {
@@ -686,13 +724,29 @@ void keyPressed() {
 
     // Slice-specific keys.
     if (sliceMode == 0) {
-        // Slice 0 — calibration key bindings.
+        // Slice 0 — calibration key bindings. Two independent things live
+        // here: the model-mesh triple (y/Y i/I r/R, via cal.handleKey) and
+        // the entry/exit yaw-datum manual override (n/N/g) — see
+        // drawHUD_slice0() and CatchEvents.pde's header comment.
+        if (key == 'n') { nudgeManualYawDatum( cal.stepDeg); return; }
+        if (key == 'N') { nudgeManualYawDatum(-cal.stepDeg); return; }
+        if (key == 'g' || key == 'G') { resetManualYawDatum(); return; }
         cal.handleKey(key);
         return;
     }
 
     // Slices A / B / C — playback, reference, export, zoom reset.
     if (key == ' ') { playing = !playing; lastAdvanceMs = millis(); return; }
+    if (key == '>') {
+        playbackSpeed = min(playbackSpeed * 2, PLAYBACK_SPEED_MAX);
+        triggerRefFlash("PLAYBACK SPEED  x" + nf(playbackSpeed, 0, 0));
+        return;
+    }
+    if (key == '<') {
+        playbackSpeed = 1.0f;
+        triggerRefFlash("PLAYBACK SPEED RESET  x1");
+        return;
+    }
     if (key == 'e' || key == 'E') {
         selectOutput("Export merged CSV", "exportFileSelected");
         return;
@@ -819,6 +873,7 @@ void onPaddleFileSelected(File selection) {
     tryAutoLoadSidecar(paddleData.sourcePath());
     applySidecarToDisplay();
     rebuildCatchEvents();
+    if (eePanel != null) eePanel.clear(0);   // fresh CSV — new frame numbering
     if (paddleData.frameCount() > 0) {
         // If a boat CSV is already loaded, go straight into combined view.
         switchSlice((boatData != null && boatData.frameCount() > 0) ? 3 : 1);
@@ -950,6 +1005,13 @@ float[] qConj(float[] q) {
     return new float[] { q[0], -q[1], -q[2], -q[3] };
 }
 
+// Wrap a degree value to (-180, 180].
+float wrapDeg180(float d) {
+    while (d >  180) d -= 360;
+    while (d < -180) d += 360;
+    return d;
+}
+
 // ── Graph panel → sketch bridging ────────────────────────────────────────────
 //
 // GraphPanel calls these to seek/pause when the user drags the cursor.
@@ -985,7 +1047,16 @@ void mousePressed() {
         graph.mousePressed(mouseX, localY, paddleData, mouseButton);
         return;
     }
-    if (mouseX < leftPanelWidth() && mouseY < height - GRAPH_H) return;
+    if (mouseX < leftPanelWidth() && mouseY < height - GRAPH_H) {
+        // Right-click in the entry/exit panel clears accumulated dots
+        // (notes 20 Jul 2026) — everything before the current playback
+        // frame is hidden until the panel is cleared again.
+        if (mouseButton == RIGHT && eePanel != null) {
+            eePanel.clear(paddleFrameIdx);
+            triggerRefFlash("ENTRY/EXIT VIEW CLEARED");
+        }
+        return;
+    }
     // 3D scene — left-drag orbits.
     if (mouseButton == LEFT) {
         dragMouseX  = mouseX;
@@ -1076,8 +1147,11 @@ void buildAndSaveSidecar() {
         refFrameBoat = (built.restBoatStart + built.restBoatEnd) / 2;
     }
 
-    // Sidecar changed — the entry/exit yaw datum depends on it.
+    // Sidecar changed — the entry/exit yaw datum depends on it. Fresh C run
+    // also resets any manual yaw-datum nudge (built is a brand-new Sidecar)
+    // and any panel clear marker, since this is effectively a new calibration.
     rebuildCatchEvents();
+    if (eePanel != null) eePanel.clear(0);
 
     // Auto-save to <paddle-basename>.session.json in the paddle CSV's folder.
     String savePath = deriveSidecarPath(paddleData.sourcePath());
@@ -1091,6 +1165,49 @@ void buildAndSaveSidecar() {
     } catch (Exception e) {
         println("Sidecar save FAILED: " + e.getMessage() + "   path=" + savePath);
         triggerRefFlash("SIDECAR BUILT but save failed — see console");
+    }
+}
+
+// ── Entry/exit yaw datum manual override (notes 20 Jul 2026, spec §13.7) ───
+//
+// CatchEvents computes an automatic yaw datum per compute() call — a rest-
+// window circular mean if a sidecar is built, else a whole-file mean (see
+// CatchEvents.datumAutoDeg). Field use found this can read tens of degrees
+// off on a given session. Until a more reliable automatic method exists,
+// n/N in Slice 0 nudge a manual correction on top of the automatic value;
+// it is saved into the sidecar (yawManualAdjustDeg) so it persists with
+// this data record, and shown alongside the automatic value in
+// drawHUD_slice0() so the two are never confused.
+
+void nudgeManualYawDatum(float deltaDeg) {
+    if (sidecar == null || !sidecar.valid) {
+        triggerRefFlash("YAW DATUM ADJUST — BUILD SIDECAR WITH C FIRST");
+        return;
+    }
+    sidecar.yawManualAdjustDeg = wrapDeg180(sidecar.yawManualAdjustDeg + deltaDeg);
+    rebuildCatchEvents();
+    saveSidecarQuiet();
+    triggerRefFlash(String.format("YAW DATUM MANUAL = %+.1f°", sidecar.yawManualAdjustDeg));
+}
+
+void resetManualYawDatum() {
+    if (sidecar == null || !sidecar.valid) return;
+    sidecar.yawManualAdjustDeg = 0;
+    rebuildCatchEvents();
+    saveSidecarQuiet();
+    triggerRefFlash("YAW DATUM MANUAL RESET");
+}
+
+// Re-saves the current sidecar to its existing path without the console
+// chatter buildAndSaveSidecar() prints — used for the frequent small nudges
+// above, which would otherwise flood the console.
+void saveSidecarQuiet() {
+    if (paddleData == null || sidecar == null) return;
+    String savePath = deriveSidecarPath(paddleData.sourcePath());
+    try {
+        sidecar.save(savePath);
+    } catch (Exception e) {
+        println("Sidecar save FAILED: " + e.getMessage() + "   path=" + savePath);
     }
 }
 
