@@ -91,9 +91,15 @@ float[] qRefBoatGrv   = { 1, 0, 0, 0 };
 // value it held. Same model as GraphPanel's double-right-click zoom revert.
 int     prevSliceMode = -1;
 
-// Top-centre HUD flash — brief visual confirmation for ref capture/clear.
+// Top-centre HUD flash — brief visual confirmation for ref capture/clear,
+// or (triggerErrorFlash) a warning/error that stays until the user clicks
+// it to dismiss, since a 1.5 s auto-fade was too short to reliably read
+// (notes 20 Jul 2026). flashBox* is the last-drawn hit box, used by
+// mousePressed() to detect the dismiss click.
 int     refFlashUntilMs = 0;
 String  refFlashMsg     = "";
+boolean refFlashIsError = false;
+float   flashBoxL, flashBoxR, flashBoxT, flashBoxB;
 
 void settings() {
     size(1400, 900, P3D);
@@ -139,7 +145,7 @@ void draw() {
     hint(DISABLE_DEPTH_TEST);
     if (isPanelVisible()) {
         eePanel.draw(catchEvents, paddleFrameIdx);
-        avgPanel.draw(catchEvents, paddleData, paddleFrameIdx);
+        avgPanel.draw(catchEvents, paddleFrameIdx);
     }
     pushMatrix();
     translate(leftPanelWidth(), 0);
@@ -1018,7 +1024,7 @@ boolean isCsv(File f) {
 void onPaddleFileSelected(File selection) {
     if (selection == null) return;
     if (!isCsv(selection)) {
-        triggerRefFlash("PADDLE CSV — please choose a .csv file");
+        triggerErrorFlash("PADDLE CSV — please choose a .csv file");
         return;
     }
     paddleData = new DataSource();
@@ -1040,7 +1046,7 @@ void onPaddleFileSelected(File selection) {
 void onBoatFileSelected(File selection) {
     if (selection == null) return;
     if (!isCsv(selection)) {
-        triggerRefFlash("BOAT CSV — please choose a .csv file");
+        triggerErrorFlash("BOAT CSV — please choose a .csv file");
         return;
     }
     boatData = new BoatSource();
@@ -1137,24 +1143,56 @@ void switchSlice(int newMode) {
 void triggerRefFlash(String msg) {
     refFlashMsg     = msg;
     refFlashUntilMs = millis() + 1500;
+    refFlashIsError = false;
+}
+
+// Warning/error flash — same top-centre spot, but doesn't auto-fade.
+// Stays until the user clicks it (dismissClicked(), wired into
+// mousePressed()). Notes 20 Jul 2026: the 1.5 s auto-fade was too short
+// to reliably read an error before it vanished.
+void triggerErrorFlash(String msg) {
+    refFlashMsg     = msg;
+    refFlashIsError = true;
 }
 
 void drawRefFlash() {
     int now = millis();
-    if (now >= refFlashUntilMs) return;
-    // Fade linearly over the last 400 ms of the flash; full opacity before.
-    int remaining = refFlashUntilMs - now;
-    int alpha     = (remaining >= 400) ? 240 : (int)(240 * remaining / 400.0);
-    noStroke();
-    fill(20, 20, 30, alpha);
-    rectMode(CENTER);
-    rect(width / 2, 30, textWidth(refFlashMsg) + 32, 40, 6);
-    rectMode(CORNER);
-    fill(120, 230, 200, alpha);
-    textAlign(CENTER, CENTER);
+    if (!refFlashIsError && now >= refFlashUntilMs) return;
+
+    int alpha = 240;
+    if (!refFlashIsError) {
+        // Fade linearly over the last 400 ms of the flash; full opacity before.
+        int remaining = refFlashUntilMs - now;
+        alpha = (remaining >= 400) ? 240 : (int)(240 * remaining / 400.0);
+    }
+
     textSize(20);
-    text(refFlashMsg, width / 2, 30);
+    String shown = refFlashIsError ? (refFlashMsg + "   [click to dismiss]") : refFlashMsg;
+    float  boxW  = textWidth(shown) + 32;
+    flashBoxL = width / 2 - boxW / 2;
+    flashBoxR = width / 2 + boxW / 2;
+    flashBoxT = 10;
+    flashBoxB = 50;
+
+    noStroke();
+    fill(refFlashIsError ? color(70, 25, 25) : color(20, 20, 30), alpha);
+    rectMode(CENTER);
+    rect(width / 2, 30, boxW, 40, 6);
+    rectMode(CORNER);
+    fill(refFlashIsError ? color(255, 160, 160) : color(120, 230, 200), alpha);
+    textAlign(CENTER, CENTER);
+    text(shown, width / 2, 30);
     textAlign(LEFT, TOP);
+}
+
+// Absolute window coords. Returns true (and dismisses) if an error flash
+// is showing and the click landed inside its box.
+boolean dismissFlashClicked(int mx, int my) {
+    if (!refFlashIsError) return false;
+    if (mx < flashBoxL || mx > flashBoxR || my < flashBoxT || my > flashBoxB) return false;
+    refFlashIsError = false;
+    refFlashUntilMs = 0;
+    return true;
 }
 
 // ── Quaternion helpers (Hamilton, [w, x, y, z]) ─────────────────────────────
@@ -1204,10 +1242,12 @@ boolean pointerInGraph() {
 }
 
 void mousePressed() {
-    // Overlay priority (v0.14/v0.15): menu button/drop-down, detail-panel
-    // toggle, then the startup overlay, then the graph strip, then the
-    // side panels (each only reacts to right-click inside its own
-    // bounds), then 3D orbit.
+    // Overlay priority (v0.14/v0.15): error-flash dismiss (draws on top of
+    // everything else), menu button/drop-down, detail-panel toggle, then
+    // the startup overlay, then the graph strip, then the side panels
+    // (each only reacts to right-click inside its own bounds), then 3D
+    // orbit.
+    if (dismissFlashClicked(mouseX, mouseY)) return;
     if (menu != null && menu.mousePressed(mouseX, mouseY)) return;
     if (detailPanel != null && detailPanel.mousePressed(mouseX, mouseY)) return;
     if (isChecklistVisible() && checklist.mousePressed(mouseX, mouseY)) return;
@@ -1288,7 +1328,7 @@ void exportFileSelected(File out) {
 
 void buildAndSaveSidecar() {
     if (paddleData == null || paddleData.frameCount() == 0) {
-        triggerRefFlash("SIDECAR — LOAD PADDLE CSV FIRST");
+        triggerErrorFlash("SIDECAR — LOAD PADDLE CSV FIRST");
         return;
     }
     int searchStart = paddleFrameIdx;
@@ -1312,7 +1352,7 @@ void buildAndSaveSidecar() {
     }
 
     if (!built.valid) {
-        triggerRefFlash("SIDECAR — " + built.notes);
+        triggerErrorFlash("SIDECAR — " + built.notes);
         return;
     }
 
@@ -1350,7 +1390,7 @@ void buildAndSaveSidecar() {
         triggerRefFlash("SIDECAR BUILT + SAVED  (" + built.confidence + ")  →  " + leaf);
     } catch (Exception e) {
         println("Sidecar save FAILED: " + e.getMessage() + "   path=" + savePath);
-        triggerRefFlash("SIDECAR BUILT but save failed — see console");
+        triggerErrorFlash("SIDECAR BUILT but save failed — see console");
     }
 }
 
@@ -1367,7 +1407,7 @@ void buildAndSaveSidecar() {
 
 void nudgeManualYawDatum(float deltaDeg) {
     if (sidecar == null || !sidecar.valid) {
-        triggerRefFlash("YAW DATUM ADJUST — BUILD SIDECAR WITH C FIRST");
+        triggerErrorFlash("YAW DATUM ADJUST — BUILD SIDECAR WITH C FIRST");
         return;
     }
     sidecar.yawManualAdjustDeg = wrapDeg180(sidecar.yawManualAdjustDeg + deltaDeg);

@@ -51,10 +51,17 @@ class CatchEvents {
 
     // In-water runs (padFrame start/end pairs) per blade, same MIN_RUN_S/
     // MAX_RUN_S gate as the entry/exit events built from them — consumed
-    // by StrokeAveragePanel to average the roll trace over each stroke
+    // by StrokeAveragePanel to average the blade XY path over each stroke
     // (spec §13.8, notes 20 Jul 2026).
     ArrayList<int[]> rightRuns = new ArrayList<int[]>();
     ArrayList<int[]> leftRuns  = new ArrayList<int[]>();
+
+    // Per-frame signals kept after compute() returns (not just local to
+    // it) so bladeXY() below can reconstruct the boat-frame blade position
+    // at ANY frame, not just the entry/exit event frames — needed to trace
+    // the path between an entry and its exit, not just the two endpoints.
+    float[] phi, psiRef, hMag;
+    float   datumEff = 0;
 
     static final float BLADE_L   = 1.05f;  // m, shaft centre → blade centre
     static final float LOW_T     = -0.05f; // m, tip-below-centre gate
@@ -85,8 +92,8 @@ class CatchEvents {
         // ── per-frame signals ───────────────────────────────────────────
         float[] amag = new float[n];
         float[] uzRaw = new float[n];   // world-z of shaft dir (body X)
-        float[] phi  = new float[n];    // world heading of shaft dir (rad)
-        float[] hMag = new float[n];    // horizontal magnitude of shaft dir
+        phi  = new float[n];            // world heading of shaft dir (rad)
+        hMag = new float[n];            // horizontal magnitude of shaft dir
         for (int i = 0; i < n; i++) {
             FrameData f = fr.get(i);
             amag[i] = sqrt(f.accelX*f.accelX + f.accelY*f.accelY + f.accelZ*f.accelZ);
@@ -115,7 +122,7 @@ class CatchEvents {
         // ── heading reference per frame ────────────────────────────────
         // psiRef[i] = boat GRV/fused yaw at the synced boat frame, or (no
         // boat) a ±15 s rolling circular mean of the shaft heading itself.
-        float[] psiRef = new float[n];
+        psiRef = new float[n];
         if (boatUsed) {
             float last = 0;
             ArrayList<BoatFrameData> bf = boat.getFrames();
@@ -159,7 +166,7 @@ class CatchEvents {
         // the sidecar so it persists with this data record. 0 if no sidecar
         // or it hasn't been nudged.
         float manualDeg = (sc != null) ? sc.yawManualAdjustDeg : 0;
-        float datumEff  = datum + radians(manualDeg);
+        datumEff = datum + radians(manualDeg);
 
         // ── event scan per blade ───────────────────────────────────────
         int minRun = round(MIN_RUN_S * fs);
@@ -207,6 +214,18 @@ class CatchEvents {
         status = events.size() + " events | quat: " + src + " | heading: " + headR
                + " | datum: " + dat + man;
         println("CatchEvents: " + status);
+    }
+
+    // Boat-frame blade position at frame i (metres, +X stbd / +Y bow) —
+    // same formula addEventIfLoud() uses for a single event frame, exposed
+    // here so StrokeAveragePanel can trace the path across an entire
+    // in-water run, not just its entry/exit frames (spec §13.8, notes
+    // 20 Jul 2026). Valid only after compute() has run.
+    float[] bladeXY(int i, boolean rightBlade) {
+        float sgn = rightBlade ? 1 : -1;
+        float a   = phi[i] - psiRef[i] - datumEff;
+        float r   = BLADE_L * hMag[i] * sgn;
+        return new float[]{ r * cos(a), r * sin(a) + PADDLE_BOW_OFFSET_M };
     }
 
     void addEventIfLoud(ArrayList<FrameData> fr, float[] env, float envGate,

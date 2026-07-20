@@ -1175,22 +1175,32 @@ panel was wanted — an averaged stroke-shape trace, symmetric on the right.
      `translate(0, 40)` offset needed no change.
 2. **`StrokeAveragePanel.pde`** (new) — right-hand mirror of
    `EntryExitPanel`, same width (`rightPanelWidth()`, same 20% formula and
-   visibility condition as `leftPanelWidth()`/`isPanelVisible()`) and
-   height (stops above the graph strip). Plots the average roll trace over
-   each blade's in-water run — `CatchEvents` now also collects
-   `rightRuns`/`leftRuns` (the same `runStart`/`runEnd` pairs the entry/exit
-   events are built from, same `MIN_RUN_S`/`MAX_RUN_S` gate) alongside the
-   events themselves. Each run is resampled to 40 points (linear
-   interpolation) and averaged in; roll is plain-arithmetic-averaged, not
-   circular-mean, matching `Sidecar.meanRPYFromFrames`' existing
-   convention (a single stroke's roll swing doesn't cross the ±180° wrap).
-   A run counts once the playback cursor passes its end frame — mirrors
-   `EntryExitPanel`'s dot accumulation, so play-through builds the trace
-   and scrubbing back removes strokes again. Right-click restarts the
-   accumulation from the current frame; independent of the left panel's
-   reset (each panel's `mousePressed()` branch only checks clicks inside
-   its own bounds). Green = left, red = right (same convention as the
-   entry/exit panel).
+   visibility condition as `leftPanelWidth()`/`isPanelVisible()`), height
+   (stops above the graph strip), and top-down boat-frame grid/kayak
+   outline. `CatchEvents` now also collects `rightRuns`/`leftRuns` (the
+   same `runStart`/`runEnd` pairs the entry/exit events are built from,
+   same `MIN_RUN_S`/`MAX_RUN_S` gate). A run counts once the playback
+   cursor passes its end frame — mirrors `EntryExitPanel`'s dot
+   accumulation, so play-through builds the picture and scrubbing back
+   removes strokes again. Right-click restarts the accumulation from the
+   current frame; independent of the left panel's reset (each panel's
+   `mousePressed()` branch only checks clicks inside its own bounds).
+   - **First version plotted roll vs. normalised stroke phase** (a line
+     chart, not an XY-plane view) — the user then asked for "the average
+     position of each blade in the xy plane between the entry and exit
+     points" instead, i.e. the averaged *path* the blade tip takes through
+     the water, in the same boat-frame coordinates as the entry/exit
+     panel. Redesigned: `CatchEvents` exposes `phi`/`psiRef`/`hMag`/
+     `datumEff` as fields (were locals inside `compute()`) plus a new
+     `bladeXY(frame, rightBlade)` method — the same boat-frame position
+     formula `addEventIfLoud()` already used for one event frame, now
+     callable for any frame in a run so the *whole path* between entry and
+     exit can be traced, not just its two endpoints. Each run's path is
+     resampled to 24 points and averaged per blade; drawn as a connected
+     curve on the same grid/kayak-outline the entry/exit panel uses, with
+     a filled dot at the averaged entry point and a hollow ring at the
+     averaged exit point (same convention as the dots on the left panel).
+     Green = left, red = right.
 3. **Layout knock-on effects** — `drawAxisLegend()`'s x-position now
    subtracts `rightPanelWidth()` so its text doesn't sit behind the new
    panel; the graph strip is unaffected (it already spans the full window
@@ -1198,7 +1208,22 @@ panel was wanted — an averaged stroke-shape trace, symmetric on the right.
    same pattern the entry/exit panel established in v0.14). `Menu.pde`
    gained entries for both panels' right-click behaviour and the Detail
    button.
+4. **Error flashes now persist until dismissed.** The top-centre HUD flash
+   (`triggerRefFlash`/`drawRefFlash`) auto-faded after 1.5 s regardless of
+   message — too short to reliably read an error before it vanished (user,
+   20 Jul 2026). New `triggerErrorFlash(msg)` sets `refFlashIsError=true`
+   instead of a timeout; `drawRefFlash()` renders it in a red-tinted style
+   with a `[click to dismiss]` suffix and stores its on-screen bounds
+   (`flashBoxL/R/T/B`); `mousePressed()` checks `dismissFlashClicked()`
+   first, ahead of every other overlay, since the flash draws on top of
+   everything. Applied to the genuinely error/blocker-toned triggers
+   (non-`.csv` file rejection, "load paddle CSV first", sidecar build
+   failure/save failure, "build sidecar before nudging yaw datum") — plain
+   confirmations (ref captured, sidecar built, playback speed, panel
+   reset, etc.) keep the original short auto-fade.
 
 Compiles clean via `processing-java --build`. User's first on-screen check
 found the two issues above (layout, p/b regression); both addressed same
-day, not yet re-confirmed.
+day. The stroke-average panel then went through the roll-trace →
+XY-path redesign and the error-flash change, also same day; none of this
+round re-confirmed on screen yet.
