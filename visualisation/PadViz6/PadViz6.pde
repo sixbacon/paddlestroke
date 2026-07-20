@@ -262,7 +262,14 @@ void drawSliceC() {
     // coords (deck-up = +Z_kayak) — not a measurement of the physical paddle
     // location. 300 px/m matches the paddle and kayak model scale.
     final float PADDLE_LIFT_M = 0.3f;
-    translate(0, 0, PADDLE_LIFT_M * MODEL_SCALE);
+
+    // Average paddle-centre position relative to the boat's centre, toward
+    // the bow — a measured physical fact (user, 20 Jul 2026), unlike
+    // PADDLE_LIFT_M above which is a pure display convenience. Kayak-body
+    // +Y = bow (see Model3D.drawKayak()), so this is a +Y translate.
+    final float PADDLE_BOW_OFFSET_M = 0.45f;
+
+    translate(0, PADDLE_BOW_OFFSET_M * MODEL_SCALE, PADDLE_LIFT_M * MODEL_SCALE);
 
     // Paddle-centre offset from accel double-integration. Applied in kayak-
     // body frame so the paddle swings relative to the kayak rather than the
@@ -518,6 +525,7 @@ void drawHUD_slice0() {
         fill(140);
         textSize(11);
         text("n/N nudge by step   g reset manual to 0   (needs C run at least once)", 20, 248);
+        text("works in any slice — switch to 1/2/3 to watch the panel while nudging", 20, 264);
         textSize(13);
     } else {
         fill(150);
@@ -722,15 +730,22 @@ void keyPressed() {
     else if (key == 'p') { selectInput("Select paddle CSV", "onPaddleFileSelected"); return; }
     else if (key == 'b' || key == 'B') { selectInput("Select boat CSV",   "onBoatFileSelected");   return; }
 
+    // Entry/exit yaw-datum manual override (n/N/g) — active in every slice,
+    // not just Slice 0. The numeric readout lives in Slice 0's HUD
+    // (drawHUD_slice0()), but the panel showing the actual effect is only
+    // visible in slices 1-3 (isPanelVisible()), so the nudge itself can't
+    // be Slice-0-only or there would be no way to see it move while nudging
+    // (bug found 20 Jul 2026 — n/N appeared to do nothing because it was
+    // gated inside the sliceMode==0 branch below).
+    if (key == 'n') { nudgeManualYawDatum( cal.stepDeg); return; }
+    if (key == 'N') { nudgeManualYawDatum(-cal.stepDeg); return; }
+    if (key == 'g' || key == 'G') { resetManualYawDatum(); return; }
+
     // Slice-specific keys.
     if (sliceMode == 0) {
-        // Slice 0 — calibration key bindings. Two independent things live
-        // here: the model-mesh triple (y/Y i/I r/R, via cal.handleKey) and
-        // the entry/exit yaw-datum manual override (n/N/g) — see
-        // drawHUD_slice0() and CatchEvents.pde's header comment.
-        if (key == 'n') { nudgeManualYawDatum( cal.stepDeg); return; }
-        if (key == 'N') { nudgeManualYawDatum(-cal.stepDeg); return; }
-        if (key == 'g' || key == 'G') { resetManualYawDatum(); return; }
+        // Slice 0 — model-mesh calibration triple only (y/Y i/I r/R via
+        // cal.handleKey). The yaw-datum override above is handled first and
+        // returns, so it never reaches cal.handleKey().
         cal.handleKey(key);
         return;
     }

@@ -86,13 +86,17 @@ class Menu {
         items.add(info("R-click", "x2 = zoom to span; double = revert"));
         items.add(header("ENTRY/EXIT PANEL"));
         items.add(info("R-click", "clear accumulated entry/exit dots"));
+        // n/N/g work in every slice (not just Slice 0) so the panel can be
+        // watched while nudging — see keyPressed()'s comment, notes 20 Jul
+        // 2026. Readout of the numbers is still Slice-0-only.
+        items.add(new MenuItem("n", "Nudge yaw datum + step (needs sidecar — C first)", 'n', 0));
+        items.add(new MenuItem("N", "Nudge yaw datum − step",                          'N', 0));
+        items.add(new MenuItem("g", "Reset yaw datum manual adjust to 0",              'g', 0));
         if (sliceMode == 0) {
             items.add(header("SLICE 0 KEYS"));
             items.add(info("y/Y i/I r/R", "nudge model yaw / pitch / roll"));
             items.add(info("[ / ]", "halve / double step"));
             items.add(info("Z / S / L", "zero / save / list triple"));
-            items.add(info("n/N", "nudge entry/exit yaw datum (manual)"));
-            items.add(info("g", "reset entry/exit yaw datum to 0"));
         }
     }
 
