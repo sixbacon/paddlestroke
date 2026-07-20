@@ -73,6 +73,18 @@ int     refFramePad   = -1;
 float[] qRefBoat      = { 1, 0, 0, 0 };
 int     refFrameBoat  = -1;
 
+// GRV counterparts of qRefPad/qRefBoat, captured over the same windows
+// (same refFramePad/refFrameBoat >= 0 gates whether they're valid) —
+// used only by drawSliceC()'s paddle-vs-kayak relative orientation, not
+// by Slice A/B (which stay fused-only, unaffected). Fused yaw was found
+// to carry a mag artefact for this exact relative-yaw quantity (spec
+// §16.11); GRV is mag-free. Investigation 20 Jul 2026 (notes20260720.txt)
+// found drawSliceC() was still fused-only after CatchEvents had already
+// switched to GRV — this pair closes that gap. Identity when unset or
+// when either CSV lacks GRV columns.
+float[] qRefPadGrv    = { 1, 0, 0, 0 };
+float[] qRefBoatGrv   = { 1, 0, 0, 0 };
+
 // Slice-history ping-pong. Backspace / '-' swaps sliceMode with the last
 // value it held. Same model as GraphPanel's double-right-click zoom revert.
 int     prevSliceMode = -1;
@@ -240,8 +252,23 @@ void drawSliceC() {
     FrameData     fd  = paddleData.frameAt(paddleFrameIdx);
     BoatFrameData bfd = boatData.frameAt(bDraw);
 
-    float[] qPad  = { fd.qw,  fd.qx,  fd.qy,  fd.qz  };
-    float[] qBoat = { bfd.qw, bfd.qx, bfd.qy, bfd.qz };
+    // Prefer GRV (mag-free) over fused for this render when both files
+    // have it — CatchEvents already made this switch (spec §16.11: fused
+    // yaw carries an in-band cycle-periodic mag artefact for exactly this
+    // paddle-vs-boat relative-yaw quantity; GRV doesn't). Investigation
+    // 20 Jul 2026 (notes20260720.txt) found this function had been left
+    // fused-only, so its rest-window reference could bake in a large
+    // magnetometer bias from whatever mag_cal state existed at the
+    // captured instant — plausible root cause of a reported ~60° error
+    // that the entry/exit panel (GRV-based) didn't share. Gated on BOTH
+    // files having GRV (not per-sensor) so paddle and boat are never
+    // mixed fused-vs-GRV, which would reintroduce the same class of bug.
+    boolean useGrvC = paddleData.hasGrv && boatData.hasGrv;
+
+    float[] qPad  = useGrvC ? new float[]{ fd.grvQw,  fd.grvQx,  fd.grvQy,  fd.grvQz  }
+                             : new float[]{ fd.qw,     fd.qx,     fd.qy,     fd.qz     };
+    float[] qBoat = useGrvC ? new float[]{ bfd.grvQw, bfd.grvQx, bfd.grvQy, bfd.grvQz }
+                             : new float[]{ bfd.qw,    bfd.qx,    bfd.qy,    bfd.qz    };
 
     // kayakLH ← paddleLH  (paddle rotation expressed in kayak-body frame)
     float[] qRel = qMul(qConj(qBoat), qPad);
@@ -250,31 +277,37 @@ void drawSliceC() {
     // Kayak: rendered relative to captured kayak rest (as in Slice B).
     // Paddle: rendered relative to captured paddle-vs-kayak rest offset —
     // this collapses the magnetic-yaw datum difference between the two IMUs.
+    // qRefPadGrv/qRefBoatGrv are captured over the same windows as
+    // qRefPad/qRefBoat (same refFramePad/refFrameBoat >= 0 gate) — see
+    // buildAndSaveSidecar(), applySidecarToDisplay(), handleFrameNavCombined().
     float[] qBoatDisp = qBoat;
     float[] qRelDisp  = qRel;
     if (refFrameBoat >= 0) {
-        qBoatDisp = qMul(qConj(qRefBoat), qBoat);
+        qBoatDisp = qMul(qConj(useGrvC ? qRefBoatGrv : qRefBoat), qBoat);
     }
     if (refFramePad >= 0 && refFrameBoat >= 0) {
-        float[] qRelRef = qMul(qConj(qRefBoat), qRefPad);   // kayakLH ← paddleLH at rest
+        float[] qRefP = useGrvC ? qRefPadGrv  : qRefPad;
+        float[] qRefB = useGrvC ? qRefBoatGrv : qRefBoat;
+        float[] qRelRef = qMul(qConj(qRefB), qRefP);   // kayakLH ← paddleLH at rest
         qRelDisp = qMul(qConj(qRelRef), qRel);
     }
 
     // Same yaw-datum manual override as the entry/exit panel (Sidecar.
-    // yawManualAdjustDeg, n/N/g — spec §13.7). It's the same physical
-    // quantity — a paddle-vs-boat heading disagreement the rest-window
-    // subtraction above doesn't fully capture (e.g. the paddle's
-    // magnetometer calibration was still converging during the rest
-    // window — see calibration_phase10 memory: mag_cal reached 3 for only
-    // 75 % of one field session). Found 20 Jul 2026: the entry/exit panel
-    // and this 3D relative-orientation render are two independent
-    // computations, so fixing CatchEvents' datum alone left this render
-    // still off. Applied here as an extra rotation about the kayak's own
-    // Z (deck-up) axis, composed on the outside of qRelDisp so it spins
-    // the paddle around the kayak's vertical without touching its tilt.
-    // Sign matches CatchEvents: a positive nudge rotates clockwise
-    // (viewed from above), correcting the anticlockwise error reported
-    // 20 Jul 2026.
+    // yawManualAdjustDeg, n/N/g — spec §13.7), still applied on top of the
+    // GRV-based reference above as a residual fine-adjustment — e.g. for
+    // whatever small physical mounting misalignment remains between the
+    // two sensors' own axis conventions, which GRV doesn't correct (GRV
+    // removes the *magnetic* bias, not a mechanical one). Now that the
+    // rest-window reference itself is GRV-based when available (spec
+    // §13.7 item 9), this value is expected to need only a small nudge in
+    // the common case, not the ~60° that was compensating for a fused-quat
+    // magnetic bias before this fix. Applied as an extra rotation about
+    // the kayak's own Z (deck-up) axis, composed on the outside of
+    // qRelDisp so it spins the paddle around the kayak's vertical without
+    // touching its tilt. Sign matches CatchEvents' convention (positive
+    // nudge rotates clockwise, viewed from above) but is not independently
+    // verified for this 3D view — flip the sign below if it goes the wrong
+    // way on screen.
     if (sidecar != null && sidecar.yawManualAdjustDeg != 0) {
         float corrRad = -radians(sidecar.yawManualAdjustDeg);
         float[] qYawCorr = { cos(corrRad / 2), 0, 0, sin(corrRad / 2) };
@@ -680,6 +713,14 @@ void drawHUD_sliceC() {
         text("refs = identity  (K captures paddle + matched boat rest simultaneously; U clears)", 20, y);
     }
 
+    // Quat source for this render — GRV (mag-free) when both files have
+    // it, else fused. See drawSliceC()'s useGrvC (spec §13.7 item 9).
+    boolean useGrvC = paddleData.hasGrv && boatData.hasGrv;
+    fill(useGrvC ? color(150, 220, 150) : color(230, 220, 140));
+    textSize(11);
+    text("relative-yaw source: " + (useGrvC ? "GRV (mag-free)" : "fused (no GRV in one or both files)"),
+         20, y + 20);
+    textSize(13);
 }
 
 void drawRefStatus(int refFrame, int yPos) {
@@ -842,6 +883,13 @@ void handleFrameNavCombined() {
         if (boatHi < 0) boatHi = boatCentre + 50;
         qRefBoat     = boatData.meanQuat(boatLo, boatHi);
         refFrameBoat = boatCentre;
+
+        // GRV counterparts over the same windows, for drawSliceC()'s
+        // relative-orientation render (spec §13.7 item 9) — identity if
+        // either file lacks GRV columns.
+        qRefPadGrv  = paddleData.hasGrv ? paddleData.meanQuatGrv(padLo, padHi) : new float[]{ 1, 0, 0, 0 };
+        qRefBoatGrv = boatData.hasGrv   ? boatData.meanQuatGrv(boatLo, boatHi) : new float[]{ 1, 0, 0, 0 };
+
         println("Slice C refs captured — pad frame " + refFramePad
                 + "  boat frame " + refFrameBoat);
         triggerRefFlash("BOTH REFS CAPTURED  (pad " + refFramePad
@@ -850,6 +898,8 @@ void handleFrameNavCombined() {
     else if (key == 'u') {
         qRefPad = new float[]{ 1, 0, 0, 0 };
         qRefBoat = new float[]{ 1, 0, 0, 0 };
+        qRefPadGrv = new float[]{ 1, 0, 0, 0 };
+        qRefBoatGrv = new float[]{ 1, 0, 0, 0 };
         refFramePad = -1;
         refFrameBoat = -1;
         println("Slice C refs cleared.");
@@ -992,6 +1042,9 @@ void applySidecarToDisplay() {
         sidecar.qRestPad = paddleData.meanQuat(sidecar.restPadStart, sidecar.restPadEnd);
         qRefPad     = sidecar.qRestPad;
         refFramePad = (sidecar.restPadStart + sidecar.restPadEnd) / 2;
+        qRefPadGrv  = paddleData.hasGrv
+                      ? paddleData.meanQuatGrv(sidecar.restPadStart, sidecar.restPadEnd)
+                      : new float[]{ 1, 0, 0, 0 };
     }
 
     if (boatData != null && boatData.frameCount() > 0
@@ -999,6 +1052,9 @@ void applySidecarToDisplay() {
         sidecar.qRestBoat = boatData.meanQuat(sidecar.restBoatStart, sidecar.restBoatEnd);
         qRefBoat     = sidecar.qRestBoat;
         refFrameBoat = (sidecar.restBoatStart + sidecar.restBoatEnd) / 2;
+        qRefBoatGrv  = boatData.hasGrv
+                       ? boatData.meanQuatGrv(sidecar.restBoatStart, sidecar.restBoatEnd)
+                       : new float[]{ 1, 0, 0, 0 };
     }
 }
 
@@ -1185,10 +1241,16 @@ void buildAndSaveSidecar() {
     if (built.qRestPad != null) {
         qRefPad     = built.qRestPad;
         refFramePad = (built.restPadStart + built.restPadEnd) / 2;
+        qRefPadGrv  = paddleData.hasGrv
+                      ? paddleData.meanQuatGrv(built.restPadStart, built.restPadEnd)
+                      : new float[]{ 1, 0, 0, 0 };
     }
     if (built.qRestBoat != null) {
         qRefBoat     = built.qRestBoat;
         refFrameBoat = (built.restBoatStart + built.restBoatEnd) / 2;
+        qRefBoatGrv  = boatData.hasGrv
+                       ? boatData.meanQuatGrv(built.restBoatStart, built.restBoatEnd)
+                       : new float[]{ 1, 0, 0, 0 };
     }
 
     // Sidecar changed — the entry/exit yaw datum depends on it. Fresh C run

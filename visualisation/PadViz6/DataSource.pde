@@ -254,4 +254,26 @@ class DataSource {
         if (mag < 1e-6) return new float[] { 1, 0, 0, 0 };
         return new float[] { sw/mag, sx/mag, sy/mag, sz/mag };
     }
+
+    // GRV counterpart of meanQuat() — same antipodal-sign handling, reads
+    // grvQw/x/y/z instead of qw/x/y/z. Caller must check hasGrv first;
+    // returns identity on a v8.13-pre file where GRV is never populated.
+    float[] meanQuatGrv(int startFrame, int endFrame) {
+        int lo = max(0, startFrame);
+        int hi = min(frames.size() - 1, endFrame);
+        float sw = 0, sx = 0, sy = 0, sz = 0;
+        int n = 0;
+        for (int i = lo; i <= hi; i++) {
+            FrameData f = frames.get(i);
+            float qw = f.grvQw, qx = f.grvQx, qy = f.grvQy, qz = f.grvQz;
+            if (n > 0 && (sw*qw + sx*qx + sy*qy + sz*qz) < 0) {
+                qw = -qw; qx = -qx; qy = -qy; qz = -qz;
+            }
+            sw += qw; sx += qx; sy += qy; sz += qz;
+            n++;
+        }
+        float mag = sqrt(sw*sw + sx*sx + sy*sy + sz*sz);
+        if (mag < 1e-6) return new float[] { 1, 0, 0, 0 };
+        return new float[] { sw/mag, sx/mag, sy/mag, sz/mag };
+    }
 }

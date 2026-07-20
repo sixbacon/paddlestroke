@@ -1057,3 +1057,47 @@ issues, all addressed:
    the same value; `addEventIfLoud` now computes `e.yB = r * sin(a) +
    PADDLE_BOW_OFFSET_M` (bow = +Y in both the 3D kayak-body frame and the
    panel's boat-frame convention, so it's the same axis both places).
+
+9. **Root cause found and fixed: `drawSliceC()` had never switched to GRV.**
+   Investigation (not-yet-implement pass, then implemented on request)
+   after the user reported the panel now looked right at manual = 0 but
+   the 3D paddle-vs-kayak render still needed roughly +60° to look
+   correct — and that a +60° manual nudge then rotated the (already
+   correct) panel by 60°, since one manual value drove both. `CatchEvents`
+   had already switched to GRV (mag-free) for the shaft-heading/boat-
+   heading comparison per the project's own §16.11 verdict (fused yaw
+   carries an in-band cycle-periodic mag artefact for exactly this
+   quantity); `drawSliceC()` was never updated to match and stayed
+   entirely fused-quat-based — `qPad`/`qBoat`/`qRel`/`qRefPad`/`qRefBoat`/
+   `qRelRef` all read `.qw/qx/qy/qz`, never `.grvQw` etc. A rest-window (or
+   `k`-capture) instant landing while the paddle's magnetometer was still
+   at low `mag_cal` (field evidence: 3 % of one full session at
+   `mag_cal=0`, 31 % at `mag_cal=1` — plausible for a window taken near
+   the start of a session) would bake an uncalibrated-magnetometer yaw
+   bias into `qRefPad`, large enough to plausibly explain ~60°, on top of
+   this render path only (the panel's GRV-based datum is immune to it).
+   **Fix implemented:**
+   - `DataSource.meanQuatGrv()` / `BoatSource.meanQuatGrv()` — GRV
+     counterparts of the existing `meanQuat()` (same antipodal-sign
+     handling, reads `grvQw/x/y/z`).
+   - New globals `qRefPadGrv`/`qRefBoatGrv`, captured alongside
+     `qRefPad`/`qRefBoat` everywhere the latter are set for Slice C use —
+     `applySidecarToDisplay()`, `buildAndSaveSidecar()`, and
+     `handleFrameNavCombined()`'s `k`/`u` (Slice A/B's own single-sensor
+     `k` captures are untouched — this is Slice-C-only).
+   - `drawSliceC()` computes `useGrvC = paddleData.hasGrv &&
+     boatData.hasGrv` (gated on *both* files, never mixing GRV one side
+     with fused the other) and switches `qPad`, `qBoat` (so the kayak's own
+     displayed orientation is now GRV-based too when available, not just
+     the paddle), and the rest-window references, accordingly. The
+     manual-override rotation (item 7) still applies on top, now expected
+     to be a small residual correction (e.g. for genuine mechanical mount
+     misalignment) rather than the ~60° that was compensating for the
+     fused-quat magnetic bias.
+   - Slice C HUD gained a status line: `relative-yaw source: GRV
+     (mag-free)` (green) or `fused (no GRV in one or both files)` (amber)
+     — mirrors `CatchEvents.status`'s transparency for the panel.
+   - **Not yet field-validated** — compiles clean; the user needs to
+     re-check both views on the 16 Jul data with the manual override reset
+     to 0 (`g` key) to see whether the 3D view is now close to correct
+     without it.
