@@ -2913,3 +2913,66 @@ does not, so a stale PadDis simply ignores the byte):**
    normal paddling stays white; no `?? cpm` during good paddling
    (nuisance-flag rate was 0–3 % offline — if the field rate annoys,
    raise the disagreement threshold before touching anything else).
+
+**Implementation status (20 Jul 2026) — steps 1-2/4 of the PadLog/PadDis
+plan above DONE, both sketches compile clean (`arduino-cli compile`);
+step 1 of the test ladder DONE (offline, passing); the rest not started:**
+
+- **`CadenceACF.h/.cpp`** (new, `firmware/production/PadLog/`, synced
+  copy in `firmware/test/paddlestroke_sim_test/`) — direct port of
+  `visualisation/stroke_acf.py`'s `acf_estimate()`/`stream()`, verified
+  line-by-line against the Python before writing (and the Python's own
+  understanding double-checked by reproducing this spec's §16.10 table —
+  padzero pitch-ACF median 29.6, exact match — before trusting the port).
+  Shift-based 120-float window (not a modulo ring buffer) for
+  implementation simplicity over Python-slice semantics; cost is
+  negligible at 10 Hz.
+- **PadLog.ino** — `cpm_source` byte replaces the reserved pad byte
+  (payload still 80 B); `SKETCH_VER_MINOR` → 10. Reporting block
+  restructured around the same `if (qualifying) {...} else if (timed
+  out) {...}` shape as before: peak-detector-mature branch now also runs
+  the arbiter check (source 0 vs 2) when the ACF is valid; the
+  timed-out branch now falls back to the ACF (source 1) instead of
+  simply zeroing, with the serial log rate-limited to "log only when the
+  rounded CPM or source actually changes" so the 100 Hz loop doesn't
+  flood the console while the ACF only re-estimates once per second.
+  **Arbiter threshold set to 30 %**, not the "~25 %" the plan text above
+  approximates — 30 % is the value actually validated in §16.9's table;
+  treat that as the source of truth over the paraphrase.
+- **PadDis.ino** — `cpm_source` mirrored in the payload struct;
+  `SKETCH_VERSION` → "8.14"; `drawCpm()` takes a `source` parameter
+  (white / `0x07FF` yellow, reusing the constant already used for the
+  "NO SD CARD" warning / "?? cpm" text); redraws on a source change even
+  when the numeric CPM is unchanged (the arbiter can flip a value between
+  trusted and suppressed without the value itself changing); new
+  trailing `cpm_source` CSV column in the full paddle set.
+- **`visualisation/stroke_zero_feather_regression.py`** (new) — the two
+  test-ladder-step-1 cases, but implemented as a from-scratch Python
+  simulation of PadLog's whole `cpm_source` decision logic (not just the
+  ACF in isolation), run against real field data rather than synthetic
+  signals:
+  - *Zero-feather*: 16 Jul `zero` segment (rows 40252-45369). **PASS** —
+    source=1 for 100 % of settled samples (after the 12 s ACF fill),
+    median CPM 32.7 (spec table: 32.8).
+  - *Padbad arbiter*: **PASS**, but not the way first attempted.
+    Re-simulating `StrokeDetector` from `padbad20260711.csv`'s raw
+    `roll` column (even with the prominence gate off, matching the
+    pre-fix "baseline" condition) does **not** reproduce the ~87 CPM
+    runaway — `stroke_detector_sim.py`'s own `run_detector()` gives a
+    clean ~30 CPM mean on this file's roll column. The CSV's own
+    recorded `cpm` column, however, *does* show the documented 87.4 CPM
+    mean — i.e. whatever the firmware actually ran on 11 Jul 2026 to
+    produce that recording differs somehow from what
+    `stroke_detector_sim.py`'s Python port currently models (untraced;
+    doesn't block this work since Fix 1/Fix 2 were already validated
+    on-water directly, not by re-deriving this number). Sidestepped by
+    using the recorded `cpm` column as "what the peak detector reported"
+    (exactly `stroke_acf.py`'s own already-validated arbiter methodology,
+    §16.9), compared against a fresh ACF estimate fed pitch instead of
+    roll: 567 samples with both estimators valid, 100 % flagged as
+    disagreement — matching §16.9's own 100 % figure exactly.
+- **Not started:** on-hardware 20-test-suite additions (needs synthetic,
+  not field, signals — the standalone sim sketch has no SD/file access;
+  designing a convincing synthetic arbiter-disagreement case is the
+  harder of the two), bench test, field test. All need physical hardware
+  the assistant cannot access.

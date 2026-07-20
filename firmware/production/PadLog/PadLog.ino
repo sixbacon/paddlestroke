@@ -5,12 +5,13 @@
 #include "esp_sleep.h"
 #include "driver/gpio.h"
 #include "StrokeDetector.h"
+#include "CadenceACF.h"
 
 #define SKETCH_NAME    "PadLog"
 // Version as numbers — sent in the payload so PadDis can stamp the TX
 // version into the CSV header. SKETCH_VERSION derives from these.
 #define SKETCH_VER_MAJOR 8
-#define SKETCH_VER_MINOR 9
+#define SKETCH_VER_MINOR 10
 #define STR2(x) #x
 #define STR(x) STR2(x)
 #define SKETCH_VERSION STR(SKETCH_VER_MAJOR) "." STR(SKETCH_VER_MINOR)
@@ -27,8 +28,8 @@ struct __attribute__((packed)) ImuDataPayload {
     float    hz;                           // current stroke rate Hz
     float    grv_qw, grv_qx, grv_qy, grv_qz;  // game rotation vector (mag-free) — v8.9, spec §16.11
     uint8_t  mag_cal;                      // magnetometer accuracy 0–3
-    uint8_t  fw_major, fw_minor;           // PadLog version — v8.9, stamped into CSV header by PadDis
-    uint8_t  _pad[1];                      // reserved, must be zero
+    uint8_t  fw_major, fw_minor;           // PadLog version — v8.10, stamped into CSV header by PadDis
+    uint8_t  cpm_source;                   // 0=peak detector 1=ACF fallback 2=suppressed (arbiter) — spec §16.12, v8.10
 };
 static_assert(sizeof(ImuDataPayload) == 80, "Payload size mismatch — check struct");
 
@@ -43,6 +44,10 @@ static_assert(sizeof(ImuDataPayload) == 80, "Payload size mismatch — check str
 // 20-second pause before WiFi init — keeps CH340 USB stable for reprogramming
 // at 100 Hz ESPnow. Upload firmware during this window after each power cycle.
 #define STARTUP_PAUSE_MS 20000UL
+// Arbiter disagreement threshold (spec §16.9 validated value; §16.12's
+// implementation-plan text approximates this as "~25%" but the number
+// actually tested against the 11 Jul padbad case is 30%).
+static const float ARBITER_DISAGREE_FRAC = 0.30f;
 
 // ── LED ───────────────────────────────────────────────────────────────────────
 #define LED_PIN 22          // LOLIN32 Lite onboard LED, active LOW
@@ -59,6 +64,7 @@ static SPIClass           vspi(VSPI);
 static Adafruit_BNO08x    bno(BNO_RST);
 static sh2_SensorValue_t  sensorValue;
 static StrokeDetector     detector;
+static CadenceACF         acfDetector;   // pitch-fed arbiter + zero-feather fallback, spec §16.12
 
 static bool               timeoutActive   = false;
 static bool               inDozeMode      = false;
@@ -74,6 +80,7 @@ static uint32_t           g_strokeCount   = 0;
 static uint32_t           g_cpm           = 0;
 static float              g_hz            = 0.0f;
 static uint8_t            g_strokeStreak  = 0;    // consecutive qualifying strokes
+static uint8_t            g_cpmSource     = 0;    // 0=peak detector 1=ACF fallback 2=suppressed — spec §16.12
 static float              g_accel_x       = 0.0f;
 static float              g_accel_y       = 0.0f;
 static float              g_accel_z       = 0.0f;
@@ -163,7 +170,7 @@ static void sendImuPayload(const sh2_RotationVectorWAcc_t& rv, const Euler& e) {
     p.mag_cal      = g_mag_cal;
     p.fw_major     = SKETCH_VER_MAJOR;
     p.fw_minor     = SKETCH_VER_MINOR;
-    p._pad[0]      = 0;
+    p.cpm_source   = g_cpmSource;
     esp_now_send(broadcast, (uint8_t*)&p, sizeof(p));
 }
 
@@ -194,9 +201,11 @@ static void exitDozeMode() {
     unsigned long settleEnd = millis() + 500;
     while (millis() < settleEnd) bno.getSensorEvent(&dummy);
     detector.reset();
+    acfDetector.reset();
     g_strokeStreak  = 0;
     g_cpm           = 0;
     g_hz            = 0.0f;
+    g_cpmSource     = 0;
     timeoutActive   = false;
     inactiveStartMs = 0;
     inDozeMode      = false;
@@ -227,6 +236,7 @@ void setup() {
 
     enableNormalReports();
     detector.reset();
+    acfDetector.reset();
     initESPNow();
 }
 
@@ -327,6 +337,12 @@ void loop() {
     unsigned long nowUs  = micros();
     unsigned long nowMs  = millis();
 
+    // Pitch-fed ACF — runs continuously regardless of peak-detector state,
+    // decimated internally to 10 Hz with a 1 Hz estimate (spec §16.9/§16.10).
+    // Serves two roles below: arbiter cross-check on the peak detector's
+    // own output, and zero-feather fallback when the peak detector times out.
+    acfDetector.update(angles.pitch, nowUs);
+
     if (detector.update(angles.roll, nowUs)) {
         g_strokeCount++;
         g_strokeStreak++;
@@ -335,22 +351,69 @@ void loop() {
         if (g_strokeStreak >= 3 && detector.isRateMature()) {
             g_hz  = detector.getRateHz();
             g_cpm = (uint32_t)roundf(g_hz * 60.0f);
+
+            // Arbiter (spec §16.9/§16.12): if the pitch ACF is also valid and
+            // disagrees with the peak detector by more than the threshold,
+            // flag the value as suspect (e.g. the 11 Jul two-piece-paddle
+            // joint-play case) rather than trusting it silently. The CPM
+            // value itself is unchanged — only cpm_source flips, so the CSV
+            // still records what the peak detector actually computed.
+            g_cpmSource = 0;
+            if (acfDetector.isValid()) {
+                float acfCpm = acfDetector.getCpm();
+                float disagreement = fabsf((float)g_cpm - acfCpm) / acfCpm;
+                if (disagreement > ARBITER_DISAGREE_FRAC) g_cpmSource = 2;
+            }
+
             timeoutActive   = false;
             inactiveStartMs = 0;
             printTimestamp();
-            Serial.printf("CYCLE_RATE: %u CPM  (%.2f Hz)\n", g_cpm, g_hz);
+            Serial.printf("CYCLE_RATE: %u CPM  (%.2f Hz)%s\n", g_cpm, g_hz,
+                          (g_cpmSource == 2) ? "  [ARBITER DISAGREE]" : "");
         }
-    } else if (detector.isTimedOut(nowUs) && !timeoutActive) {
-        // Reset the detector so stale rolling-buffer / DC-EMA / last-extremum
-        // state from a poor segment does not bleed into the next one after a
-        // 3 s idle. See spec §16.3 (Fix 1).
-        detector.reset();
-        g_strokeStreak  = 0;
-        g_cpm           = 0;
-        g_hz            = 0.0f;
-        printTimestamp(); Serial.println("CYCLE_RATE: 0 CPM  (0.00 Hz)");
-        timeoutActive   = true;
-        inactiveStartMs = nowMs;
+    } else if (detector.isTimedOut(nowUs)) {
+        if (!timeoutActive) {
+            // Reset the detector so stale rolling-buffer / DC-EMA / last-extremum
+            // state from a poor segment does not bleed into the next one after a
+            // 3 s idle. See spec §16.3 (Fix 1).
+            detector.reset();
+            g_strokeStreak  = 0;
+            g_cpm           = 0;
+            g_hz            = 0.0f;
+            g_cpmSource     = 0;
+            printTimestamp(); Serial.println("CYCLE_RATE: 0 CPM  (0.00 Hz)");
+            timeoutActive   = true;
+            inactiveStartMs = nowMs;
+        }
+
+        // Zero-feather fallback (spec §16.10/§16.12): the peak detector has
+        // nothing (roll amplitude gate never clears at zero/small feather),
+        // but the pitch ACF stays valid in that exact regime. Updated every
+        // loop so the payload always carries the latest estimate; the
+        // serial line only logs when the rounded CPM actually changes
+        // (ACF itself only re-estimates once per second) to avoid flooding
+        // the console at the 100 Hz loop rate. stroke_count deliberately
+        // does not advance here — this is a rate estimate, not a per-stroke
+        // event.
+        if (acfDetector.isValid()) {
+            float    acfCpm = acfDetector.getCpm();
+            uint32_t cpmInt = (uint32_t)roundf(acfCpm);
+            if (g_cpmSource != 1 || cpmInt != g_cpm) {
+                printTimestamp();
+                Serial.printf("CYCLE_RATE: %u CPM  (%.2f Hz)  [ACF fallback]\n",
+                              cpmInt, acfCpm / 60.0f);
+            }
+            g_hz        = acfCpm / 60.0f;
+            g_cpm       = cpmInt;
+            g_cpmSource = 1;
+        } else if (g_cpmSource == 1) {
+            // ACF lost validity (activity/quality gate no longer met) —
+            // fall back to reporting nothing rather than a stale estimate.
+            g_cpm       = 0;
+            g_hz        = 0.0f;
+            g_cpmSource = 0;
+            printTimestamp(); Serial.println("CYCLE_RATE: 0 CPM  (0.00 Hz)");
+        }
     }
 
     sendImuPayload(rv, angles);

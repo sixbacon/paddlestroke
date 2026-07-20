@@ -5,8 +5,13 @@
 #include <SD.h>
 
 #define SKETCH_NAME    "PadDis"
-#define SKETCH_VERSION "8.13"
+#define SKETCH_VERSION "8.14"
 
+// v8.14 (coordinated with PadLog v8.10, spec §16.12): the paddle payload's
+// reserved pad byte becomes cpm_source (0=peak detector white, 1=ACF
+// fallback yellow, 2=arbiter-suppressed "?? cpm"). Payload size unchanged,
+// so a stale v8.13 PadDis simply reads the byte as always-zero (white) —
+// soft-fail, not a crash. New trailing CSV column cpm_source (full set).
 // v8.13 (PadDis only): splash screen no longer drops packets — the 20 s
 // splash wait drains both rings to SD instead of delay(SPLASH_MS), fixing
 // the ~2000-packet seq gap found in the §16.11 bench check. Display: speed
@@ -40,7 +45,7 @@ struct __attribute__((packed)) ImuDataPayload {
     float    grv_qw, grv_qx, grv_qy, grv_qz;
     uint8_t  mag_cal;
     uint8_t  fw_major, fw_minor;
-    uint8_t  _pad[1];
+    uint8_t  cpm_source;   // 0=peak detector 1=ACF fallback 2=suppressed (arbiter) — spec §16.12, v8.14
 };
 static_assert(sizeof(ImuDataPayload) == 80, "ImuDataPayload size mismatch — check struct");
 
@@ -142,7 +147,8 @@ static void writePadHeader(uint8_t fwMajor, uint8_t fwMinor) {
                     "roll,pitch,yaw,"
                     "stroke_count,cpm,"
                     "gps_utc_sec,gps_uk_offset,rx_ms,mag_cal,"
-                    "grv_qw,grv_qx,grv_qy,grv_qz");
+                    "grv_qw,grv_qx,grv_qy,grv_qz,"
+                    "cpm_source");
 #endif
 }
 
@@ -179,10 +185,10 @@ static void logPaddlePacket(const ImuDataPayload& pkt, uint32_t pktRxMs) {
         g_gps_utc_sec, (uint32_t)g_gps_uk_offset,
         pktRxMs, (uint32_t)pkt.mag_cal);
 #else
-    char row[280];
+    char row[290];
     int n = snprintf(row, sizeof(row),
         "%u,%u,%.5f,%.5f,%.5f,%.8f,%.8f,%.8f,%.8f,%.5f,%.5f,%.5f,%u,%u,%u,%u,%u,%u,"
-        "%.8f,%.8f,%.8f,%.8f\n",
+        "%.8f,%.8f,%.8f,%.8f,%u\n",
         pkt.seq, pkt.timestamp_ms,
         pkt.accel_x, pkt.accel_y, pkt.accel_z,
         pkt.q_w, pkt.q_x, pkt.q_y, pkt.q_z,
@@ -190,7 +196,8 @@ static void logPaddlePacket(const ImuDataPayload& pkt, uint32_t pktRxMs) {
         pkt.stroke_count, pkt.cpm,
         g_gps_utc_sec, (uint32_t)g_gps_uk_offset,
         pktRxMs, (uint32_t)pkt.mag_cal,
-        pkt.grv_qw, pkt.grv_qx, pkt.grv_qy, pkt.grv_qz);
+        pkt.grv_qw, pkt.grv_qx, pkt.grv_qy, pkt.grv_qz,
+        (uint32_t)pkt.cpm_source);
 #endif
     logFile.write((const uint8_t*)row, n);
 }
@@ -237,6 +244,7 @@ static void logBoatPacket(const BoatDataPayload& bpkt, uint32_t bpktRxMs) {
 static bool          hasReceived     = false;
 static int           displayedCpmX10 = -1;
 static unsigned long lastRxMs        = 0;
+static uint8_t       cpmSourceLast   = 0;   // last packet's cpm_source — spec §16.12, v8.14
 
 static bool          boatReceived = false;
 static unsigned long lastBoatRxMs = 0;
@@ -330,14 +338,24 @@ static void drawSpeed(float speed_ms, bool show) {
     tft.setTextSize(1);
 }
 
-static void drawCpm(float cpm, bool active) {
+// cpm_source (spec §16.12, v8.14): 0=peak detector (white, as before),
+// 1=ACF fallback (yellow 0x07FF — same colour already used for the
+// "NO SD CARD" warning, chosen for sunlight visibility), 2=arbiter-
+// suppressed ("?? cpm" instead of the number, e.g. a runaway peak-detector
+// reading like the 11 Jul two-piece-paddle joint-play case). The source
+// colour/text only apply while `active` — a stale/lost-signal redraw
+// always shows the plain grey number (or "-- cpm"), never "??".
+static void drawCpm(float cpm, bool active, uint8_t source) {
     tft.fillRect(0, LINE3_Y, tft.width(), LINE_H_LG + 2, TFT_BLACK);
     tft.setTextFont(4);
     tft.setTextSize(2);
-    tft.setTextColor(active ? TFT_WHITE : GREY, TFT_BLACK);
+    uint16_t col = active ? ((source == 1) ? 0x07FF : TFT_WHITE) : GREY;
+    tft.setTextColor(col, TFT_BLACK);
     char buf[16];
     if (!hasReceived) {
         snprintf(buf, sizeof(buf), "-- cpm");
+    } else if (active && source == 2) {
+        snprintf(buf, sizeof(buf), "?? cpm");
     } else {
         int cpmX10 = (int)(cpm * 10.0f + 0.5f);
         snprintf(buf, sizeof(buf), "%d.%d cpm", cpmX10 / 10, cpmX10 % 10);
@@ -465,7 +483,7 @@ void setup() {
     tft.fillScreen(TFT_BLACK);
     drawTopLine();
     drawSpeed(0.0f, false);
-    drawCpm(0.0f, false);
+    drawCpm(0.0f, false, 0);
 }
 
 // ── Loop ──────────────────────────────────────────────────────────────────────
@@ -504,12 +522,19 @@ void loop() {
         float showCpmF   = (pkt.cpm == 0) ? 0.0f : cpmEma;
         int   showCpmX10 = (int)(showCpmF * 10.0f + 0.5f);
 
-        if (showCpmX10 != displayedCpmX10) {
+        static uint8_t lastDrawnSource = 0;
+        if (showCpmX10 != displayedCpmX10 || pkt.cpm_source != lastDrawnSource) {
+            // Redraw on a source change too, not just a numeric one — the
+            // underlying number can stay the same while the arbiter flips
+            // between "trust it" and "?? cpm".
             displayedCpmX10 = showCpmX10;
-            drawCpm(showCpmF, true);
-            Serial.printf("CPM: %.1f (raw %u)  (%.2f Hz)  stroke=%u\n",
-                          (double)cpmEma, pkt.cpm, (double)pkt.hz, pkt.stroke_count);
+            lastDrawnSource = pkt.cpm_source;
+            drawCpm(showCpmF, true, pkt.cpm_source);
+            Serial.printf("CPM: %.1f (raw %u)  (%.2f Hz)  stroke=%u  source=%u\n",
+                          (double)cpmEma, pkt.cpm, (double)pkt.hz, pkt.stroke_count,
+                          (unsigned)pkt.cpm_source);
         }
+        cpmSourceLast = pkt.cpm_source;
     }
 
     // ── Boat packet ───────────────────────────────────────────────────────────
@@ -583,7 +608,7 @@ void loop() {
             cpmSeeded      = false;
             g_padReceiving = false;
             drawTopLine();
-            drawCpm(cpmEma, false);
+            drawCpm(cpmEma, false, cpmSourceLast);
             Serial.println("Paddle signal lost");
             if (sdReady) logFile.flush();
         } else {
