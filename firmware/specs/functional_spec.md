@@ -2971,8 +2971,35 @@ step 1 of the test ladder DONE (offline, passing); the rest not started:**
     §16.9), compared against a fresh ACF estimate fed pitch instead of
     roll: 567 samples with both estimators valid, 100 % flagged as
     disagreement — matching §16.9's own 100 % figure exactly.
+- **FLASHED 20 Jul 2026** — PadLog v8.10 on COM3, PadDis v8.14 on COM6
+  (CYD port had moved from COM14). Both are now the deployed versions.
+- **Bench test PARTIALLY run, same day.** Serial capture (`pyserial`,
+  since `arduino-cli monitor` produced no output through this session's
+  tooling and a Claude Code permission dialog then got stuck — see
+  below) confirmed: both sketches boot with no crash; PadLog prints
+  `PadLog v8.10 — ready` and the 80 B payload size assertion holds;
+  PadDis prints `PadDis v8.14 — starting`, opens `/PadLog23.CSV` +
+  `/BoatLog19.CSV`, and logs **2004 paddle packets during its own ~20 s
+  splash-drain window** — the ESPnow link and payload struct alignment
+  are solid. The new debug line confirms `cpm_source` decodes correctly
+  end-to-end: `CPM: 0.0 (raw 0) (0.00 Hz) stroke=0 source=0` at idle.
+  **Not completed**: the physical-motion bench steps (§12.0 protocol's
+  paddle-tracking check, and this plan's own "verify yellow CPM appears
+  under pitch-only motion" step) — a Claude Code tool-permission dialog
+  stopped responding mid-session (VS Code integrated terminal, same bug
+  class already reported as anthropics/claude-code#72200, which was
+  about garbled text input — a stuck approval dialog is a plausible but
+  not-yet-confirmed extension of it). User chose to go straight to a
+  field session rather than retry the bench steps.
+- **Field test PENDING** — awaiting the returned SD CSV for offline
+  verification against `stroke_zero_feather_regression.py`'s logic:
+  watch for `cpm_source` values in the CSV, any `?? cpm` moments during
+  otherwise-normal paddling (arbiter false positive — if the field rate
+  is annoying, raise `ARBITER_DISAGREE_FRAC` past 30 % before anything
+  else), and whether a zero-feather stretch (if any) shows source=1 at
+  a sensible rate.
 - **Not started:** on-hardware 20-test-suite additions (needs synthetic,
   not field, signals — the standalone sim sketch has no SD/file access;
   designing a convincing synthetic arbiter-disagreement case is the
-  harder of the two), bench test, field test. All need physical hardware
-  the assistant cannot access.
+  harder of the two). Needs physical hardware / more design time, not
+  blocking the field test above.
