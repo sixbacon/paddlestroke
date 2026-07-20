@@ -1104,27 +1104,43 @@ issues, all addressed:
      items 4/7's manual yaw-datum override remains in place as a small
      residual-adjustment mechanism, not as the primary fix.
 
-10. **CSV-filtered file pickers.** `p`/`b` (and the startup checklist's
-    equivalent rows) used Processing's `selectInput()`, which has no
-    extension-filter option — the dialog listed every file in the folder.
-    New `selectCsvInput()` wraps `java.awt.FileDialog` directly (the same
-    native dialog `selectInput()` uses internally) with a
-    `FilenameFilter` restricted to `.csv`/`.CSV` (the check lower-cases
-    both sides, so it's inherently case-insensitive — no separate `.CSV`
-    handling needed), on a background thread matching `selectInput()`'s
-    own threading model. Used everywhere the old `selectInput()` calls
-    were: `keyPressed()`'s `p`/`b` and `Checklist.mousePressed()`'s
-    row-click equivalents.
-    - **Regression, found and fixed same day.** The first version called
-      back via `getClass().getMethod(name, File.class)` reflection —
-      `getMethod()` only finds **public** methods, but a `.pde` function
-      with no explicit `public` compiles to package-private, so
-      `onPaddleFileSelected`/`onBoatFileSelected` were never found. The
-      lookup threw `NoSuchMethodException`, silently caught by a
+10. **CSV-filtered file pickers — three attempts, reverted to the
+    zero-risk option.** `p`/`b` used Processing's `selectInput()`, which
+    has no extension-filter option — the dialog listed every file in the
+    folder. Wanted: restrict the OS dialog's listing to `.csv`/`.CSV`.
+    - **v1** — custom `java.awt.FileDialog` + `FilenameFilter`, callback
+      via `getClass().getMethod(name, File.class)` reflection.
+      **Broke `p`/`b` entirely**: `getMethod()` only finds *public*
+      methods, and a `.pde` function with no explicit `public` compiles
+      to package-private, so the lookup always threw
+      `NoSuchMethodException` — silently caught by a
       `catch (Exception e) { println(...); }` that only wrote to the
-      console — so `p`/`b` appeared to do nothing at all right after this
-      shipped. Fixed by dropping reflection entirely: `selectCsvInput()`
-      now takes a `boolean isPaddle` and calls the two callbacks directly.
+      console.
+    - **v2** — same custom dialog, callback fixed to a direct call
+      (`boolean isPaddle` instead of reflection). **Still didn't work**
+      (user, same day) — the dialog was created/shown on a raw background
+      `Thread`; AWT/Swing components are only reliably created off the
+      Event Dispatch Thread when marshalled there deliberately, and a
+      native dialog built off-EDT can fail to display with no exception
+      to report, especially alongside a JOGL/P3D window.
+    - **v3** — same dialog, callback now via `EventQueue.invokeLater()`
+      (matching how Processing's own `selectInput()` avoids exactly this
+      problem internally) plus a try/catch around dialog creation that
+      flashes an on-screen error instead of only logging to console.
+      **Not deployed** — after two consecutive failures on something this
+      environment cannot run and observe directly, continuing to guess at
+      a third native-dialog variant was the wrong call.
+    - **Final: reverted to `selectInput()`.** `selectCsvInput()` now just
+      calls Processing's own `selectInput(prompt, "onPaddleFileSelected"
+      | "onBoatFileSelected")` — proven reliable for this sketch's entire
+      history. The `.csv`-only requirement is met differently: a new
+      `isCsv(File)` check inside `onPaddleFileSelected`/
+      `onBoatFileSelected` rejects a non-`.csv` selection with an
+      on-screen flash (`"PADDLE CSV — please choose a .csv file"` /
+      `"BOAT CSV — ..."`) instead of loading it. Trade-off: the OS dialog
+      once again lists every file in the folder (not just `.csv`), but
+      loading is guaranteed to work, which is the higher priority. See
+      [[feedback_processing_compile_vs_runtime]].
 
 ### 13.8 v0.15 continued — collapsible detail panel + stroke-average panel
 

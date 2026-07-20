@@ -993,50 +993,34 @@ void handleFrameNavBoat() {
     }
 }
 
-// ── CSV-filtered file picker ─────────────────────────────────────────────────
+// ── CSV file picker ──────────────────────────────────────────────────────────
 //
-// Processing's own selectInput() has no extension-filter option, so p/b
-// used to show every file in the folder. This wraps java.awt.FileDialog
-// directly (same native dialog selectInput() uses under the hood) with a
-// FilenameFilter restricted to .csv/.CSV (Java's filter check is already
-// case-insensitive here since both sides are lower-cased) — notes 20 Jul
-// 2026. Runs on a background thread, same threading model selectInput()
-// itself uses.
-//
-// First version of this called back via reflection (getClass().getMethod),
-// which only finds PUBLIC methods — but Processing compiles a .pde
-// function with no explicit "public" to package-private, so
-// onPaddleFileSelected/onBoatFileSelected were never found. The lookup
-// failure was swallowed by a try/catch that only println'd, so p/b
-// appeared to do nothing at all (found by the user immediately after
-// this shipped). Fixed by calling the two callbacks directly — no
-// reflection, no access-modifier dependency.
-void selectCsvInput(final String prompt, final boolean isPaddle) {
-    Thread t = new Thread(new Runnable() {
-        public void run() {
-            java.awt.FileDialog dialog =
-                new java.awt.FileDialog((java.awt.Frame) null, prompt, java.awt.FileDialog.LOAD);
-            dialog.setFilenameFilter(new java.io.FilenameFilter() {
-                public boolean accept(java.io.File dir, String name) {
-                    return name.toLowerCase().endsWith(".csv");
-                }
-            });
-            dialog.setVisible(true);
-            String dir  = dialog.getDirectory();
-            String name = dialog.getFile();
-            File result = (dir != null && name != null) ? new File(dir, name) : null;
-            if (isPaddle) onPaddleFileSelected(result);
-            else          onBoatFileSelected(result);
-        }
-    });
-    t.setDaemon(true);
-    t.start();
+// Two prior attempts at filtering the OS dialog to .csv/.CSV only (a
+// custom java.awt.FileDialog, first via reflection then a raw background
+// Thread, then EventQueue.invokeLater) all failed to actually work when
+// the user tried them (20 Jul 2026) — undiagnosable further from here
+// since this environment can't run the GUI to observe which part broke.
+// Reverted to Processing's own selectInput(), proven reliable for this
+// sketch's entire history; the requested ".csv only" behaviour is instead
+// enforced by rejecting a non-.csv selection inside onPaddleFileSelected/
+// onBoatFileSelected (with an on-screen message) rather than filtering
+// what the OS dialog lists.
+void selectCsvInput(String prompt, boolean isPaddle) {
+    selectInput(prompt, isPaddle ? "onPaddleFileSelected" : "onBoatFileSelected");
+}
+
+boolean isCsv(File f) {
+    return f.getName().toLowerCase().endsWith(".csv");
 }
 
 // ── File-select callbacks ────────────────────────────────────────────────────
 
 void onPaddleFileSelected(File selection) {
     if (selection == null) return;
+    if (!isCsv(selection)) {
+        triggerRefFlash("PADDLE CSV — please choose a .csv file");
+        return;
+    }
     paddleData = new DataSource();
     paddleData.loadCSV(selection.getAbsolutePath());
     paddleFrameIdx = 0;
@@ -1055,6 +1039,10 @@ void onPaddleFileSelected(File selection) {
 
 void onBoatFileSelected(File selection) {
     if (selection == null) return;
+    if (!isCsv(selection)) {
+        triggerRefFlash("BOAT CSV — please choose a .csv file");
+        return;
+    }
     boatData = new BoatSource();
     boatData.loadCSV(selection.getAbsolutePath());
     boatFrameIdx = 0;
