@@ -1097,7 +1097,9 @@ issues, all addressed:
    - Slice C HUD gained a status line: `relative-yaw source: GRV
      (mag-free)` (green) or `fused (no GRV in one or both files)` (amber)
      — mirrors `CatchEvents.status`'s transparency for the panel.
-   - **Not yet field-validated** — compiles clean; the user needs to
-     re-check both views on the 16 Jul data with the manual override reset
-     to 0 (`g` key) to see whether the 3D view is now close to correct
-     without it.
+   - **Confirmed by the user, 20 Jul 2026** ("that sorted the problem") —
+     the fused-vs-GRV mismatch was the actual root cause, not a
+     coincidental fudge that happened to also work. Both views now agree
+     without the ~60° manual override. §13.7's investigation is closed;
+     items 4/7's manual yaw-datum override remains in place as a small
+     residual-adjustment mechanism, not as the primary fix.
