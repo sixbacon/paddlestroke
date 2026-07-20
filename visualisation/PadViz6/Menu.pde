@@ -84,8 +84,12 @@ class Menu {
         items.add(new MenuItem("S", "Reset graph zoom to full range", 'S', 0));
         items.add(info("click",   "seek playback cursor"));
         items.add(info("R-click", "x2 = zoom to span; double = revert"));
-        items.add(header("ENTRY/EXIT PANEL"));
+        items.add(header("ENTRY/EXIT PANEL (left)"));
         items.add(info("R-click", "clear accumulated entry/exit dots"));
+        items.add(header("STROKE AVERAGE PANEL (right)"));
+        items.add(info("R-click", "restart average trace accumulation"));
+        items.add(header("DETAIL PANEL"));
+        items.add(info("click", "\"Detail\" button (below Commands) toggles it"));
         // n/N/g work in every slice (not just Slice 0) so the panel can be
         // watched while nudging — see keyPressed()'s comment, notes 20 Jul
         // 2026. Readout of the numbers is still Slice-0-only.

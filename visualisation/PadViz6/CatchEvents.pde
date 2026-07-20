@@ -49,6 +49,13 @@ class CatchEvents {
     // place events includes sidecar.yawManualAdjustDeg on top of this.
     float   datumAutoDeg = 0;
 
+    // In-water runs (padFrame start/end pairs) per blade, same MIN_RUN_S/
+    // MAX_RUN_S gate as the entry/exit events built from them — consumed
+    // by StrokeAveragePanel to average the roll trace over each stroke
+    // (spec §13.8, notes 20 Jul 2026).
+    ArrayList<int[]> rightRuns = new ArrayList<int[]>();
+    ArrayList<int[]> leftRuns  = new ArrayList<int[]>();
+
     static final float BLADE_L   = 1.05f;  // m, shaft centre → blade centre
     static final float LOW_T     = -0.05f; // m, tip-below-centre gate
     static final float ENV_RATIO = 1.3f;   // peak ≥ ratio × median env
@@ -58,6 +65,8 @@ class CatchEvents {
 
     void compute(DataSource pad, BoatSource boat, SyncMap sync, Sidecar sc) {
         events.clear();
+        rightRuns.clear();
+        leftRuns.clear();
         if (pad == null || pad.frameCount() < 200) {
             status = "no paddle data";
             return;
@@ -172,6 +181,8 @@ class CatchEvents {
                 int runEnd = i - 1;
                 int len = runEnd - runStart + 1;
                 if (len < minRun || len > maxRun) continue;
+
+                (rightBlade ? rightRuns : leftRuns).add(new int[]{ runStart, runEnd });
 
                 // Entry = strongest impact while descending; exit while rising.
                 addEventIfLoud(fr, env, envGate, phi, psiRef, datumEff, hMag,

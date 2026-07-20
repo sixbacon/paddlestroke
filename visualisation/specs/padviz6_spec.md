@@ -1103,3 +1103,66 @@ issues, all addressed:
      without the ~60° manual override. §13.7's investigation is closed;
      items 4/7's manual yaw-datum override remains in place as a small
      residual-adjustment mechanism, not as the primary fix.
+
+10. **CSV-filtered file pickers.** `p`/`b` (and the startup checklist's
+    equivalent rows) used Processing's `selectInput()`, which has no
+    extension-filter option — the dialog listed every file in the folder.
+    New `selectCsvInput()` wraps `java.awt.FileDialog` directly (the same
+    native dialog `selectInput()` uses internally) with a
+    `FilenameFilter` restricted to `.csv`/`.CSV` (the check lower-cases
+    both sides, so it's inherently case-insensitive — no separate `.CSV`
+    handling needed). Runs on a background thread and calls back via
+    reflection into the existing `onPaddleFileSelected(File)` /
+    `onBoatFileSelected(File)`, mirroring `selectInput()`'s own threading
+    model exactly, so those callbacks are unchanged. Used everywhere the
+    old `selectInput()` calls were: `keyPressed()`'s `p`/`b` and
+    `Checklist.mousePressed()`'s row-click equivalents.
+
+### 13.8 v0.15 continued — collapsible detail panel + stroke-average panel
+
+Requested after the yaw-fix round: the scattered HUD text (file details,
+sidecar/yaw-datum corrections, current-data-point readout) was cluttering
+the main view with no way to hide it, and a companion to the entry/exit
+panel was wanted — an averaged stroke-shape trace, symmetric on the right.
+
+1. **`DetailPanel.pde`** (new) — collapsible box for everything `drawHUD()`
+   used to draw straight onto the 3D view below the title line: the
+   sidecar/yaw-datum indicator and the per-slice `drawHUD_slice0/A/B/C()`
+   readout. Minimised shows only a `Detail ▾` button (below the Commands
+   button, same column as the title line); expanded shows the button plus
+   a bordered box containing that content, unchanged internally — the
+   existing `drawHUD_sliceX()` functions weren't rewritten, just wrapped:
+   `drawHUD()` shifts the whole block down by a fixed offset
+   (`pushMatrix(); translate(0, 40); ... popMatrix();`) so the
+   pre-existing hardcoded y-coordinates land inside the box instead of
+   under the new button. The model-calibration-file footer moved from the
+   literal window bottom to the bottom of the box. Toggled by clicking the
+   button; state isn't persisted (always starts expanded).
+2. **`StrokeAveragePanel.pde`** (new) — right-hand mirror of
+   `EntryExitPanel`, same width (`rightPanelWidth()`, same 20% formula and
+   visibility condition as `leftPanelWidth()`/`isPanelVisible()`) and
+   height (stops above the graph strip). Plots the average roll trace over
+   each blade's in-water run — `CatchEvents` now also collects
+   `rightRuns`/`leftRuns` (the same `runStart`/`runEnd` pairs the entry/exit
+   events are built from, same `MIN_RUN_S`/`MAX_RUN_S` gate) alongside the
+   events themselves. Each run is resampled to 40 points (linear
+   interpolation) and averaged in; roll is plain-arithmetic-averaged, not
+   circular-mean, matching `Sidecar.meanRPYFromFrames`' existing
+   convention (a single stroke's roll swing doesn't cross the ±180° wrap).
+   A run counts once the playback cursor passes its end frame — mirrors
+   `EntryExitPanel`'s dot accumulation, so play-through builds the trace
+   and scrubbing back removes strokes again. Right-click restarts the
+   accumulation from the current frame; independent of the left panel's
+   reset (each panel's `mousePressed()` branch only checks clicks inside
+   its own bounds). Green = left, red = right (same convention as the
+   entry/exit panel).
+3. **Layout knock-on effects** — `drawAxisLegend()`'s x-position now
+   subtracts `rightPanelWidth()` so its text doesn't sit behind the new
+   panel; the graph strip is unaffected (it already spans the full window
+   width beneath both side panels, which only occupy the region above it —
+   same pattern the entry/exit panel established in v0.14). `Menu.pde`
+   gained entries for both panels' right-click behaviour and the Detail
+   button.
+
+Compiles clean via `processing-java --build`. Not yet visually checked by
+the user.

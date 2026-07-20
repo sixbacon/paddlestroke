@@ -20,6 +20,8 @@ Sidecar     sidecar;      // per-session calibration; null until built or loaded
 Menu        menu;         // Commands pull-down (v0.14, spec §13.2)
 CatchEvents catchEvents;  // blade entry/exit detector (v0.14, spec §13.3)
 EntryExitPanel eePanel;   // left 20% boat-frame scatter (v0.14, spec §13.4)
+DetailPanel detailPanel;  // collapsible HUD text box (v0.15, spec §13.8)
+StrokeAveragePanel avgPanel; // right 20% averaged L/R roll traces (v0.15, spec §13.8)
 
 // Height of the graph panel at the bottom of the window (px).
 // Anything above it belongs to the 3D scene + HUD.
@@ -110,6 +112,8 @@ void setup() {
     checklist = new Checklist();
     menu      = new Menu();
     eePanel   = new EntryExitPanel();
+    detailPanel = new DetailPanel();
+    avgPanel    = new StrokeAveragePanel();
 
     surface.setResizable(true);
     surface.setTitle("PadViz6");
@@ -128,11 +132,15 @@ void draw() {
     stepPlayback();
     drawScene3D();
 
-    // 2D overlays, back to front: entry/exit panel (left), HUD (shifted
-    // right of the panel), graph strip, startup overlay, menu, flash.
+    // 2D overlays, back to front: side panels (entry/exit left, stroke
+    // average right), HUD (shifted right of the left panel), graph strip,
+    // startup overlay, menu, flash.
     camera();
     hint(DISABLE_DEPTH_TEST);
-    if (isPanelVisible()) eePanel.draw(catchEvents, paddleFrameIdx);
+    if (isPanelVisible()) {
+        eePanel.draw(catchEvents, paddleFrameIdx);
+        avgPanel.draw(catchEvents, paddleData, paddleFrameIdx);
+    }
     pushMatrix();
     translate(leftPanelWidth(), 0);
     drawHUD();
@@ -175,6 +183,13 @@ boolean isPanelVisible() {
 // Width in px of the entry/exit panel, 0 when hidden. HUD, compass, menu
 // and the startup overlay all shift right by this amount.
 int leftPanelWidth() {
+    return isPanelVisible() ? int(width * 0.20f) : 0;
+}
+
+// Width in px of the stroke-average panel (v0.15, right-hand mirror of
+// the entry/exit panel) — same visibility condition, same proportion.
+// The axis legend shifts left by this amount so it isn't hidden behind it.
+int rightPanelWidth() {
     return isPanelVisible() ? int(width * 0.20f) : 0;
 }
 
@@ -504,7 +519,24 @@ void drawHUD() {
     // x=150 leaves room for the Commands menu button at x=20 (v0.14).
     text("PadViz6   " + modeName + "   [" + viewName + "]" + speedStr, 150, 16);
 
-    // Sidecar indicator — sits to the right of the mode name if active.
+    // Detail panel (v0.15, spec §13.8) — collapsible box for everything
+    // below (sidecar/yaw-datum corrections, per-slice current-data-point
+    // readout, footer). The title line above stays visible either way.
+    detailPanel.drawButton();
+    if (!detailPanel.open) return;
+    detailPanel.drawBox();
+
+    // The per-slice drawHUD_sliceX() functions (and the sidecar line
+    // below) use y-coordinates designed for the pre-v0.15 layout, where
+    // this content started right under the title line. Shifting the
+    // whole block down by CONTENT_Y_OFFSET clears the button (ends at
+    // y=64) and starts just inside the box top (BOX_Y=70) without having
+    // to touch every hardcoded y value in four functions.
+    final int CONTENT_Y_OFFSET = 40;
+    pushMatrix();
+    translate(0, CONTENT_Y_OFFSET);
+
+    // Sidecar indicator.
     if (sidecar != null && sidecar.valid) {
         int col = (sidecar.confidence.equals("high"))   ? color(150, 220, 150)
                 : (sidecar.confidence.equals("medium")) ? color(230, 220, 140)
@@ -527,32 +559,36 @@ void drawHUD() {
     else if (sliceMode == 1) drawHUD_sliceA();
     else if (sliceMode == 2) drawHUD_sliceB();
     else                     drawHUD_sliceC();
+    popMatrix();
 
     // (Axis legend is drawn by draw() outside the panel translate so it
     //  stays anchored to the window's right edge.)
 
-    // Footer
+    // Footer — inside the detail box now, not the literal window bottom.
     fill(160);
     textSize(11);
-    text("model calibration file:  " + cal.savePath, 20, height - 24);
+    text("model calibration file:  " + cal.savePath, 20, DetailPanel.BOX_Y + DetailPanel.BOX_H - 16);
 }
 
 void drawAxisLegend() {
+    // Shifts left by rightPanelWidth() so the stroke-average panel (v0.15)
+    // doesn't sit behind it.
+    int lx = width - 380 - rightPanelWidth();
     textSize(13);
     fill(220);
     if (sliceMode == 2 || sliceMode == 3) {
         // Slice B: kayak alone. Slice C: kayak drives world, so world axes = boat frame.
-        text("Boat sensor axes at origin", width - 380, 16);
+        text("Boat sensor axes at origin", lx, 16);
         textSize(12);
-        fill(255, 80, 80);   text("+X  starboard",              width - 380, 42);
-        fill(80, 255, 80);   text("+Y  bow (forward)",           width - 380, 60);
-        fill(100, 140, 255); text("+Z  up (deck)",               width - 380, 78);
+        fill(255, 80, 80);   text("+X  starboard",              lx, 42);
+        fill(80, 255, 80);   text("+Y  bow (forward)",           lx, 60);
+        fill(100, 140, 255); text("+Z  up (deck)",               lx, 78);
     } else {
-        text("Paddle sensor axes at origin", width - 380, 16);
+        text("Paddle sensor axes at origin", lx, 16);
         textSize(12);
-        fill(255, 80, 80);   text("+X  shaft toward right blade", width - 380, 42);
-        fill(80, 255, 80);   text("+Y  blade normal",             width - 380, 60);
-        fill(100, 140, 255); text("+Z  in-blade (up in cal pose)",width - 380, 78);
+        fill(255, 80, 80);   text("+X  shaft toward right blade", lx, 42);
+        fill(80, 255, 80);   text("+Y  blade normal",             lx, 60);
+        fill(100, 140, 255); text("+Z  in-blade (up in cal pose)",lx, 78);
     }
 }
 
@@ -797,8 +833,8 @@ void keyPressed() {
         return;
     }
     // Lowercase 'p' / 'b' still open the CSV file pickers.
-    else if (key == 'p') { selectInput("Select paddle CSV", "onPaddleFileSelected"); return; }
-    else if (key == 'b' || key == 'B') { selectInput("Select boat CSV",   "onBoatFileSelected");   return; }
+    else if (key == 'p') { selectCsvInput("Select paddle CSV", "onPaddleFileSelected"); return; }
+    else if (key == 'b' || key == 'B') { selectCsvInput("Select boat CSV",   "onBoatFileSelected");   return; }
 
     // Entry/exit yaw-datum manual override (n/N/g) — active in every slice,
     // not just Slice 0. The numeric readout lives in Slice 0's HUD
@@ -955,6 +991,43 @@ void handleFrameNavBoat() {
     }
 }
 
+// ── CSV-filtered file picker ─────────────────────────────────────────────────
+//
+// Processing's own selectInput() has no extension-filter option, so p/b
+// used to show every file in the folder. This wraps java.awt.FileDialog
+// directly (same native dialog selectInput() uses under the hood) with a
+// FilenameFilter restricted to .csv/.CSV (Java's filter check is already
+// case-insensitive here since both sides are lower-cased) — notes 20 Jul
+// 2026. Runs on a background thread and calls back by reflection, mirroring
+// selectInput()'s own threading model, so onPaddleFileSelected(File) /
+// onBoatFileSelected(File) don't need to change.
+void selectCsvInput(final String prompt, final String callbackMethod) {
+    final Object sketch = this;
+    Thread t = new Thread(new Runnable() {
+        public void run() {
+            java.awt.FileDialog dialog =
+                new java.awt.FileDialog((java.awt.Frame) null, prompt, java.awt.FileDialog.LOAD);
+            dialog.setFilenameFilter(new java.io.FilenameFilter() {
+                public boolean accept(java.io.File dir, String name) {
+                    return name.toLowerCase().endsWith(".csv");
+                }
+            });
+            dialog.setVisible(true);
+            String dir  = dialog.getDirectory();
+            String name = dialog.getFile();
+            File result = (dir != null && name != null) ? new File(dir, name) : null;
+            try {
+                java.lang.reflect.Method m = sketch.getClass().getMethod(callbackMethod, File.class);
+                m.invoke(sketch, result);
+            } catch (Exception e) {
+                println("selectCsvInput: callback failed — " + e.getMessage());
+            }
+        }
+    });
+    t.setDaemon(true);
+    t.start();
+}
+
 // ── File-select callbacks ────────────────────────────────────────────────────
 
 void onPaddleFileSelected(File selection) {
@@ -968,6 +1041,7 @@ void onPaddleFileSelected(File selection) {
     applySidecarToDisplay();
     rebuildCatchEvents();
     if (eePanel != null) eePanel.clear(0);   // fresh CSV — new frame numbering
+    if (avgPanel != null) avgPanel.reset(0);
     if (paddleData.frameCount() > 0) {
         // If a boat CSV is already loaded, go straight into combined view.
         switchSlice((boatData != null && boatData.frameCount() > 0) ? 3 : 1);
@@ -1137,10 +1211,12 @@ boolean pointerInGraph() {
 }
 
 void mousePressed() {
-    // Overlay priority (v0.14): menu button/drop-down, then the startup
-    // overlay, then the graph strip, then the entry/exit panel (consumed,
-    // no interaction yet), then 3D orbit.
+    // Overlay priority (v0.14/v0.15): menu button/drop-down, detail-panel
+    // toggle, then the startup overlay, then the graph strip, then the
+    // side panels (each only reacts to right-click inside its own
+    // bounds), then 3D orbit.
     if (menu != null && menu.mousePressed(mouseX, mouseY)) return;
+    if (detailPanel != null && detailPanel.mousePressed(mouseX, mouseY)) return;
     if (isChecklistVisible() && checklist.mousePressed(mouseX, mouseY)) return;
     if (pointerInGraph()) {
         int localY = mouseY - (height - GRAPH_H);
@@ -1154,6 +1230,16 @@ void mousePressed() {
         if (mouseButton == RIGHT && eePanel != null) {
             eePanel.clear(paddleFrameIdx);
             triggerRefFlash("ENTRY/EXIT VIEW CLEARED");
+        }
+        return;
+    }
+    if (mouseX >= width - rightPanelWidth() && mouseY < height - GRAPH_H) {
+        // Right-click in the stroke-average panel restarts its own
+        // accumulation — independent of the entry/exit panel's reset
+        // (notes 20 Jul 2026).
+        if (mouseButton == RIGHT && avgPanel != null) {
+            avgPanel.reset(paddleFrameIdx);
+            triggerRefFlash("STROKE AVERAGE RESTARTED");
         }
         return;
     }
@@ -1258,6 +1344,7 @@ void buildAndSaveSidecar() {
     // and any panel clear marker, since this is effectively a new calibration.
     rebuildCatchEvents();
     if (eePanel != null) eePanel.clear(0);
+    if (avgPanel != null) avgPanel.reset(0);
 
     // Auto-save to <paddle-basename>.session.json in the paddle CSV's folder.
     String savePath = deriveSidecarPath(paddleData.sourcePath());
