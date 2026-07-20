@@ -516,8 +516,10 @@ void drawHUD() {
     String speedStr = (sliceMode >= 1 && playbackSpeed != 1.0f)
                        ? String.format("   speed=x%.0f%s", playbackSpeed, playing ? "" : " (paused)")
                        : "";
-    // x=150 leaves room for the Commands menu button at x=20 (v0.14).
-    text("PadViz6   " + modeName + "   [" + viewName + "]" + speedStr, 150, 16);
+    // Own top row — the Commands and Detail buttons sit on the row below
+    // (y=38), not sharing this line, so this no longer needs to dodge
+    // the Commands button on x (notes 20 Jul 2026).
+    text("PadViz6   " + modeName + "   [" + viewName + "]" + speedStr, 20, 10);
 
     // Detail panel (v0.15, spec §13.8) — collapsible box for everything
     // below (sidecar/yaw-datum corrections, per-slice current-data-point
@@ -833,8 +835,8 @@ void keyPressed() {
         return;
     }
     // Lowercase 'p' / 'b' still open the CSV file pickers.
-    else if (key == 'p') { selectCsvInput("Select paddle CSV", "onPaddleFileSelected"); return; }
-    else if (key == 'b' || key == 'B') { selectCsvInput("Select boat CSV",   "onBoatFileSelected");   return; }
+    else if (key == 'p') { selectCsvInput("Select paddle CSV", true);  return; }
+    else if (key == 'b' || key == 'B') { selectCsvInput("Select boat CSV", false); return; }
 
     // Entry/exit yaw-datum manual override (n/N/g) — active in every slice,
     // not just Slice 0. The numeric readout lives in Slice 0's HUD
@@ -998,11 +1000,18 @@ void handleFrameNavBoat() {
 // directly (same native dialog selectInput() uses under the hood) with a
 // FilenameFilter restricted to .csv/.CSV (Java's filter check is already
 // case-insensitive here since both sides are lower-cased) — notes 20 Jul
-// 2026. Runs on a background thread and calls back by reflection, mirroring
-// selectInput()'s own threading model, so onPaddleFileSelected(File) /
-// onBoatFileSelected(File) don't need to change.
-void selectCsvInput(final String prompt, final String callbackMethod) {
-    final Object sketch = this;
+// 2026. Runs on a background thread, same threading model selectInput()
+// itself uses.
+//
+// First version of this called back via reflection (getClass().getMethod),
+// which only finds PUBLIC methods — but Processing compiles a .pde
+// function with no explicit "public" to package-private, so
+// onPaddleFileSelected/onBoatFileSelected were never found. The lookup
+// failure was swallowed by a try/catch that only println'd, so p/b
+// appeared to do nothing at all (found by the user immediately after
+// this shipped). Fixed by calling the two callbacks directly — no
+// reflection, no access-modifier dependency.
+void selectCsvInput(final String prompt, final boolean isPaddle) {
     Thread t = new Thread(new Runnable() {
         public void run() {
             java.awt.FileDialog dialog =
@@ -1016,12 +1025,8 @@ void selectCsvInput(final String prompt, final String callbackMethod) {
             String dir  = dialog.getDirectory();
             String name = dialog.getFile();
             File result = (dir != null && name != null) ? new File(dir, name) : null;
-            try {
-                java.lang.reflect.Method m = sketch.getClass().getMethod(callbackMethod, File.class);
-                m.invoke(sketch, result);
-            } catch (Exception e) {
-                println("selectCsvInput: callback failed — " + e.getMessage());
-            }
+            if (isPaddle) onPaddleFileSelected(result);
+            else          onBoatFileSelected(result);
         }
     });
     t.setDaemon(true);

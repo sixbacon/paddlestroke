@@ -168,8 +168,8 @@ class Checklist {
             boolean enabled = (i == 0) || stepPaddleLoaded();
             if (!enabled) return true;
 
-            if      (i == 0) selectCsvInput("Select paddle CSV", "onPaddleFileSelected");
-            else if (i == 1) selectCsvInput("Select boat CSV",   "onBoatFileSelected");
+            if      (i == 0) selectCsvInput("Select paddle CSV", true);
+            else if (i == 1) selectCsvInput("Select boat CSV",   false);
             else if (i == 2) buildAndSaveSidecar();
             return true;
         }

@@ -9,14 +9,19 @@
 // 0) block (same local coordinate system drawHUD_sliceX() already uses),
 // so mousePressed() below re-adds that offset to match against the real
 // (untranslated) mouse position.
+//
+// Button sits on the same row as Menu's "Commands" button, immediately to
+// its right (BTN_X = Menu's local x 20 + BTN_W 118 + 10 px gap = 148), same
+// BTN_Y/BTN_H so both tops and bottoms line up — the title line moved to
+// its own row above them (notes 20 Jul 2026).
 
 class DetailPanel {
     boolean open = true;
 
-    static final int BTN_X = 150;   // same column as the title line
-    static final int BTN_Y = 42;
+    static final int BTN_X = 148;
+    static final int BTN_Y = 38;
     static final int BTN_W = 100;
-    static final int BTN_H = 22;
+    static final int BTN_H = 26;
 
     static final int BOX_X = 10;
     static final int BOX_Y = BTN_Y + BTN_H + 6;

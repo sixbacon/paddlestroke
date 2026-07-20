@@ -23,10 +23,12 @@ class MenuItem {
 class Menu {
     boolean open = false;
 
-    // Button rect (relative to the visualisation-area left edge).
+    // Button rect (relative to the visualisation-area left edge). Sits
+    // below the "PadViz6..." title line, same row as DetailPanel's button
+    // (notes 20 Jul 2026 — title used to share this row, now has its own).
     static final int BTN_W = 118;
     static final int BTN_H = 26;
-    static final int BTN_Y = 10;
+    static final int BTN_Y = 38;
 
     // Drop-down layout.
     static final int ROW_H   = 22;

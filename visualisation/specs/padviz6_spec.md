@@ -1111,12 +1111,20 @@ issues, all addressed:
     native dialog `selectInput()` uses internally) with a
     `FilenameFilter` restricted to `.csv`/`.CSV` (the check lower-cases
     both sides, so it's inherently case-insensitive — no separate `.CSV`
-    handling needed). Runs on a background thread and calls back via
-    reflection into the existing `onPaddleFileSelected(File)` /
-    `onBoatFileSelected(File)`, mirroring `selectInput()`'s own threading
-    model exactly, so those callbacks are unchanged. Used everywhere the
-    old `selectInput()` calls were: `keyPressed()`'s `p`/`b` and
-    `Checklist.mousePressed()`'s row-click equivalents.
+    handling needed), on a background thread matching `selectInput()`'s
+    own threading model. Used everywhere the old `selectInput()` calls
+    were: `keyPressed()`'s `p`/`b` and `Checklist.mousePressed()`'s
+    row-click equivalents.
+    - **Regression, found and fixed same day.** The first version called
+      back via `getClass().getMethod(name, File.class)` reflection —
+      `getMethod()` only finds **public** methods, but a `.pde` function
+      with no explicit `public` compiles to package-private, so
+      `onPaddleFileSelected`/`onBoatFileSelected` were never found. The
+      lookup threw `NoSuchMethodException`, silently caught by a
+      `catch (Exception e) { println(...); }` that only wrote to the
+      console — so `p`/`b` appeared to do nothing at all right after this
+      shipped. Fixed by dropping reflection entirely: `selectCsvInput()`
+      now takes a `boolean isPaddle` and calls the two callbacks directly.
 
 ### 13.8 v0.15 continued — collapsible detail panel + stroke-average panel
 
@@ -1128,16 +1136,27 @@ panel was wanted — an averaged stroke-shape trace, symmetric on the right.
 1. **`DetailPanel.pde`** (new) — collapsible box for everything `drawHUD()`
    used to draw straight onto the 3D view below the title line: the
    sidecar/yaw-datum indicator and the per-slice `drawHUD_slice0/A/B/C()`
-   readout. Minimised shows only a `Detail ▾` button (below the Commands
-   button, same column as the title line); expanded shows the button plus
-   a bordered box containing that content, unchanged internally — the
-   existing `drawHUD_sliceX()` functions weren't rewritten, just wrapped:
-   `drawHUD()` shifts the whole block down by a fixed offset
-   (`pushMatrix(); translate(0, 40); ... popMatrix();`) so the
-   pre-existing hardcoded y-coordinates land inside the box instead of
+   readout. Minimised shows only a `Detail ▾` button; expanded shows the
+   button plus a bordered box containing that content, unchanged
+   internally — the existing `drawHUD_sliceX()` functions weren't
+   rewritten, just wrapped: `drawHUD()` shifts the whole block down by a
+   fixed offset (`pushMatrix(); translate(0, 40); ... popMatrix();`) so
+   the pre-existing hardcoded y-coordinates land inside the box instead of
    under the new button. The model-calibration-file footer moved from the
    literal window bottom to the bottom of the box. Toggled by clicking the
    button; state isn't persisted (always starts expanded).
+   - **Layout fix, same day.** First version put the title line and the
+     Commands button on the same row (the pre-existing v0.14 layout) and
+     the new Detail button on its own row below — user asked for the
+     title on its own top line, with Commands and Detail side by side on
+     the row below. Moved the title to `(20, 10)` (no longer needs to
+     dodge Commands horizontally now they're on different rows); `Menu.
+     BTN_Y` and `DetailPanel.BTN_Y` both became `38`, `DetailPanel.BTN_X`
+     became `148` (Commands' local x 20 + its width 118 + a 10 px gap) and
+     `DetailPanel.BTN_H` became `26` to match `Menu.BTN_H` so both buttons'
+     tops and bottoms line up. `DetailPanel.BOX_Y` (`BTN_Y+BTN_H+6`) comes
+     out to `70` either way, so the box position and the content
+     `translate(0, 40)` offset needed no change.
 2. **`StrokeAveragePanel.pde`** (new) — right-hand mirror of
    `EntryExitPanel`, same width (`rightPanelWidth()`, same 20% formula and
    visibility condition as `leftPanelWidth()`/`isPanelVisible()`) and
@@ -1164,5 +1183,6 @@ panel was wanted — an averaged stroke-shape trace, symmetric on the right.
    gained entries for both panels' right-click behaviour and the Detail
    button.
 
-Compiles clean via `processing-java --build`. Not yet visually checked by
-the user.
+Compiles clean via `processing-java --build`. User's first on-screen check
+found the two issues above (layout, p/b regression); both addressed same
+day, not yet re-confirmed.
