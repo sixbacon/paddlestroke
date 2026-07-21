@@ -1,8 +1,8 @@
 # PadViz6 — Disciplined Orientation Specification
 
-**Version:** 0.15
-**Date:** 2026-07-20
-**Status:** v0.15 ACCEPTED 20 Jul 2026 ("that is enough on visualisation for this session, it is doing what I want for now" — §13.9). §13.7: four field-use fixes from the user's on-screen check of v0.14 — pitch nudge moved off the double-bound `p`/`P` to `i`/`I`; playback speed multiplier (`>` doubles, `<` resets to x1); entry/exit panel right-click clears accumulated dots; entry/exit yaw-datum manual override (`n`/`N` nudge, `g` reset, shown in Slice 0, saved in the sidecar) as an explicit stop-gap for a ~30° automatic-datum error found on replay; Slice C paddle base position moved +0.45 m toward the bow (measured average paddle-centre offset from boat centre). Slices 0–C + bottom GraphPanel with two-click zoom (right-click), double-right-click revert, `S`-key zoom reset, and merged CSV export (curated + all-fields). Corner axis compass (2D, ~1/3 the old on-screen size) with a `P`/`K`/`W` frame letter that also acts as the slice-switch shortcut. §7 expanded (v0.7) from single yaw-alignment rotation to a three-offset per-session procedure — sensor-mount roll/pitch (from accel) + magnetic-yaw datum (from mean quats) — with pre-session magnetometer figure-8 and DCD save. Requires three firmware additions listed in §7.8 (formalised in firmware spec §15, v2.7). v0.8: the three 8 Jul 2026 field-use notes (§12.10) are now DONE — `k`/`u` HUD flash, Slice B hint to `W`, and Backspace/`-` back-slice ping-pong. v0.9: free-orbit camera — left-drag orbits, wheel zooms, V snaps to side/top preset; 2D axis compass now rotates in step with the 3D camera basis. v0.10: first-pass session sidecar builder (`Sidecar.pde`, C key) — rest-window detector + mean-based mount offsets + yaw datum + JSON save per §7.5. Slice-switch letter shortcuts P/K/W dropped (Caps-Lock case ambiguity); digits 0/1/2/3 only. v0.11: startup onboarding checklist (`Checklist.pde`) in the bottom strip when no paddle CSV is loaded — three rows auto-ticked and clickable. v0.12: sidecar auto-load — on paddle-CSV open, look for a sibling `<basename>.session.json`, parse it, and reseed rest-window references so the correction is active without pressing C. Third checklist row auto-ticks in that case; boat CSV load extends the seeding to the boat side. v0.13 (9 Jul 2026): three field-use fixes driven by the 9 Jul session — (a) C-key rest-window search now starts at the current playback frame (was frame 0), so the user can seek to the intended still moment before building; (b) checklist strip hides as soon as the paddle CSV loads (was blocking the graph until sidecar built), and a yellow "SIDECAR not built — seek then press C" HUD hint appears in its place; (c) `DataSource.computePaddleCentreMotion` — accel double-integration with a three-stage HPF cascade (fc ≈ 0.3 Hz) drives a per-frame paddle-centre offset (±0.3 m clamped) that translates the mesh in Slices A + C during render, so the shaft midpoint visibly swings with the stroke. v0.14 (17 Jul 2026, §13): startup checklist becomes a floating overlay above the graph strip (graph appears on paddle-CSV load, overlay stays through seek-and-`C`); left key-list HUD replaced by a Commands pull-down menu; new `CatchEvents.pde` offline blade entry/exit detector (port of firmware spec §13.5 feasibility method); new `EntryExitPanel.pde` — left 20 % boat-frame top-down scatter of entry/exit points, red = right blade, green = left, filled = entry, hollow = exit, accumulating with playback.
+**Version:** 0.16
+**Date:** 2026-07-21
+**Status:** v0.16 (21 Jul 2026, §14) forks a **new sketch `PadViz7/`** from PadViz6 v0.15 — guided 5-step session-setup wizard (`Wizard.pde`, replacing `Checklist.pde`) plus a Classification Section in the sidecar (`Classification.pde` + `classification_sections` JSON, §7.5) recording good right/left/zero-feather stretches and excluding ranges from the graph + all navigation. BUILT + compiles clean; on-screen walkthrough pending (§14.4). PadViz6 left untouched at v0.15. — v0.15 ACCEPTED 20 Jul 2026 ("that is enough on visualisation for this session, it is doing what I want for now" — §13.9). §13.7: four field-use fixes from the user's on-screen check of v0.14 — pitch nudge moved off the double-bound `p`/`P` to `i`/`I`; playback speed multiplier (`>` doubles, `<` resets to x1); entry/exit panel right-click clears accumulated dots; entry/exit yaw-datum manual override (`n`/`N` nudge, `g` reset, shown in Slice 0, saved in the sidecar) as an explicit stop-gap for a ~30° automatic-datum error found on replay; Slice C paddle base position moved +0.45 m toward the bow (measured average paddle-centre offset from boat centre). Slices 0–C + bottom GraphPanel with two-click zoom (right-click), double-right-click revert, `S`-key zoom reset, and merged CSV export (curated + all-fields). Corner axis compass (2D, ~1/3 the old on-screen size) with a `P`/`K`/`W` frame letter that also acts as the slice-switch shortcut. §7 expanded (v0.7) from single yaw-alignment rotation to a three-offset per-session procedure — sensor-mount roll/pitch (from accel) + magnetic-yaw datum (from mean quats) — with pre-session magnetometer figure-8 and DCD save. Requires three firmware additions listed in §7.8 (formalised in firmware spec §15, v2.7). v0.8: the three 8 Jul 2026 field-use notes (§12.10) are now DONE — `k`/`u` HUD flash, Slice B hint to `W`, and Backspace/`-` back-slice ping-pong. v0.9: free-orbit camera — left-drag orbits, wheel zooms, V snaps to side/top preset; 2D axis compass now rotates in step with the 3D camera basis. v0.10: first-pass session sidecar builder (`Sidecar.pde`, C key) — rest-window detector + mean-based mount offsets + yaw datum + JSON save per §7.5. Slice-switch letter shortcuts P/K/W dropped (Caps-Lock case ambiguity); digits 0/1/2/3 only. v0.11: startup onboarding checklist (`Checklist.pde`) in the bottom strip when no paddle CSV is loaded — three rows auto-ticked and clickable. v0.12: sidecar auto-load — on paddle-CSV open, look for a sibling `<basename>.session.json`, parse it, and reseed rest-window references so the correction is active without pressing C. Third checklist row auto-ticks in that case; boat CSV load extends the seeding to the boat side. v0.13 (9 Jul 2026): three field-use fixes driven by the 9 Jul session — (a) C-key rest-window search now starts at the current playback frame (was frame 0), so the user can seek to the intended still moment before building; (b) checklist strip hides as soon as the paddle CSV loads (was blocking the graph until sidecar built), and a yellow "SIDECAR not built — seek then press C" HUD hint appears in its place; (c) `DataSource.computePaddleCentreMotion` — accel double-integration with a three-stage HPF cascade (fc ≈ 0.3 Hz) drives a per-frame paddle-centre offset (±0.3 m clamped) that translates the mesh in Slices A + C during render, so the shaft midpoint visibly swings with the stroke. v0.14 (17 Jul 2026, §13): startup checklist becomes a floating overlay above the graph strip (graph appears on paddle-CSV load, overlay stays through seek-and-`C`); left key-list HUD replaced by a Commands pull-down menu; new `CatchEvents.pde` offline blade entry/exit detector (port of firmware spec §13.5 feasibility method); new `EntryExitPanel.pde` — left 20 % boat-frame top-down scatter of entry/exit points, red = right blade, green = left, filled = entry, hollow = exit, accumulating with playback.
 
 ---
 
@@ -463,9 +463,20 @@ One sidecar per session, next to the paddle CSV: `<basename>.session.json`.
   "boat_mount_offset_deg":   { "roll":  0.08, "pitch": -0.19 },
   "yaw_datum_offset_deg":    7.6,
   "mag_cal_status_at_rest": { "paddle": 3, "boat": 3 },
+  "classification_sections": [
+    { "start_frame": 1200, "end_frame":  8400, "type": "right" },
+    { "start_frame": 8600, "end_frame": 15200, "type": "left"  },
+    { "start_frame": 15400, "end_frame": 22000, "type": "zero" },
+    { "start_frame": 41000, "end_frame": 58000, "type": "excluded" }
+  ],
   "notes":         "figure-8 done on beach; both sensors green before launch."
 }
 ```
+
+`classification_sections` (PadViz7 v0.16, §14) records which stretches of the recording are
+good right/left/zero-feather paddling data, or should be excluded entirely. Absent or empty
+in a pre-v0.16 sidecar; the reader treats absence as "no classification". Frames are
+paddle-frame indices, ranges are inclusive and non-overlapping.
 
 `mag_cal_status_at_rest` is read from the firmware's per-frame accuracy field (§7.8) — a
 recording with either sensor below 3 during the rest window is flagged low-confidence and
@@ -1240,3 +1251,111 @@ found the two issues above (layout, p/b regression); both addressed same
 day. The stroke-average panel then went through the roll-trace →
 XY-path redesign and the error-flash change, also same day; none of this
 round re-confirmed on screen yet.
+
+---
+
+## 14. PadViz7 (v0.16) — session-setup wizard + classification (21 Jul 2026)
+
+PadViz7 is a **new sketch** (`visualisation/PadViz7/`), forked from PadViz6 at
+v0.15 per the user's 21 Jul request ("make this rewrite a new version of
+padviz" — following the project's PadViz → … → PadViz6 lineage). PadViz6 is
+left untouched. PadViz7 adds two things asked for in
+`instructions20260721.txt`:
+
+1. A **guided session-setup wizard** replacing the free-floating
+   `Checklist.pde` overlay, walking the user step-by-step through loading
+   files and calibrating a session, with the instructions and error messages
+   collected into one docked panel.
+2. A **Classification Section** in the per-session sidecar recording which
+   stretches of the recording are good right-handed / left-handed /
+   zero-feather paddling, or should be excluded entirely (e.g. the drive home
+   with the units still logging). This replaces the note file the user kept
+   by hand; it supersedes the hardcoded `SEGMENTS` dict at the top of
+   `visualisation/stroke_catch_explore.py` as the source of truth for future
+   sessions.
+
+### 14.1 Files
+
+- **`Wizard.pde` (new)** — the 5-step state machine and the docked
+  instructions/status panel. Absorbs all instructions and error messages;
+  `triggerErrorFlash()` routes into this panel while the wizard is active,
+  falling back to the old top-centre click-to-dismiss flash otherwise.
+- **`Classification.pde` (new)** — `ClassificationSection` (persisted record:
+  inclusive `start_frame`/`end_frame`, `type` ∈ right/left/zero/excluded), the
+  in-progress marking mini-state-machine, the graph shading, and the
+  frame-visibility index (`visiblePos`/`rawForVisiblePos`/`stepVisible`/
+  `nearestVisible`) that makes EXCLUDED ranges occupy no pixels and be
+  unreachable by any navigation path.
+- **`Sidecar.pde`** — gains `ArrayList<ClassificationSection> classification`
+  with JSON save/load of the `classification_sections` array (§7.5). The
+  rest-window / offsets / yaw-datum fields are unchanged.
+- **`GraphPanel.pde`** — chart pixel↔frame math is now exclusion-aware
+  (interpolates in visible-position space); new public `chartXForFrame()`
+  (inverse of `frameFromChartX`). With zero exclusions the behaviour is
+  bit-identical to PadViz6 (the zero-exclusion special case, not a separate
+  code path).
+- **`PadViz7.pde`** — `Wizard`/`Classification` wired in place of `Checklist`;
+  `stepPlayback()` and the `,`/`.`/arrow/Home/End branches in
+  `handleFrameNavPaddle`/`handleFrameNavCombined` route through
+  `classify.stepVisible()`; `buildAndSaveSidecar()` now returns a boolean;
+  Detail panel gains a classification summary line.
+- **`Checklist.pde` (removed)** — the wizard is a strict superset.
+
+### 14.2 Steps
+
+Keys are step-scoped: while the wizard is active it consumes only the keys
+meaningful to the current step (Return, `X`, `r/R`, `l/L`, `z/Z`, `d/D`,
+`a/A`, `f/F`); everything else — digits, Space, arrows, `,`/`.` — falls
+through so the user can still move the graph cursor to position for Steps 3
+and 4. **F1** shows/hides the panel at any time.
+
+- **Step 1 — paddle CSV.** `Return` = choose. File must start `pad`, end
+  `.csv`. Auto-advances on load.
+- **Step 2 — boat CSV (optional).** `Return` = choose (must start `boat`, end
+  `.csv`); `X` = skip (paddle-only session, sidecar confidence "medium").
+- **Step 3 — roll calibration.**
+  - *3a* (no saved rest window): "position the cursor at the start of a still
+    moment, press Return" → `buildAndSaveSidecar()` (unchanged `C`-key path,
+    search from the current frame). Failure shows in the panel, stays on 3a.
+  - *3b* (saved rest window, e.g. auto-loaded): shows its summary. `Return` =
+    use it → Step 4. `r/R` = discard the whole sidecar → falls back to 3a.
+- **Step 4 — classification.**
+  - *4a* (no entries): `Return` marks the section **start** (yellow cursor);
+    `Return` again marks the **end** (red cursor); then classify: `r/R` right,
+    `l/L` left, `z/Z` zero-feather, `d/D` exclude, `a/A` abort the pair, `f/F`
+    finish. Overlap check (`a ≤ end_b && start_b ≤ b`, any two sections any
+    type) — an overlap raises a click-to-dismiss warning and clears the
+    pending pair. Each commit quiet-saves the sidecar and re-shades; `d/D`
+    also rebuilds the exclusion index so the range is cut immediately.
+  - *4b* (entries loaded from file): shows a summary. `Return` = use them →
+    Step 5. `r/R` = clear and restart 4a.
+- **Step 5 — done.** Short dismiss delay, then hides. `C`/`n`/`N`/`g` and the
+  other expert keys remain live afterward, unchanged. F1 re-opens Step 0 as a
+  read-only summary and never restarts the wizard.
+
+### 14.3 Excluding data from graph + navigation
+
+`Classification` maintains, rebuilt whenever `sidecar.classification` or the
+paddle CSV changes: `posOf[raw]` (monotonic visible position, next-visible for
+excluded frames), `rawOf[vpos]` (inverse), `excl[raw]`. `GraphPanel`
+interpolates the chart in visible-position space, so excluded stretches occupy
+no pixels and can never be clicked into — the literal "delete it from the
+graph" the user asked for. A single `stepVisible(raw, deltaVisiblePositions)`
+helper centralises "move N steps, skipping excluded ranges" and is used by
+autoplay and every arrow/`,`/`.`/Home/End nav path in Slice A and Slice C
+(Slice B, boat-only, is out of scope — classification is paddle-anchored).
+`zoomA`/`zoomB`/`selPendingA/B`/export keep storing **raw** paddle-frame
+indices, so zoom-to-range and CSV export are unchanged and the data file is
+never modified. The Detail panel gains a summary line (counts per type + total
+excluded seconds).
+
+### 14.4 Status
+
+BUILT 21 Jul 2026, compiles clean via `processing-java --build` (Processing
+4.3). **Not yet confirmed on screen** — per `feedback_processing_compile_vs_runtime`,
+`--build` does not exercise the keyboard/click flow of the wizard, the graph
+exclusion geometry, or the shading/cursor rendering. The concentrated
+runtime risk is: the Step-4 marking state machine (yellow→red→classify→
+overlap→commit), the exclusion-aware pixel↔frame mapping, and F1 toggle
+behaviour. Hand-back item: an on-screen walkthrough against a real CSV pair
+(fresh session with no sidecar, then a re-open to exercise 3b/4b).
