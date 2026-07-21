@@ -15,8 +15,8 @@ Kayak paddle cycle-rate monitor. An ESP32 reads roll from a BNO085 IMU mounted a
 | `firmware/specs/` | `functional_spec.md`, `sim_test_spec.md` |
 | `firmware/instructions/` | Instruction text files (local only, git-ignored) |
 | `firmware/error_reports/` | Error report text files (local only, git-ignored) |
-| `visualisation/` | PadViz, PadViz2, PadViz3, PadViz4 Processing sketches |
-| `visualisation/specs/` | `simulation_specification.md` |
+| `visualisation/` | Processing sketches (PadViz…PadViz7; **PadViz7 is current**) + `stroke_*.py` offline analysis toolkit |
+| `visualisation/specs/` | `padviz6_spec.md` (active PadViz spec, through v0.16/PadViz7), `simulation_specification.md` |
 | `visualisation/instructions/` | Instruction text files (local only, git-ignored) |
 | `visualisation/error_reports/` | Error report text files (local only, git-ignored) |
 | `data/` | Recorded field session CSVs by date (local only, git-ignored) |
