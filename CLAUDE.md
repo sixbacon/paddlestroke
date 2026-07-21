@@ -242,6 +242,16 @@ After every firmware change, run this minimum check before committing:
 4. Paddle briskly — `WAKE:` banner appears and CPM resumes (skip while doze is disabled)
 5. Confirm SD CSV created on PadDis with correct headers
 
+## Generated-artifact provenance
+
+Whenever you produce a **report** (a doc/write-up/spec-style file) or an **image/figure**, record its origin so it can never be misattributed later:
+
+1. Add a row to `PROVENANCE.md` (repo root): date, artifact path(s), **produced by**, one-line note. "Produced by" is the concrete actor — the emitting script for a figure (e.g. `stroke_foo.py`), or the model name + "(Claude Code session)" for a doc an agent wrote directly.
+2. Where practical, stamp the artifact itself: a short provenance footer line in docs; for figures, ensure the emitting script is named in the surrounding text/log.
+3. When a report merely **references or embeds** existing images, say so explicitly and do **not** imply you generated them. If an artifact's origin is unknown (e.g. a pre-existing file), record "unknown / not recorded" rather than guessing.
+
+This convention exists because analysis PNGs produced by an earlier `stroke_*.py` run were nearly misattributed to the agent that only referenced them (21 Jul 2026).
+
 ## Git
 
 Commit and push to `origin/main` (GitHub) after each meaningful change with a descriptive commit message.

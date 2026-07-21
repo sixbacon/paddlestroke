@@ -1,0 +1,257 @@
+================================================================================
+HOW BLADE ENTRY (CATCH) AND EXIT (RELEASE) POINTS ARE CALCULATED
+PadViz7 CatchEvents engine + the Phase-9 feasibility study
+Written 21 Jul 2026
+================================================================================
+
+Scope and provenance
+--------------------
+This note explains how the visualiser decides *when* each paddle blade enters
+and leaves the water, and *where* (in the boat's frame) that happens. It refers
+to the PNG images sitting next to this file in `visualisation/`. Those images
+were NOT produced for this note — they were generated earlier by the analysis
+script `visualisation/stroke_catch_explore.py` (the Phase-9 feasibility study,
+first run on the 16 Jul 2026 field data). I am pointing at them because they are
+the evidence the method is sound; you can regenerate any of them yourself with:
+
+    python visualisation/stroke_catch_explore.py <segment>
+    # <segment> is one of: right1  left  right2  zero   (default right1)
+
+There are two closely related things described here:
+
+  A. The FEASIBILITY STUDY  (Python, stroke_catch_explore.py) — proves the
+     physical signals exist and are repeatable. This is what the images show.
+  B. The LIVE DETECTOR       (Processing, PadViz7/CatchEvents.pde) — the code
+     that actually places the entry/exit dots you see in the left-hand
+     Entry/Exit panel during playback. It uses the same physics as the study,
+     with production-friendly filters.
+
+The two agree by construction; B is a faithful port of the method A validated.
+
+
+--------------------------------------------------------------------------------
+1.  THE CORE IDEA — two independent questions
+--------------------------------------------------------------------------------
+A stroke's catch/release is found by combining two things that come from
+DIFFERENT sensor channels, so they cross-check each other:
+
+  (1) WHERE is the blade?   -> from ORIENTATION (the quaternion).
+      The paddle shaft is the sensor's body +X axis. Rotating that axis into
+      the world tells us which blade is low (near/under the water) and which is
+      high (in the air). A blade is "in the water" for the run of frames where
+      its tip sits below the shaft centre.
+
+  (2) WHEN does it hit / leave the water?  -> from the ACCELEROMETER.
+      Water entry and exit are little impacts. They show up as a short burst of
+      8-30 Hz vibration ("thud") in the accelerometer magnitude — far above the
+      slow ~0.5-1 Hz rocking of the stroke itself. The loudest burst inside the
+      "descending" part of an in-water run is the ENTRY; the loudest inside the
+      "rising" part is the EXIT.
+
+So: orientation gives the coarse window and which blade; the high-frequency
+impact envelope gives the sharp timestamp inside that window.
+
+
+--------------------------------------------------------------------------------
+2.  PER-FRAME SIGNALS  (CatchEvents.pde, compute())
+--------------------------------------------------------------------------------
+For every frame i the detector computes:
+
+  amag[i]  = |accel| = sqrt(ax^2 + ay^2 + az^2)
+             Accelerometer magnitude. Orientation-independent, so the impact
+             "thud" survives regardless of how the paddle is held.
+
+  Shaft direction in the world = first column of the rotation matrix R(q):
+      ux = 1 - 2(qy^2 + qz^2)
+      uy = 2(qx*qy + qw*qz)
+      uz = 2(qx*qz - qw*qy)
+  From this:
+      uzRaw[i] = uz          -> vertical component of the shaft axis.
+                               +X tip height above shaft centre = +uz*1.05 m;
+                               -X tip height                     = -uz*1.05 m.
+      phi[i]   = atan2(uy,ux) -> compass heading of the shaft in the world.
+      hMag[i]  = sqrt(ux^2+uy^2) -> how much of the shaft lies in the horizontal
+                                    plane (used to scale the blade's XY reach).
+
+  Which quaternion? GRV (Game Rotation Vector, magnetometer-free) is used when
+  the CSV has it (v8.13+ files), because the fused yaw carries a cycle-periodic
+  magnetic artefact that GRV does not (firmware spec 16.11). Older files fall
+  back to the fused quaternion (flagged "approx" in the status line).
+
+  Impact envelope:
+      hf  = bandpass(amag, 8..30 Hz)        (2nd-order Butterworth, zero-phase:
+                                             forward then backward, so no timing
+                                             skew)
+      env = 50 ms RMS of hf                 -> the smooth "loudness of impact"
+                                               curve. Its peaks are the events.
+
+  Tip-height driver:
+      uzLp = lowpass(uzRaw, 3 Hz, zero-phase)  -> de-noised blade-up/down signal
+                                                  used to find in-water runs.
+
+
+--------------------------------------------------------------------------------
+3.  FINDING AN IN-WATER RUN, THEN SPLITTING IT INTO ENTRY + EXIT
+--------------------------------------------------------------------------------
+For each blade (side = right (+X) then left (-X); sgn = +1 / -1):
+
+  A frame is "in water" when the tip is below the centre by more than LOW_T:
+      sgn * uzLp[i] * BLADE_L  <  LOW_T     (LOW_T = -0.05 m, BLADE_L = 1.05 m)
+
+  Consecutive in-water frames form a RUN [runStart .. runEnd]. A run is kept
+  only if its length is between:
+      MIN_RUN_S = 0.20 s   (shortest credible immersion)
+      MAX_RUN_S = 4.0  s   (longer = the boat is at rest / drifting, not a stroke)
+
+  Inside a kept run, minIdx is the frame where the tip is deepest. That splits
+  the run into:
+      descending part [runStart .. minIdx]  -> contains the ENTRY
+      rising part     [minIdx  .. runEnd]   -> contains the EXIT
+
+  The event time in each part is the frame with the LOUDEST impact envelope:
+      best = argmax(env) over that part
+  and it is only accepted if it clears the impact gate:
+      env[best] >= envGate,  envGate = max(ENV_RATIO * median(env), ENV_FLOOR)
+                             (ENV_RATIO = 1.3, ENV_FLOOR = 0.8 m/s^2)
+  i.e. the burst must be at least 1.3x the typical background AND above an
+  absolute floor. A quiet, gentle dip with no real impact produces no event.
+
+This is the whole entry/exit decision. Everything else is bookkeeping and
+placing the point in space.
+
+
+--------------------------------------------------------------------------------
+4.  WHERE THE EVENT IS DRAWN  (boat-frame XY)
+--------------------------------------------------------------------------------
+Each accepted event is turned into a position in the BOAT's frame
+(+X = starboard, +Y = bow) so the Entry/Exit panel can show a top-down scatter:
+
+      a  = phi[best] - psiRef[best] - datumEff     (shaft heading relative to
+                                                    the boat, minus the datum)
+      r  = BLADE_L * hMag[best] * sgn              (horizontal reach of the blade)
+      xB = r * cos(a)
+      yB = r * sin(a) + PADDLE_BOW_OFFSET_M        (+0.45 m: the shaft centre
+                                                    sits forward of the boat's
+                                                    own centre)
+
+  psiRef = the boat's heading at the synced frame (boat GRV yaw preferred; if no
+           boat CSV is loaded, a +/-15 s rolling circular mean of the shaft
+           heading is used instead - flagged "approx").
+
+  datumEff = yaw datum = the constant rotation that makes "shaft +X" read as
+           "boat +X (starboard)" at rest. It is the circular mean of
+           (phi - psiRef) over the sidecar rest window (or the whole file if
+           there is no sidecar), PLUS any manual nudge you have dialled in
+           (Sidecar.yawManualAdjustDeg, the n/N keys). The manual override
+           exists because the automatic datum was found to be tens of degrees
+           off on some sessions (spec 13.7).
+
+  Side/colour convention: sensor +X = shaft toward the RIGHT blade (spec 2), so
+  +X events are the right blade, -X the left. If a session's paddle was mounted
+  reversed, the colours swap - that is a physical mount fact, not something the
+  software should "correct" (see memory project_paddle_mount_diagnosis).
+
+
+--------------------------------------------------------------------------------
+5.  THE IMAGES  (in this folder) — what each one shows
+--------------------------------------------------------------------------------
+All were produced by stroke_catch_explore.py on PadLog20260716.csv /
+BoatLog20260716.csv. The filename SUFFIX is the data segment:
+
+    (no suffix) = right1  : first steady right-handed paddling stretch
+    _left                 : left-handed stretch
+    _right2               : second right-handed stretch
+    _zero                 : ZERO-FEATHER stretch (anchored on PITCH, not roll,
+                            because roll is half-period ambiguous at zero feather
+                            - spec 16.10)
+
+### catch_ensemble.png  (and _left / _right2 / _zero)
+The key evidence. Every stroke cycle is time-normalised to a 0..1 "phase" and
+the signals are averaged across all cycles (median line, with the 25-75%
+spread shaded). Layout: 5 rows x 2 columns.
+    Column left  = "side A", cycles anchored on the roll/pitch PEAK.
+    Column right = "side B", cycles anchored on the roll/pitch TROUGH.
+    Row 1 = the anchor angle (roll, or pitch for zero-feather).
+    Row 2 = HF 8-30 Hz impact envelope   <-- THIS is the entry/exit signal.
+    Row 3 = jerk (rate of change of |accel|).
+    Row 4 = world-frame vertical linear accel of the shaft centre.
+    Row 5 = boat surge (fore-aft boat accel, synced via rx_ms).
+WHAT TO LOOK FOR: in row 2 you should see FOUR sharp bumps per full cycle =
+2 water entries + 2 exits (right blade in, right out, left in, left out). Their
+alignment with the tip-height crossings (below) and with boat surge is the
+proof that these bumps are real catch/release impacts, not noise.
+
+### catch_strip.png  (and _left / _right2 / _zero)
+A raw, un-averaged 12-second slice of three channels stacked in time:
+roll (top), HF impact envelope (middle), boat surge (bottom). This is the
+sanity check that the neat averaged bumps in catch_ensemble correspond to
+genuine per-stroke events in the raw data, cycle by cycle.
+
+### tip_height.png  (and _left / _right2 / _zero)
+Three panels vs stroke phase:
+    top    = the anchor angle (roll/pitch).
+    middle = blade-tip height relative to the shaft centre, for BOTH blade ends
+             (+X green, -X magenta), with the 0 line marked. Where a curve dips
+             below 0 the blade is under the shaft centre -> the in-water window.
+    bottom = the HF 8-30 Hz impact envelope.
+WHAT TO LOOK FOR: the HF bumps (bottom) line up with the START (entry) and END
+(exit) of each tip-below-centre dip (middle). That vertical alignment is
+exactly the two-question logic of section 1, shown graphically.
+
+Reported timing sharpness (printed by the script, right1 segment): the HF bumps
+are phase-locked with a per-cycle jitter of roughly +/-33 to +/-96 ms - tight
+enough to timestamp a catch to a fraction of a stroke.
+
+### NOT about entry/exit (don't be misled by these two)
+    stroke_compare.png  - padnormal vs padbad ROLL waveforms/spectra, from the
+                          11 Jul two-piece-paddle CPM over-count investigation
+                          (stroke_compare.py). Nothing to do with catch/release.
+    stroke_hifreq.png   - high-frequency ROLL content for that same CPM bug
+                          (stroke_hifreq.py). Also unrelated to entry/exit.
+They are in the folder because they came from a different study; I list them
+only so you know they are not part of this explanation.
+
+
+--------------------------------------------------------------------------------
+6.  FEASIBILITY SCRIPT vs LIVE DETECTOR — the small differences
+--------------------------------------------------------------------------------
+Same physics, different mechanics chosen to suit each environment:
+
+  Impact band-pass:
+      Study  : brick-wall FFT band-pass (offline, whole-array).
+      PadViz7: 2nd-order Butterworth, applied forward+backward (zero phase).
+  Cycle handling:
+      Study  : segments cycles by roll/pitch peaks and ensemble-averages, to
+               SHOW the structure across many strokes.
+      PadViz7: does not need averaging - it detects each in-water run directly
+               from the tip-height gate and timestamps that single event, so
+               the dots appear live as playback advances.
+  Heading/datum:
+      Study  : fixed per-segment, exploratory.
+      PadViz7: per-file/per-sidecar datum + a saved manual nudge (section 4).
+
+The takeaway: the images explain and justify the method; CatchEvents.pde is the
+production implementation of it.
+
+
+--------------------------------------------------------------------------------
+7.  KNOWN LIMITS / THINGS THAT CAN LOOK WRONG
+--------------------------------------------------------------------------------
+  - Yaw datum error: if the automatic datum is off, ALL entry/exit dots rotate
+    together about the origin. Fix with the n/N nudge keys (saved in the
+    sidecar). The angle is a data-record calibration, not a bug in detection.
+  - No boat CSV: heading falls back to a rolling mean of the paddle's own
+    heading - fine for "which side / how far out", weaker for absolute bearing.
+  - Pre-GRV files (older than v8.13): fused yaw is used and the status line says
+    "approx"; expect a little more scatter from the magnetic artefact.
+  - Zero feather: detection still works, but cycle anchoring must use PITCH, not
+    roll (roll is half-period ambiguous) - hence the _zero images anchor on
+    pitch. The entry/exit logic itself (tip height + HF impact) is unchanged.
+  - Very gentle strokes with no real splash may not clear the impact gate
+    (envGate) and so produce no event - by design, to avoid false positives.
+
+Code:  visualisation/PadViz7/CatchEvents.pde     (live detector)
+       visualisation/stroke_catch_explore.py     (feasibility study + images)
+Spec:  visualisation/specs/padviz6_spec.md  13.3 (engine), 13.5 (feasibility),
+       13.7 (yaw datum override);  firmware spec 16.11 (GRV vs fused yaw).
+================================================================================

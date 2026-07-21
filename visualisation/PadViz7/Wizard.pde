@@ -216,9 +216,13 @@ class Wizard {
         if (!shown) return;
 
         px = 12;
-        py = 10;
+        // Start below the HUD title line + the Commands/Detail button row
+        // (that row sits at y=38..64), so those buttons are never overdrawn by
+        // — or drawn on top of — this panel. Still clear of the bottom graph
+        // strip (ph is clamped so py+ph never reaches height-GRAPH_H).
+        py = 74;
         pw = width - 24;
-        ph = min(216, height - GRAPH_H - 20);
+        ph = min(216, height - GRAPH_H - py - 10);
         if (ph < 120) ph = 120;
 
         pushMatrix();

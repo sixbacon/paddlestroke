@@ -1,0 +1,33 @@
+# Generated-artifact provenance log
+
+A running record of **who/what produced each generated report or image, and when**,
+so their origin is never ambiguous later. (Motivated 21 Jul 2026 by confusion over
+whether an AI agent had produced a set of analysis PNGs it was only *referencing* —
+it hadn't; they came from an analysis script run in an earlier session.)
+
+**Convention** — see `CLAUDE.md` → "Generated-artifact provenance". In short:
+whenever an agent produces a report (doc/spec-style write-up) or an image/figure,
+add a row here, and where practical also stamp the artifact itself (a footer line
+for docs; the emitting script's name for figures). "Produced by" names the concrete
+actor: a specific script for figures, or the model/agent + session date for docs an
+agent wrote directly. If provenance is unknown (pre-existing file), say so — do not
+guess.
+
+Newest first.
+
+| Date (local) | Artifact(s) | Produced by | Notes |
+|---|---|---|---|
+| 2026-07-21 | `visualisation/entry_exit_calculation.{txt,md,docx}` | Claude Opus 4.8 (Claude Code session) | Explanation of the blade entry/exit calculation, authored directly by the agent. The `.docx` was assembled with a throwaway `python-docx` script; the `.md`/`.txt` written directly. These docs *reference/embed* the `catch_*`/`tip_height*` PNGs below but did **not** generate them. |
+| 2026-07-17 | `visualisation/catch_ensemble{,_left,_right2,_zero}.png`, `visualisation/catch_strip{,_left,_right2,_zero}.png`, `visualisation/tip_height{,_left,_right2,_zero}.png` | `visualisation/stroke_catch_explore.py` | Phase-9 catch/release feasibility figures, one set per data segment (no suffix = `right1`). Emitting script confirmed via its `savefig` calls. The human/agent who *ran* the script that day is not recorded — this log begins after the fact, so treat the run operator as unknown. |
+| 2026-07-12 | `visualisation/stroke_compare.png` | `visualisation/stroke_compare.py` | padnormal-vs-padbad roll waveform/spectra comparison (11 Jul two-piece-paddle CPM over-count study). Not related to entry/exit. Run operator not recorded. |
+| 2026-07-12 | `visualisation/stroke_hifreq.png` | `visualisation/stroke_hifreq.py` | High-frequency roll-content quantification for the same CPM over-count study. Not related to entry/exit. Run operator not recorded. |
+
+<!--
+When adding a row:
+  - Date = the artifact's produced/updated date (local).
+  - Artifact(s) = repo-relative path(s); group a family with brace notation.
+  - Produced by = the concrete actor. Figures: the script (e.g. stroke_foo.py).
+    Agent-authored docs: the model name + "(Claude Code session)".
+  - Notes = one line: what it is, and — for docs — which figures it merely
+    references vs. generates. If unknown, write "unknown / not recorded".
+-->
