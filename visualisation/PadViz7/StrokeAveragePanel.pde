@@ -31,8 +31,17 @@ class StrokeAveragePanel {
     // Runs starting before this frame are excluded from the average.
     int resetAtFrame = 0;
 
+    // 'o' toggles this: mirror the right blade path about the Y (fore-aft)
+    // axis and overlay it on the left path, so left/right asymmetry shows as a
+    // gap between the two curves instead of two separate side plots.
+    boolean mirrorOverlay = false;
+
     void reset(int atFrame) {
         resetAtFrame = atFrame;
+    }
+
+    void toggleMirror() {
+        mirrorOverlay = !mirrorOverlay;
     }
 
     void draw(CatchEvents ce, int curFrame) {
@@ -52,9 +61,11 @@ class StrokeAveragePanel {
         textSize(14);  textAlign(LEFT, TOP);
         text("Blade path (avg)", x0 + 10, 10);
         textSize(9);
-        fill(120);
         textAlign(RIGHT, TOP);
+        fill(120);
         text("R-click: restart", width - 8, 12);
+        fill(mirrorOverlay ? color(255, 200, 120) : color(120));
+        text("o: mirror " + (mirrorOverlay ? "ON" : "off"), width - 8, 22);
         textAlign(LEFT, TOP);
         textSize(10);
         int ly = 30;
@@ -109,8 +120,11 @@ class StrokeAveragePanel {
             nLeft  = countIncluded(ce.leftRuns,  curFrame);
             float[][] pathRight = averagePath(ce.rightRuns, ce, curFrame, true);
             float[][] pathLeft  = averagePath(ce.leftRuns,  ce, curFrame, false);
-            if (pathRight != null) drawPath(pathRight, COL_RIGHT, cxp, cyp, scale, plotTop, plotBot);
-            if (pathLeft  != null) drawPath(pathLeft,  COL_LEFT,  cxp, cyp, scale, plotTop, plotBot);
+            // In mirror mode the right path is reflected about the Y axis so it
+            // lands on top of the left path (draw left first, mirrored-right on
+            // top). Otherwise each blade plots on its own side.
+            if (pathLeft  != null) drawPath(pathLeft,  COL_LEFT,  cxp, cyp, scale, plotTop, plotBot, false);
+            if (pathRight != null) drawPath(pathRight, COL_RIGHT, cxp, cyp, scale, plotTop, plotBot, mirrorOverlay);
         }
 
         // Footer: per-blade stroke count + averaged entry→exit time and
@@ -197,11 +211,12 @@ class StrokeAveragePanel {
         return n;
     }
 
-    void drawPath(float[][] path, int col, int cxp, int cyp, float scale, int plotTop, int plotBot) {
+    void drawPath(float[][] path, int col, int cxp, int cyp, float scale, int plotTop, int plotBot, boolean mirrorX) {
+        float mx = mirrorX ? -1 : 1;   // reflect about the Y (fore-aft) axis
         stroke(col);  strokeWeight(2);  noFill();
         beginShape();
         for (float[] p : path) {
-            float sx = cxp + p[0] * scale;
+            float sx = cxp + mx * p[0] * scale;
             float sy = cyp - p[1] * scale;
             vertex(sx, sy);
         }
@@ -212,8 +227,8 @@ class StrokeAveragePanel {
         // exit, matching EntryExitPanel's convention.
         float[] pStart = path[0];
         float[] pEnd   = path[path.length - 1];
-        float sx0 = cxp + pStart[0] * scale, sy0 = cyp - pStart[1] * scale;
-        float sx1 = cxp + pEnd[0]   * scale, sy1 = cyp - pEnd[1]   * scale;
+        float sx0 = cxp + mx * pStart[0] * scale, sy0 = cyp - pStart[1] * scale;
+        float sx1 = cxp + mx * pEnd[0]   * scale, sy1 = cyp - pEnd[1]   * scale;
         if (sy0 >= plotTop && sy0 <= plotBot) {
             noStroke();  fill(col, 220);
             ellipse(sx0, sy0, 8, 8);

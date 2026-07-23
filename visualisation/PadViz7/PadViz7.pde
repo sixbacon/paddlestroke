@@ -449,7 +449,12 @@ void getCameraBasis(float[] eye, float[] fwd, float[] right, float[] up) {
 void drawAxisCompass() {
     // Bottom of the 3D area — above the graph strip when it's showing.
     int bottom = isGraphVisible() ? (height - GRAPH_H) : height;
-    int ox = 92;
+    // Bottom-RIGHT of the visualisation area (just left of the right
+    // stroke-average panel), moved here from the bottom-left 23 Jul 2026 so the
+    // Commands drop-down no longer overlaps it. This function draws inside
+    // translate(leftPanelWidth(), 0), so screen x = leftPanelWidth() + ox;
+    // solving for a screen x of width - rightPanelWidth() - 100 gives:
+    int ox = width - leftPanelWidth() - rightPanelWidth() - 100;
     int oy = bottom - 30;
     int L  = 80;
 
@@ -893,6 +898,15 @@ void keyPressed() {
     if (key == 'n') { nudgeManualYawDatum( cal.stepDeg); return; }
     if (key == 'N') { nudgeManualYawDatum(-cal.stepDeg); return; }
     if (key == 'g' || key == 'G') { resetManualYawDatum(); return; }
+
+    // Stroke-average panel (right): 'o' mirrors the right blade path about the
+    // Y (fore-aft) axis and overlays it on the left path, to compare left/right
+    // symmetry. Only meaningful while the panel is visible (slices 1-3).
+    if ((key == 'o' || key == 'O') && isPanelVisible() && avgPanel != null) {
+        avgPanel.toggleMirror();
+        triggerRefFlash("STROKE MIRROR " + (avgPanel.mirrorOverlay ? "ON  (right→left)" : "OFF"));
+        return;
+    }
 
     // Slice-specific keys.
     if (sliceMode == 0) {

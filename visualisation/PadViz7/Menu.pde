@@ -100,6 +100,7 @@ class Menu {
         items.add(info("R-click", "clear accumulated entry/exit dots"));
         items.add(header("STROKE AVERAGE PANEL (right)"));
         items.add(info("R-click", "restart average trace accumulation"));
+        items.add(new MenuItem("o", "Mirror right blade onto left (compare symmetry)", 'o', 0));
         items.add(header("DETAIL PANEL"));
         items.add(info("click", "\"Detail\" button (below Commands) toggles it"));
         // n/N/g work in every slice (not just Slice 0) so the panel can be
