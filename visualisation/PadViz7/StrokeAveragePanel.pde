@@ -23,7 +23,12 @@
 
 class StrokeAveragePanel {
     static final int   N_SAMPLES = 24;   // resampled points per stroke path
-    static final float RANGE_X_M = 1.7f; // same half-range as EntryExitPanel
+    // Scale is fitted to the plot HEIGHT (kayak length) rather than the narrow
+    // panel width, so the tall panel is filled instead of drawing a tiny plot
+    // in the middle (23 Jul 2026). Capped so at least ±MIN_HALF_X_M across
+    // still fits horizontally.
+    static final float VIEW_HALF_LEN_M = 2.45f; // kayak half-length + margin
+    static final float MIN_HALF_X_M    = 1.0f;  // min stbd/port half-range kept
 
     final int COL_RIGHT = color(255, 80, 80);
     final int COL_LEFT  = color(80, 220, 100);
@@ -58,44 +63,46 @@ class StrokeAveragePanel {
         noStroke();
 
         fill(200, 220, 255);
-        textSize(14);  textAlign(LEFT, TOP);
+        textSize(18);  textAlign(LEFT, TOP);
         text("Blade path (avg)", x0 + 10, 10);
-        textSize(9);
+        textSize(12);
         textAlign(RIGHT, TOP);
         fill(120);
         text("R-click: restart", width - 8, 12);
         fill(mirrorOverlay ? color(255, 200, 120) : color(120));
-        text("o: mirror " + (mirrorOverlay ? "ON" : "off"), width - 8, 22);
+        text("o: mirror " + (mirrorOverlay ? "ON" : "off"), width - 8, 28);
         textAlign(LEFT, TOP);
-        textSize(10);
-        int ly = 30;
-        fill(COL_RIGHT);  ellipse(x0 + 16, ly + 4, 8, 8);
-        fill(200);        text("right", x0 + 24, ly - 1);
-        fill(COL_LEFT);   ellipse(x0 + 16 + w / 2, ly + 4, 8, 8);
-        fill(200);        text("left", x0 + 24 + w / 2, ly - 1);
+        textSize(13);
+        int ly = 40;
+        fill(COL_RIGHT);  ellipse(x0 + 18, ly + 5, 10, 10);
+        fill(200);        text("right", x0 + 28, ly - 1);
+        fill(COL_LEFT);   ellipse(x0 + 18 + w / 2, ly + 5, 10, 10);
+        fill(200);        text("left", x0 + 28 + w / 2, ly - 1);
 
         // Plot area below the legend, above the status footer — same
         // layout constants as EntryExitPanel.
-        int plotTop = ly + 22;
-        int plotBot = h - 46;
+        int plotTop = ly + 26;
+        int plotBot = h - 54;
         int cxp = x0 + w / 2;
         int cyp = (plotTop + plotBot) / 2;
-        float scale = (w - 26) / (2 * RANGE_X_M);   // px per metre
+        // Fit the kayak length to the plot height (fills the tall panel), but
+        // don't zoom so far that the horizontal blade range overflows.
+        float scale = min((plotBot - plotTop) / (2 * VIEW_HALF_LEN_M),
+                          (w - 12)            / (2 * MIN_HALF_X_M));
 
         stroke(60);
         line(x0 + 10, cyp, x0 + w - 10, cyp);
         line(cxp, plotTop, cxp, plotBot);
         noStroke();
         fill(120);
-        textSize(9);
+        textSize(11);
         textAlign(RIGHT, BOTTOM);  text("stbd →", x0 + w - 12, cyp - 3);
-        textAlign(LEFT,  BOTTOM);  text("fwd ↑",  cxp + 4, plotTop + 12);
+        textAlign(LEFT,  BOTTOM);  text("fwd ↑",  cxp + 4, plotTop + 13);
 
-        // 1 m grid rings around the cockpit.
+        // 0.5 m / 1 m grid rings around the cockpit.
         stroke(45);  noFill();
-        for (int m = 1; m <= 2; m++) {
-            ellipse(cxp, cyp, 2 * m * scale, 2 * m * scale);
-        }
+        ellipse(cxp, cyp, 1.0f * scale, 1.0f * scale);   // 0.5 m radius
+        ellipse(cxp, cyp, 2.0f * scale, 2.0f * scale);   // 1.0 m radius
         noStroke();
 
         // Kayak outline — same shape/scale as EntryExitPanel.
@@ -132,12 +139,12 @@ class StrokeAveragePanel {
         float[] statR = (ce != null) ? strokeStats(ce.rightRuns, ce, curFrame, true)  : null;
         float[] statL = (ce != null) ? strokeStats(ce.leftRuns,  ce, curFrame, false) : null;
 
-        textSize(10);  textAlign(LEFT, TOP);
-        fill(COL_RIGHT);  text(statLine("right", nRight, statR), x0 + 10, h - 40);
-        fill(COL_LEFT);   text(statLine("left",  nLeft,  statL), x0 + 10, h - 26);
+        textSize(12);  textAlign(LEFT, TOP);
+        fill(COL_RIGHT);  text(statLine("right", nRight, statR), x0 + 10, h - 48);
+        fill(COL_LEFT);   text(statLine("left",  nLeft,  statL), x0 + 10, h - 32);
         if (resetAtFrame > 0) {
-            fill(120);  textSize(9);
-            text("(averaged since frame " + resetAtFrame + ")", x0 + 10, h - 13);
+            fill(120);  textSize(10);
+            text("(averaged since frame " + resetAtFrame + ")", x0 + 10, h - 16);
         }
     }
 

@@ -12,7 +12,11 @@
 // panel is cleared again or a new CSV/sidecar is loaded.
 
 class EntryExitPanel {
-    static final float RANGE_X_M = 1.7f;   // half-range drawn, metres
+    // Scale is fitted to the plot HEIGHT (kayak length) rather than the narrow
+    // panel width, so the tall panel is filled instead of a tiny central plot
+    // (23 Jul 2026). Capped so at least ±MIN_HALF_X_M across still fits.
+    static final float VIEW_HALF_LEN_M = 2.45f; // kayak half-length + margin
+    static final float MIN_HALF_X_M    = 1.0f;  // min stbd/port half-range kept
 
     final int COL_RIGHT = color(255, 80, 80);
     final int COL_LEFT  = color(80, 220, 100);
@@ -39,34 +43,37 @@ class EntryExitPanel {
 
         // Title + legend.
         fill(200, 220, 255);
-        textSize(14);  textAlign(LEFT, TOP);
+        textSize(18);  textAlign(LEFT, TOP);
         text("Blade entry / exit", 10, 10);
-        textSize(9);
+        textSize(11);
         fill(120);
         textAlign(RIGHT, TOP);
         text("R-click: clear", w - 8, 12);
         textAlign(LEFT, TOP);
-        textSize(10);
-        int ly = 30;
-        fill(COL_RIGHT);  ellipse(16, ly + 4, 8, 8);
-        fill(200);        text("right entry", 24, ly - 1);
+        textSize(13);
+        int ly = 42;
+        fill(COL_RIGHT);  ellipse(18, ly + 5, 10, 10);
+        fill(200);        text("right entry", 28, ly - 1);
         noFill();  stroke(COL_RIGHT);  strokeWeight(1.5);
-        ellipse(16 + w / 2, ly + 4, 8, 8);
-        noStroke();  fill(200);  text("right exit", 24 + w / 2, ly - 1);
-        ly += 16;
-        fill(COL_LEFT);   ellipse(16, ly + 4, 8, 8);
-        fill(200);        text("left entry", 24, ly - 1);
+        ellipse(18 + w / 2, ly + 5, 10, 10);
+        noStroke();  fill(200);  text("right exit", 28 + w / 2, ly - 1);
+        ly += 20;
+        fill(COL_LEFT);   ellipse(18, ly + 5, 10, 10);
+        fill(200);        text("left entry", 28, ly - 1);
         noFill();  stroke(COL_LEFT);  strokeWeight(1.5);
-        ellipse(16 + w / 2, ly + 4, 8, 8);
-        noStroke();  fill(200);  text("left exit", 24 + w / 2, ly - 1);
+        ellipse(18 + w / 2, ly + 5, 10, 10);
+        noStroke();  fill(200);  text("left exit", 28 + w / 2, ly - 1);
         strokeWeight(1);
 
         // Plot area below the legend, above the status footer.
-        int plotTop = ly + 22;
-        int plotBot = h - 46;
+        int plotTop = ly + 26;
+        int plotBot = h - 54;
         int cxp = w / 2;
         int cyp = (plotTop + plotBot) / 2;
-        float scale = (w - 26) / (2 * RANGE_X_M);   // px per metre
+        // Fit the kayak length to the plot height (fills the tall panel), but
+        // don't zoom so far that the horizontal blade range overflows.
+        float scale = min((plotBot - plotTop) / (2 * VIEW_HALF_LEN_M),
+                          (w - 12)            / (2 * MIN_HALF_X_M));
 
         // Axes hints.
         stroke(60);
@@ -74,15 +81,14 @@ class EntryExitPanel {
         line(cxp, plotTop, cxp, plotBot);
         noStroke();
         fill(120);
-        textSize(9);
+        textSize(11);
         textAlign(RIGHT, BOTTOM);  text("stbd →", w - 12, cyp - 3);
-        textAlign(LEFT,  BOTTOM);  text("fwd ↑",  cxp + 4, plotTop + 12);
+        textAlign(LEFT,  BOTTOM);  text("fwd ↑",  cxp + 4, plotTop + 13);
 
-        // 1 m grid rings around the cockpit.
+        // 0.5 m / 1 m grid rings around the cockpit.
         stroke(45);  noFill();
-        for (int m = 1; m <= 2; m++) {
-            ellipse(cxp, cyp, 2 * m * scale, 2 * m * scale);
-        }
+        ellipse(cxp, cyp, 1.0f * scale, 1.0f * scale);   // 0.5 m radius
+        ellipse(cxp, cyp, 2.0f * scale, 2.0f * scale);   // 1.0 m radius
         noStroke();
 
         // Kayak outline — 0.6 m beam, 4.6 m length, bow up. Pure scale cue.
@@ -114,10 +120,10 @@ class EntryExitPanel {
                 int col = e.right ? COL_RIGHT : COL_LEFT;
                 if (e.entry) {
                     noStroke();  fill(col, 200);
-                    ellipse(sx, sy, 7, 7);
+                    ellipse(sx, sy, 9, 9);
                 } else {
                     noFill();  stroke(col, 200);  strokeWeight(1.5);
-                    ellipse(sx, sy, 7, 7);
+                    ellipse(sx, sy, 9, 9);
                 }
                 shown++;
             }
@@ -126,21 +132,21 @@ class EntryExitPanel {
 
         // Status footer.
         fill(140);
-        textSize(9);
+        textSize(11);
         textAlign(LEFT, TOP);
         if (ce == null) {
-            text("no events computed", 10, h - 40);
+            text("no events computed", 10, h - 44);
         } else {
             String clearNote = (clearAtFrame > 0) ? ("  (cleared @" + clearAtFrame + ")") : "";
-            text(shown + " / " + ce.events.size() + " events shown" + clearNote, 10, h - 40);
+            text(shown + " / " + ce.events.size() + " events shown" + clearNote, 10, h - 48);
             // Wrap the status string across two lines if needed.
             String s = ce.status;
             int cut = s.indexOf(" | heading");
             if (cut > 0) {
-                text(s.substring(0, cut), 10, h - 28);
+                text(s.substring(0, cut), 10, h - 32);
                 text(s.substring(cut + 3), 10, h - 16);
             } else {
-                text(s, 10, h - 28);
+                text(s, 10, h - 32);
             }
         }
     }
