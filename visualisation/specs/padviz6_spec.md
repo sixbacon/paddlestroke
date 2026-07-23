@@ -1360,11 +1360,15 @@ overlap→commit), the exclusion-aware pixel↔frame mapping, and F1 toggle
 behaviour. Hand-back item: an on-screen walkthrough against a real CSV pair
 (fresh session with no sidecar, then a re-open to exercise 3b/4b).
 
-**Partial on-screen check 23 Jul 2026 (§14.5):** the wizard was run against a
-real session on screen — Step 3b (saved calibration found → "use it") reached
-and the setup window / Commands menu / Slice-0 nudge exercised and refined.
-The Step-4 classification marking flow (4a) and the exclusion geometry were
-**not** yet exercised — still the outstanding hand-back item.
+**On-screen check 23 Jul 2026 (§14.5):** the wizard was run against a real
+session — Step 3b (saved calibration found → "use it") reached, the setup
+window / Commands menu / Slice-0 nudge exercised and refined, and the **Step-4
+classification marking flow (4a) confirmed working**: right / left / zero
+sections were marked and persisted correctly to the sidecar
+`classification_sections` array (verified in `PadLog20260716.session.json` —
+four sections). The one path not represented in that file is the `d/D`
+**exclude** type (cut range from graph + navigation), so the exclusion
+geometry specifically is the only piece not yet seen exercised on screen.
 
 ### 14.5 v0.17 — UI polish (23 Jul 2026)
 
