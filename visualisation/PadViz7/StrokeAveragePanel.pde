@@ -113,12 +113,48 @@ class StrokeAveragePanel {
             if (pathLeft  != null) drawPath(pathLeft,  COL_LEFT,  cxp, cyp, scale, plotTop, plotBot);
         }
 
-        fill(140);
-        textSize(9);
-        textAlign(LEFT, TOP);
-        String note = (resetAtFrame > 0) ? ("  (since frame " + resetAtFrame + ")") : "";
-        text("right: " + nRight + " strokes" + note, x0 + 10, h - 28);
-        text("left:  " + nLeft  + " strokes" + note, x0 + 10, h - 16);
+        // Footer: per-blade stroke count + averaged entry→exit time and
+        // straight-line distance, colour-coded to match the paths.
+        float[] statR = (ce != null) ? strokeStats(ce.rightRuns, ce, curFrame, true)  : null;
+        float[] statL = (ce != null) ? strokeStats(ce.leftRuns,  ce, curFrame, false) : null;
+
+        textSize(10);  textAlign(LEFT, TOP);
+        fill(COL_RIGHT);  text(statLine("right", nRight, statR), x0 + 10, h - 40);
+        fill(COL_LEFT);   text(statLine("left",  nLeft,  statL), x0 + 10, h - 26);
+        if (resetAtFrame > 0) {
+            fill(120);  textSize(9);
+            text("(averaged since frame " + resetAtFrame + ")", x0 + 10, h - 13);
+        }
+    }
+
+    // "right: 4 strokes   1.23 s   0.85 m" — time/distance omitted until at
+    // least one stroke is in the average.
+    String statLine(String label, int n, float[] stat) {
+        String s = label + ": " + n + (n == 1 ? " stroke" : " strokes");
+        if (stat != null) s += String.format("   %.2f s   %.2f m", stat[0], stat[1]);
+        return s;
+    }
+
+    // Average entry→exit time (s) and straight-line entry→exit distance (m,
+    // boat-frame) over the same qualifying runs averagePath() uses. Time comes
+    // from the paddle-frame timestamps at run start/end; distance is the gap
+    // between the entry and exit blade positions. null if no runs qualify yet.
+    float[] strokeStats(ArrayList<int[]> runs, CatchEvents ce, int curFrame, boolean rightBlade) {
+        if (paddleData == null || paddleData.frameCount() == 0) return null;
+        int last = paddleData.frameCount() - 1;
+        float sumT = 0, sumD = 0;
+        int n = 0;
+        for (int[] run : runs) {
+            int s = run[0], e = run[1];
+            if (s < resetAtFrame || e > curFrame || e <= s || s < 0 || e > last) continue;
+            sumT += (paddleData.frameAt(e).ts - paddleData.frameAt(s).ts) / 1000.0f;
+            float[] p0 = ce.bladeXY(s, rightBlade);
+            float[] p1 = ce.bladeXY(e, rightBlade);
+            sumD += dist(p0[0], p0[1], p1[0], p1[1]);
+            n++;
+        }
+        if (n == 0) return null;
+        return new float[]{ sumT / n, sumD / n };
     }
 
     // Resamples each qualifying run's blade path to N_SAMPLES points

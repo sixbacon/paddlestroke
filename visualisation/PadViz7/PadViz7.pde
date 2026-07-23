@@ -26,6 +26,11 @@ EntryExitPanel eePanel;   // left 20% boat-frame scatter (v0.14, spec §13.4)
 DetailPanel detailPanel;  // collapsible HUD text box (v0.15, spec §13.8)
 StrokeAveragePanel avgPanel; // right 20% averaged L/R roll traces (v0.15, spec §13.8)
 
+// True when visualisation/recordings/ holds at least one *.session.json at
+// startup — enables the wizard's "J = load a saved session" one-step shortcut
+// (v0.17). Computed once in setup(); the folder doesn't change during a run.
+boolean g_sessionsAvailable = false;
+
 // Height of the graph panel at the bottom of the window (px).
 // Anything above it belongs to the 3D scene + HUD.
 final int GRAPH_H = 220;
@@ -124,6 +129,8 @@ void setup() {
     eePanel   = new EntryExitPanel();
     detailPanel = new DetailPanel();
     avgPanel    = new StrokeAveragePanel();
+
+    g_sessionsAvailable = hasSessionJson();
 
     surface.setResizable(true);
     surface.setTitle("PadViz7");
@@ -1073,6 +1080,76 @@ File recordingsStartFile() {
 
 boolean isCsv(File f) {
     return f.getName().toLowerCase().endsWith(".csv");
+}
+
+// ── Saved-session one-step load (v0.17) ──────────────────────────────────────
+//
+// If visualisation/recordings/ holds any *.session.json, the wizard offers a
+// "J = load a saved session" shortcut that picks one JSON and loads all three
+// files (paddle CSV, boat CSV, and the sidecar calibration + classification)
+// in a single step, with no further wizard input. The JSON records the CSV
+// filenames (paddle_csv / boat_csv) as bare names next to it.
+
+File[] listSessionJsons() {
+    try {
+        File dir = new File(sketchPath("../recordings")).getCanonicalFile();
+        if (dir.isDirectory()) {
+            File[] all = dir.listFiles();
+            if (all != null) {
+                ArrayList<File> out = new ArrayList<File>();
+                for (File f : all)
+                    if (f.isFile() && f.getName().toLowerCase().endsWith(".session.json")) out.add(f);
+                return out.toArray(new File[0]);
+            }
+        }
+    } catch (Exception e) { }
+    return new File[0];
+}
+
+boolean hasSessionJson() { return listSessionJsons().length > 0; }
+
+void selectSessionInput() {
+    selectInput("Select a saved session (.session.json)", "onSessionJsonSelected",
+                recordingsStartFile());
+}
+
+void onSessionJsonSelected(File selection) {
+    if (selection == null) return;
+    if (!selection.getName().toLowerCase().endsWith(".json")) {
+        triggerErrorFlash("SESSION — please choose a .session.json file");
+        return;
+    }
+    Sidecar probe = new Sidecar();
+    if (!probe.loadFromFile(selection.getAbsolutePath())) {
+        triggerErrorFlash("SESSION — could not read " + selection.getName());
+        return;
+    }
+    if (probe.paddleCsvName == null || probe.paddleCsvName.length() == 0) {
+        triggerErrorFlash("SESSION — the JSON names no paddle CSV (paddle_csv)");
+        return;
+    }
+    File dir     = selection.getParentFile();
+    File padFile = new File(dir, probe.paddleCsvName);
+    if (!padFile.exists()) {
+        triggerErrorFlash("SESSION — paddle CSV not found beside JSON: " + probe.paddleCsvName);
+        return;
+    }
+    // Load paddle (this also auto-loads the sibling sidecar), then boat.
+    onPaddleFileSelected(padFile);
+    if (probe.boatCsvName != null && probe.boatCsvName.length() > 0) {
+        File boatFile = new File(dir, probe.boatCsvName);
+        if (boatFile.exists()) onBoatFileSelected(boatFile);
+        else triggerRefFlash("SESSION — boat CSV missing (" + probe.boatCsvName + "); loaded paddle only");
+    }
+    // Ensure the PICKED session's calibration + classification are what's
+    // applied, regardless of sibling-file naming, then jump to the ready view.
+    sidecar = probe;
+    applySidecarToDisplay();
+    rebuildCatchEvents();
+    rebuildClassificationIndex();
+    if (classify != null) paddleFrameIdx = classify.nearestVisible(0);
+    if (wizard != null) wizard.gotoStep5();
+    triggerRefFlash("SESSION LOADED  ←  " + selection.getName());
 }
 
 // ── File-select callbacks ────────────────────────────────────────────────────

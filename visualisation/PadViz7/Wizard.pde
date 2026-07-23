@@ -105,6 +105,7 @@ class Wizard {
         switch (step) {
             case 1:
                 if (ret) { selectCsvInput("Select paddle CSV (PadLog…)", true); return true; }
+                if ((k == 'j' || k == 'J') && g_sessionsAvailable) { selectSessionInput(); return true; }
                 return false;
 
             case 2:
@@ -300,6 +301,11 @@ class Wizard {
         y = line(x, y, 16, color(230), "1.  Load paddle CSV");
         y = line(x, y, 13, color(180), "Choose the PadLog…CSV recorded on the paddle unit (name must start \"pad\", end \".csv\").");
         y = opts(x, y, "Return  =  choose paddle file");
+        if (g_sessionsAvailable) {
+            y += 8;
+            y = line(x, y, 13, color(180), "Or reload a previously saved session in one step — paddle + boat + calibration + classification:");
+            y = opts(x, y, "J  =  pick a saved session (.session.json)");
+        }
         return y;
     }
 
