@@ -10,7 +10,9 @@ class Calibration {
     float yawDeg   = 0.0;
     float pitchDeg = 0.0;
     float rollDeg  = 0.0;
-    float stepDeg  = 5.0;
+    float stepDeg  = 1.0;   // default nudge step; 5° was too coarse for
+                            // correcting an imprecise rest-pose hold (23 Jul
+                            // 2026). [ and ] still halve/double it at runtime.
 
     final float MIN_STEP = 0.1;
     final float MAX_STEP = 45.0;

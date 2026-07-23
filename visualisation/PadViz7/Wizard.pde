@@ -218,10 +218,13 @@ class Wizard {
         px = 12;
         // Start below the HUD title line + the Commands/Detail button row
         // (that row sits at y=38..64), so those buttons are never overdrawn by
-        // — or drawn on top of — this panel. Still clear of the bottom graph
-        // strip (ph is clamped so py+ph never reaches height-GRAPH_H).
+        // — or drawn on top of — this panel.
         py = 74;
         pw = width - 24;
+        // Compact panel. It does NOT try to physically cover the analysis
+        // overlays (full-height side panels, bottom compass, legend) — those
+        // are simply not drawn while this window is shown (see PadViz7.draw()'s
+        // `setup` gate), so nothing pokes out around this shorter panel.
         ph = min(216, height - GRAPH_H - py - 10);
         if (ph < 120) ph = 120;
 
@@ -229,7 +232,8 @@ class Wizard {
         translate(px, py);
 
         stroke(120, 150, 200);  strokeWeight(1.5);
-        fill(22, 26, 36, 240);
+        fill(80, 80, 80);        // opaque neutral grey — must fully cover the
+                                 // scene behind or the text is unreadable
         rect(0, 0, pw, ph, 8);
         strokeWeight(1);  noStroke();
 

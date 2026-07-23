@@ -141,23 +141,36 @@ void draw() {
     // immediately re-lays out the strip.
     if (graph != null) graph.setBounds(0, height - GRAPH_H, width, GRAPH_H);
     stepPlayback();
-    drawScene3D();
+
+    // While the setup/summary window is up it owns the screen: skip the 3D
+    // scene and the analysis overlays (side panels, HUD + detail box, axis
+    // compass + legend) so nothing shows through or pokes out around the
+    // compact panel. Only the graph strip stays — it's needed to position the
+    // cursor in steps 3 (rest window) and 4 (classification). This is the real
+    // fix for "cover the windows underneath": a compact panel can't physically
+    // cover full-height side panels or the bottom compass, and in P3D even an
+    // opaque fill let them bleed — so we don't draw them at all here.
+    boolean setup = (wizard != null && wizard.shown);
+
+    if (!setup) drawScene3D();
 
     // 2D overlays, back to front: side panels (entry/exit left, stroke
     // average right), HUD (shifted right of the left panel), graph strip,
     // startup overlay, menu, flash.
     camera();
     hint(DISABLE_DEPTH_TEST);
-    if (isPanelVisible()) {
+    if (!setup && isPanelVisible()) {
         eePanel.draw(catchEvents, paddleFrameIdx);
         avgPanel.draw(catchEvents, paddleFrameIdx);
     }
-    pushMatrix();
-    translate(leftPanelWidth(), 0);
-    drawHUD();
-    drawAxisCompass();
-    popMatrix();
-    drawAxisLegend();
+    if (!setup) {
+        pushMatrix();
+        translate(leftPanelWidth(), 0);
+        drawHUD();
+        drawAxisCompass();
+        popMatrix();
+        drawAxisLegend();
+    }
     if (isGraphVisible()) graph.draw(paddleData, boatData, sync, paddleFrameIdx);
     if (wizard != null) wizard.draw();
     if (menu != null) menu.draw();
@@ -1037,7 +1050,25 @@ void handleFrameNavBoat() {
 // onBoatFileSelected (with an on-screen message) rather than filtering
 // what the OS dialog lists.
 void selectCsvInput(String prompt, boolean isPaddle) {
-    selectInput(prompt, isPaddle ? "onPaddleFileSelected" : "onBoatFileSelected");
+    selectInput(prompt, isPaddle ? "onPaddleFileSelected" : "onBoatFileSelected",
+                recordingsStartFile());
+}
+
+// Start the load dialogs in visualisation/recordings (the session-CSV
+// folder) instead of the sketch directory. Processing's FileDialog path
+// uses defaultSelection.getParent() as the opening directory, so we hand it
+// a placeholder child of the recordings folder — its parent is the folder we
+// want open. The placeholder name has no .csv extension, so if the dialog is
+// dismissed with it still selected, isCsv() rejects it with the normal
+// on-screen message rather than trying to load a non-existent file. Returns
+// null (→ Processing's default sketch-folder behaviour) if the folder is
+// missing, so a fresh checkout without recordings/ still works.
+File recordingsStartFile() {
+    try {
+        File dir = new File(sketchPath("../recordings")).getCanonicalFile();
+        if (dir.isDirectory()) return new File(dir, "select a recording");
+    } catch (Exception e) { }
+    return null;
 }
 
 boolean isCsv(File f) {
@@ -1345,6 +1376,7 @@ void mousePressed() {
 }
 
 void mouseDragged() {
+    if (menu != null && menu.mouseDragged(mouseX, mouseY)) return;
     if (camDragging) {
         camAzimDeg = dragStartAz + (mouseX - dragMouseX) * 0.4;
         camElevDeg = constrain(dragStartEl - (mouseY - dragMouseY) * 0.4, -89, 89);
@@ -1354,11 +1386,13 @@ void mouseDragged() {
 }
 
 void mouseReleased() {
+    if (menu != null && menu.mouseReleased()) return;
     if (camDragging) { camDragging = false; return; }
     if (isGraphVisible()) graph.mouseReleased();
 }
 
 void mouseWheel(processing.event.MouseEvent e) {
+    if (menu != null && menu.mouseWheel(e.getCount())) return;
     if (pointerInGraph()) {
         graph.mouseWheel(e.getCount());
         return;
