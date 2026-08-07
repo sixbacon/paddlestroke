@@ -60,7 +60,12 @@ class CatchEvents {
     // it) so bladeXY() below can reconstruct the boat-frame blade position
     // at ANY frame, not just the entry/exit event frames — needed to trace
     // the path between an entry and its exit, not just the two endpoints.
-    float[] phi, psiRef, hMag;
+    // uzTip is the raw world-up component of the shaft direction (body +X in
+    // world), so bladeZ() below can give the blade-tip HEIGHT that pairs with
+    // bladeXY()'s horizontal position for a consistent 3D tip (spec §14.9,
+    // side-profile panel). Kept raw (not the low-passed uzLp used for run
+    // gating) so it matches bladeXY()'s raw hMag term.
+    float[] phi, psiRef, hMag, uzTip;
     float   datumEff = 0;
 
     static final float BLADE_L   = 1.05f;  // m, shaft centre → blade centre
@@ -80,6 +85,14 @@ class CatchEvents {
         }
         int n = pad.frameCount();
         ArrayList<FrameData> fr = pad.getFrames();
+
+        // Visual blade geometry for the side-profile panel (spec §14.9), from
+        // the session's real paddle dimensions when the sidecar records them.
+        // Detector geometry (BLADE_L) is untouched by this.
+        if (sc != null && sc.paddleLengthM > 0 && sc.bladeLengthM > 0) {
+            visBladeLenM    = sc.bladeLengthM;
+            visBladeCentreM = (sc.paddleLengthM - sc.bladeLengthM) / 2;
+        }
 
         // Sample rate from median timestamp delta.
         float fs = estimateFs(fr);
@@ -109,6 +122,7 @@ class CatchEvents {
             phi[i]   = atan2(uy, ux);
             hMag[i]  = sqrt(ux*ux + uy*uy);
         }
+        uzTip = uzRaw;   // retained for bladeZ() (side-profile panel)
 
         // HF impact envelope: band-pass 8–30 Hz then 50 ms RMS.
         float[] hf = bandpass(amag, fs, 8, 30);
@@ -226,6 +240,59 @@ class CatchEvents {
         float a   = phi[i] - psiRef[i] - datumEff;
         float r   = BLADE_L * hMag[i] * sgn;
         return new float[]{ r * cos(a), r * sin(a) + PADDLE_BOW_OFFSET_M };
+    }
+
+    // Blade-CENTRE HEIGHT at frame i, metres, up positive, relative to the
+    // shaft centre (the paddler's hands). The right-blade centre sits at the +X
+    // end of the shaft (radius BLADE_L), the left at the −X end, so its vertical
+    // offset from the shaft centre is ±BLADE_L·uz. Uses the same raw shaft
+    // direction as bladeXY()'s horizontal radius, so (x,y) from bladeXY() and z
+    // from here form one consistent 3D point (spec §14.9, side-profile panel).
+    // World-up is used for z (the boat is assumed near-level; boat roll/pitch is
+    // small for a side profile). Valid only after compute() has run.
+    float bladeZ(int i, boolean rightBlade) {
+        return (rightBlade ? 1 : -1) * uzTip[i] * BLADE_L;
+    }
+
+    // ── Physical blade as a segment (spec §14.9) ────────────────────────────
+    // Real paddle geometry (per session, from the sidecar): the blade is a
+    // visBladeLenM-long piece of the shaft whose CENTRE sits at radius
+    // visBladeCentreM (= (paddle_total_length − blade_length)/2). Its leading
+    // TIP is therefore at visBladeCentreM + visBladeLenM/2 = paddle_total/2, and
+    // its throat (inner end) at visBladeCentreM − visBladeLenM/2. The tip breaks
+    // the water surface first, so the waterline is referenced to the tip.
+    //
+    // These are set in compute() from the sidecar; the defaults here match the
+    // firmware detector's BLADE_L (arm 1.05, blade 0.32) so a session with no
+    // lengths in its sidecar renders as before. The DETECTOR (run gating) keeps
+    // using the BLADE_L constant above — only this VISUAL geometry is
+    // per-session — so changing the recorded paddle length never shifts which
+    // catches are detected, just how the blade is drawn.
+    float visBladeCentreM = 1.05f;   // arm, shaft centre → blade centre
+    float visBladeLenM    = 0.32f;   // blade length
+
+    // Boat-frame (Y,Z) of a point at radial distance d along this blade's arm.
+    // Generalises bladeXY()/bladeZ() (the d = BLADE_L case) to any d.
+    float[] bladePointYZ(int i, boolean rightBlade, float d) {
+        float sgn = rightBlade ? 1 : -1;
+        float ang = phi[i] - psiRef[i] - datumEff;
+        float rad = d * hMag[i] * sgn;
+        return new float[]{ rad * sin(ang) + PADDLE_BOW_OFFSET_M, sgn * d * uzTip[i] };
+    }
+
+    // The blade drawn as a segment in the boat ZY plane:
+    // { yThroat, zThroat, yTip, zTip }. yTip/zTip are the outer (leading) end.
+    float[] bladeSegmentYZ(int i, boolean rightBlade) {
+        float[] thr = bladePointYZ(i, rightBlade, visBladeCentreM - visBladeLenM / 2);
+        float[] tip = bladePointYZ(i, rightBlade, visBladeCentreM + visBladeLenM / 2);
+        return new float[]{ thr[0], thr[1], tip[0], tip[1] };
+    }
+
+    // Blade-TIP height (leading edge, radius visBladeCentreM + visBladeLenM/2 =
+    // half the total paddle length). Used for the waterline: at the catch the
+    // tip is at the surface.
+    float bladeTipZ(int i, boolean rightBlade) {
+        return (rightBlade ? 1 : -1) * uzTip[i] * (visBladeCentreM + visBladeLenM / 2);
     }
 
     void addEventIfLoud(ArrayList<FrameData> fr, float[] env, float envGate,

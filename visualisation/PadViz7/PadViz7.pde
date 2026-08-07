@@ -1,3 +1,8 @@
+// ############################################################################
+// #  PadViz7   —   LAST EDITED: 2026-08-07 12:20   —   v0.23                  #
+// #  (BUILD_STAMP below feeds the window title bar — keep the two in sync.)   #
+// ############################################################################
+//
 // PadViz7 — Slice 0 (model cal) + Slice A (paddle, data-driven) + Slice B (kayak, data-driven).
 // Forked from PadViz6 v0.15 (21 Jul 2026). Adds the session-setup Wizard + the
 // sidecar Classification section (spec §14). See Wizard.pde / Classification.pde.
@@ -10,6 +15,11 @@
 // Optionally in Slices A/B: view-alignment reference subtraction (K key)
 // so that a chosen rest frame renders at identity — useful for validation
 // against the Slice 0 target pose.
+
+// Human-readable build stamp — shown in the window title bar so the running
+// version is identifiable at a glance. Keep in sync with the LAST EDITED banner
+// at the very top of this file; bump both on every edit.
+final String BUILD_STAMP = "v0.23  (last edited 2026-08-07 12:20)";
 
 Calibration cal;
 Model3D     model3D;
@@ -25,6 +35,7 @@ CatchEvents catchEvents;  // blade entry/exit detector (v0.14, spec §13.3)
 EntryExitPanel eePanel;   // left 20% boat-frame scatter (v0.14, spec §13.4)
 DetailPanel detailPanel;  // collapsible HUD text box (v0.15, spec §13.8)
 StrokeAveragePanel avgPanel; // right 20% averaged L/R roll traces (v0.15, spec §13.8)
+SideProfilePanel sideView; // 'x' (F2 alt) full-window ZY-plane blade profiles (v0.22, spec §14.9)
 
 // True when visualisation/recordings/ holds at least one *.session.json at
 // startup — enables the wizard's "J = load a saved session" one-step shortcut
@@ -38,6 +49,150 @@ final int GRAPH_H = 220;
 // Pixels per metre for all mesh + world translations. Must match the paddle
 // OBJ scale (Model3D.loadPaddle uses 300) and the kayak vertex scale.
 final float MODEL_SCALE = 300;
+
+// Physical paddle geometry — total length (tip to tip) and blade length,
+// metres. Stored per-session in the sidecar (paddle_total_length_m /
+// blade_length_m); these are the defaults used until a sidecar sets them.
+// They drive the 3D paddle model scale (drawn to the total length) and the
+// side-profile blade geometry (spec §14.9). A typical touring-kayak paddle.
+final float DEFAULT_PADDLE_LEN_M = 2.10f;
+final float DEFAULT_BLADE_LEN_M  = 0.32f;
+
+// Last-used paddle dimensions, persisted to paddle_dims.json in the sketch
+// folder and reloaded at startup, so building a new session sidecar offers the
+// previous values as the default rather than re-entering them each time (user,
+// 7 Aug 2026). Seeded from the defaults until a config file / entry sets them.
+float lastPaddleLenM = DEFAULT_PADDLE_LEN_M;
+float lastBladeLenM  = DEFAULT_BLADE_LEN_M;
+
+// The paddle total length in effect (from the sidecar, else the last-used).
+float paddleTotalLenM() {
+    return (sidecar != null && sidecar.paddleLengthM > 0)
+           ? sidecar.paddleLengthM : lastPaddleLenM;
+}
+
+String paddleDimsPath() { return sketchPath("paddle_dims.json"); }
+
+void loadPaddleDims() {
+    try {
+        java.io.File f = new java.io.File(paddleDimsPath());
+        if (!f.exists()) return;
+        JSONObject o = loadJSONObject(paddleDimsPath());
+        if (o == null) return;
+        if (o.hasKey("paddle_total_length_m")) lastPaddleLenM = o.getFloat("paddle_total_length_m");
+        if (o.hasKey("blade_length_m"))        lastBladeLenM  = o.getFloat("blade_length_m");
+        println("Paddle dims loaded: total " + nf(lastPaddleLenM, 0, 2)
+                + " m, blade " + nf(lastBladeLenM, 0, 2) + " m");
+    } catch (Exception e) {
+        println("Paddle dims load failed: " + e.getMessage());
+    }
+}
+
+void savePaddleDims() {
+    try {
+        JSONObject o = new JSONObject();
+        o.setFloat("paddle_total_length_m", lastPaddleLenM);
+        o.setFloat("blade_length_m",        lastBladeLenM);
+        saveJSONObject(o, paddleDimsPath());
+    } catch (Exception e) {
+        println("Paddle dims save failed: " + e.getMessage());
+    }
+}
+
+// ── Paddle-dimension entry prompt (spec §14.9) ──────────────────────────────
+//
+// A small in-sketch numeric prompt (no AWT dialog — the OS file dialogs have
+// been unreliable on this setup, feedback_processing_compile_vs_runtime) that
+// asks for the paddle total length then the blade length, each pre-filled with
+// the LAST-used value so the common case is just Enter, Enter. On accept it
+// persists the values (paddle_dims.json) so they become the default next time,
+// updates the current sidecar if one is loaded, and — when opened as part of a
+// sidecar build (C) — proceeds to build. 'm' opens it standalone.
+int     dimStage        = 0;    // 0 = off, 1 = asking paddle total, 2 = asking blade
+String  dimBuf          = "";
+boolean dimThenBuild    = false;
+float   dimEnteredPaddle = 0;
+
+boolean dimPromptActive() { return dimStage > 0; }
+
+void beginDimPrompt(boolean thenBuild) {
+    if (thenBuild && (paddleData == null || paddleData.frameCount() == 0)) {
+        buildAndSaveSidecar();   // no data → let it flash "LOAD PADDLE CSV FIRST"
+        return;
+    }
+    dimThenBuild = thenBuild;
+    dimStage = 1;
+    dimBuf   = nf(lastPaddleLenM, 0, 2);
+}
+
+float dimParse(String s) {
+    try { return Float.parseFloat(s.trim()); } catch (Exception e) { return -1; }
+}
+
+void dimPromptKey() {
+    if (key == ESC) { dimStage = 0; dimThenBuild = false; return; }
+    if (key == ENTER || key == RETURN) {
+        float v = dimParse(dimBuf);
+        if (dimStage == 1) {
+            dimEnteredPaddle = (v > 0) ? v : lastPaddleLenM;   // blank keeps last
+            dimStage = 2;
+            dimBuf   = nf(lastBladeLenM, 0, 2);
+        } else {
+            float blade = (v > 0) ? v : lastBladeLenM;
+            applyPaddleDims(dimEnteredPaddle, blade);
+            dimStage = 0;
+            if (dimThenBuild) { dimThenBuild = false; buildAndSaveSidecar(); }
+        }
+        return;
+    }
+    if (key == BACKSPACE) {
+        if (dimBuf.length() > 0) dimBuf = dimBuf.substring(0, dimBuf.length() - 1);
+        return;
+    }
+    if ((key >= '0' && key <= '9') || key == '.') {
+        if (key == '.' && dimBuf.indexOf('.') >= 0) return;   // at most one dot
+        if (dimBuf.length() < 6) dimBuf += key;
+    }
+}
+
+// Clamp to sane ranges, persist as the new last-used, and push into the loaded
+// sidecar (rebuilding catch events, whose side-view blade geometry depends on
+// them) so the change shows immediately.
+void applyPaddleDims(float paddleLen, float bladeLen) {
+    paddleLen = constrain(paddleLen, 0.5f, 3.5f);
+    bladeLen  = constrain(bladeLen, 0.05f, min(1.0f, paddleLen - 0.10f));
+    lastPaddleLenM = paddleLen;
+    lastBladeLenM  = bladeLen;
+    savePaddleDims();
+    if (sidecar != null) {
+        sidecar.paddleLengthM = paddleLen;
+        sidecar.bladeLengthM  = bladeLen;
+        rebuildCatchEvents();
+        saveSidecarQuiet();
+    }
+    triggerRefFlash(String.format("PADDLE %.2f m   BLADE %.2f m", paddleLen, bladeLen));
+}
+
+void drawDimPrompt() {
+    if (dimStage == 0) return;
+    String label = (dimStage == 1) ? "Paddle TOTAL length, tip-to-tip (m)"
+                                    : "Blade length (m)";
+    String last  = (dimStage == 1) ? nf(lastPaddleLenM, 0, 2) : nf(lastBladeLenM, 0, 2);
+    float boxW = 470, boxH = 122;
+    float bx = width / 2 - boxW / 2, by = height / 2 - boxH / 2;
+    rectMode(CORNER);
+    noStroke();  fill(20, 24, 34, 248);  rect(bx, by, boxW, boxH, 8);
+    stroke(120, 150, 210);  strokeWeight(1.5);  noFill();  rect(bx, by, boxW, boxH, 8);
+    noStroke();  strokeWeight(1);
+    textAlign(LEFT, TOP);
+    fill(160, 190, 240);  textSize(13);
+    text("SET PADDLE DIMENSIONS   (" + dimStage + " of 2)", bx + 16, by + 12);
+    fill(230);  textSize(15);  text(label, bx + 16, by + 38);
+    fill(255, 245, 180);  textSize(22);  text(dimBuf + "_", bx + 16, by + 60);
+    fill(150);  textSize(11);
+    text("Enter = accept (blank keeps last " + last + " m)     Esc = cancel", bx + 16, by + 98);
+    textAlign(LEFT, TOP);
+}
 
 // Average paddle-centre position relative to the boat's centre, toward the
 // bow — a measured physical fact (user, 20 Jul 2026), not a tuned display
@@ -129,13 +284,15 @@ void setup() {
     eePanel   = new EntryExitPanel();
     detailPanel = new DetailPanel();
     avgPanel    = new StrokeAveragePanel();
+    sideView    = new SideProfilePanel();
 
+    loadPaddleDims();
     g_sessionsAvailable = hasSessionJson();
 
     surface.setResizable(true);
-    surface.setTitle("PadViz7");
+    surface.setTitle("PadViz7   —   " + BUILD_STAMP);
     println("PadViz7 —  0=Slice0 cal   1=SliceA paddle   2=SliceB kayak   3=SliceC world   V=cycle preset   Backspace/-=back");
-    println("Session setup wizard: F1 shows/hides it. Return advances each step.");
+    println("Session setup wizard: w shows/hides it (F1 alt). Return advances each step.  Side-profile blade window: x (F2 alt).");
     println("Camera:  left-drag orbits   mouse wheel zooms   V snaps to side/top preset");
     println("Load:  p=paddle CSV   b=boat CSV");
     println("Slices A/B/C:  Space=play/pause   Left/Right=step 100   ,/.=step 1   >/<=fast x2/reset speed   k=capture ref   u=clear ref   S=reset zoom   E=export   C=build session sidecar");
@@ -158,19 +315,24 @@ void draw() {
     // cover full-height side panels or the bottom compass, and in P3D even an
     // opaque fill let them bleed — so we don't draw them at all here.
     boolean setup = (wizard != null && wizard.shown);
+    // The side-profile analysis window (F2) is a full-window ALTERNATIVE to the
+    // main view, not an overlay: when it (or the setup wizard) owns the screen
+    // we skip the 3D scene and every main-view overlay, and draw only the graph
+    // strip underneath so playback can still be scrubbed (spec §14.9).
+    boolean side = sideActive();
 
-    if (!setup) drawScene3D();
+    if (!setup && !side) drawScene3D();
 
     // 2D overlays, back to front: side panels (entry/exit left, stroke
     // average right), HUD (shifted right of the left panel), graph strip,
     // startup overlay, menu, flash.
     camera();
     hint(DISABLE_DEPTH_TEST);
-    if (!setup && isPanelVisible()) {
+    if (!setup && !side && isPanelVisible()) {
         eePanel.draw(catchEvents, paddleFrameIdx);
         avgPanel.draw(catchEvents, paddleFrameIdx);
     }
-    if (!setup) {
+    if (!setup && !side) {
         pushMatrix();
         translate(leftPanelWidth(), 0);
         drawHUD();
@@ -178,10 +340,12 @@ void draw() {
         popMatrix();
         drawAxisLegend();
     }
+    if (side) sideView.draw(catchEvents, paddleFrameIdx);
     if (isGraphVisible()) graph.draw(paddleData, boatData, sync, paddleFrameIdx);
     if (wizard != null) wizard.draw();
     if (menu != null) menu.draw();
     drawRefFlash();
+    drawDimPrompt();
     hint(ENABLE_DEPTH_TEST);
 }
 
@@ -201,6 +365,14 @@ boolean isPanelVisible() {
         && paddleData != null
         && paddleData.frameCount() > 0
         && catchEvents != null;
+}
+
+// The side-profile analysis window (F2, spec §14.9) is showing AND has the
+// paddle blade data it needs. When true it owns the screen (see draw()).
+boolean sideActive() {
+    return sideView != null && sideView.shown
+        && paddleData != null && paddleData.frameCount() > 0
+        && catchEvents != null && catchEvents.uzTip != null;
 }
 
 // Width in px of the entry/exit panel, 0 when hidden. HUD, compass, menu
@@ -251,11 +423,11 @@ void drawScene3D() {
         translate(fd.posX * MODEL_SCALE, fd.posY * MODEL_SCALE, fd.posZ * MODEL_SCALE);
         applyCalTriple();
         model3D.applyQuat(qDisp[0], qDisp[1], qDisp[2], qDisp[3]);
-        model3D.drawPaddle();
+        model3D.drawPaddle(paddleTotalLenM());
     } else {
         // Slice 0 or empty data — draw paddle at identity, under cal triple.
         applyCalTriple();
-        model3D.drawPaddle();
+        model3D.drawPaddle(paddleTotalLenM());
     }
 
     popMatrix();
@@ -378,7 +550,7 @@ void drawSliceC() {
     // kayakLH ← paddleLH ← blenderLH
     applyCalTriple();
     model3D.applyQuat(qRelDisp[0], qRelDisp[1], qRelDisp[2], qRelDisp[3]);
-    model3D.drawPaddle();
+    model3D.drawPaddle(paddleTotalLenM());
     popMatrix();
 }
 
@@ -573,12 +745,20 @@ void drawHUD() {
                 :                                         color(230, 140, 140);
         fill(col);
         textSize(12);
-        text(String.format("SIDECAR [%s]  padMount r=%+.1f° p=%+.1f°  boatMount r=%+.1f° p=%+.1f°  yaw datum=%+.1f°",
+        text(String.format("SIDECAR [%s]  padMount r=%+.1f° p=%+.1f°  boatMount r=%+.1f° p=%+.1f°  yaw datum=%+.1f°   |   paddle %.2f m  blade %.2f m  (m to change)",
                            sidecar.confidence,
                            sidecar.rollOffsetPadDeg,  sidecar.pitchOffsetPadDeg,
                            sidecar.rollOffsetBoatDeg, sidecar.pitchOffsetBoatDeg,
-                           sidecar.yawDatumDeg),
+                           sidecar.yawDatumDeg,
+                           sidecar.paddleLengthM, sidecar.bladeLengthM),
              20, 38);
+        textSize(13);
+    } else {
+        // No sidecar yet — still surface the paddle geometry that will be used
+        // (the last-used values), and how to change it.
+        fill(180, 190, 210);  textSize(12);
+        text(String.format("paddle %.2f m  blade %.2f m  (press m to set — last used shown)",
+                           lastPaddleLenM, lastBladeLenM), 20, 38);
         textSize(13);
     }
     // (v0.14: the "SIDECAR not built" hint is gone — the startup overlay
@@ -838,16 +1018,12 @@ void stepPlayback() {
 }
 
 void keyPressed() {
+    // The paddle-dimension prompt captures all keys while it's up.
+    if (dimPromptActive()) { dimPromptKey(); return; }
     // ESC closes the Commands menu instead of quitting the sketch.
     if (key == ESC && menu != null && menu.open) {
         menu.handleEscape();
         key = 0;
-        return;
-    }
-    // F1 shows/hides the session-setup wizard (spec §14). Available always,
-    // including as a read-only summary after the wizard has completed.
-    if (key == CODED && keyCode == 112) {   // 112 = VK_F1
-        if (wizard != null) wizard.toggle();
         return;
     }
     // While the wizard is active it gets first refusal on keys, but only
@@ -855,6 +1031,43 @@ void keyPressed() {
     // (digits, Space, arrows, ,/. …) fall through so the user can still move
     // the graph cursor to position for Steps 3 and 4.
     if (wizard != null && wizard.active() && wizard.handleKey(key, keyCode)) return;
+
+    // ── Analysis-window toggles (spec §14 / §14.9) ──────────────────────────
+    // Rebound off F1/F2 to the letters w / x: the function-key row is
+    // Fn-shifted on some laptops and wasn't reaching the sketch (7 Aug 2026).
+    // F1/F2 kept as alternates for keyboards where they do work. Placed AFTER
+    // the wizard's own key handling above, so while the setup wizard is active
+    // its step keys win (e.g. X = skip boat) and these only fire when the
+    // wizard isn't consuming the key. Both letter cases handled so Caps Lock is
+    // a non-issue (unlike the old P/K/W slice shortcuts, spec §12.10).
+    // w = session-setup Wizard (show/hide, also as a read-only summary after it
+    // completes — never restarts).
+    if (key == 'w' || key == 'W' || (key == CODED && keyCode == 112)) {
+        if (wizard != null) wizard.toggle();
+        return;
+    }
+    // x = side-profile blade window (ZY plane) — a full-window alternative to
+    // the main 3D view. It plots the paddle blade in the boat's ZY (side)
+    // plane, so switch to a paddle timeline (Slice A, or C if a boat CSV is
+    // loaded) when turning it on from a non-paddle slice, so playback,
+    // scrubbing and the graph strip all drive it.
+    if (key == 'x' || key == 'X' || (key == CODED && keyCode == 113)) {
+        if (sideView != null) {
+            sideView.toggle();
+            if (sideView.shown) {
+                boolean haveData = paddleData != null && paddleData.frameCount() > 0
+                                   && catchEvents != null && catchEvents.uzTip != null;
+                if (!haveData) {
+                    triggerRefFlash("SIDE PROFILE — load a paddle CSV first");
+                } else if (sliceMode == 0 || sliceMode == 2) {
+                    switchSlice((boatData != null && boatData.frameCount() > 0) ? 3 : 1);
+                }
+            }
+        }
+        return;
+    }
+    // m = set paddle & blade length (numeric prompt, last values pre-filled).
+    if (key == 'm' || key == 'M') { beginDimPrompt(false); return; }
     // Slice/view/load switches — always active.
     // Slice switching is on digits 0/1/2/3 only. The compass letters P/K/W
     // are pure labels — earlier versions bound Shift+letter to the switch,
@@ -934,7 +1147,9 @@ void keyPressed() {
         return;
     }
     if (key == 'c' || key == 'C') {
-        buildAndSaveSidecar();
+        // Offer/confirm the paddle & blade length (last values pre-filled),
+        // then build + save the sidecar with them.
+        beginDimPrompt(true);
         return;
     }
     if (key == 's' || key == 'S') {
@@ -1429,6 +1644,19 @@ void mousePressed() {
     // orbit.
     if (dismissFlashClicked(mouseX, mouseY)) return;
     if (menu != null && menu.mousePressed(mouseX, mouseY)) return;
+    // When the side-profile window owns the screen, the graph strip still
+    // scrubs; a right-click above it restarts the arc accumulation. The
+    // main-view detail button / side panels / 3D orbit are all inactive.
+    if (sideActive()) {
+        if (pointerInGraph()) {
+            int localY = mouseY - (height - GRAPH_H);
+            graph.mousePressed(mouseX, localY, paddleData, mouseButton);
+        } else if (mouseButton == RIGHT) {
+            sideView.reset(paddleFrameIdx);
+            triggerRefFlash("SIDE PROFILE RESTARTED");
+        }
+        return;
+    }
     if (detailPanel != null && detailPanel.mousePressed(mouseX, mouseY)) return;
     if (wizard != null && wizard.mousePressed(mouseX, mouseY)) return;
     if (pointerInGraph()) {

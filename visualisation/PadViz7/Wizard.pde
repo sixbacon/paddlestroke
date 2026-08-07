@@ -251,7 +251,7 @@ class Wizard {
         }
         fill(150);
         textSize(10);  textAlign(RIGHT, BOTTOM);
-        text("F1 = show/hide this window", pw - PADX, ph - 8);
+        text("w = show/hide this window", pw - PADX, ph - 8);
 
         int y = 46;
         if (complete) {
@@ -369,7 +369,7 @@ class Wizard {
         drawSummaryBody(x, y);
         float rem = (doneAtMs < 0) ? 0 : (DISMISS_DELAY_MS - (millis() - doneAtMs)) / 1000.0f;
         line(x, ph - 74, 12, color(150, 220, 170),
-             String.format("closing in %.1f s   (F1 reopens this summary)", max(0, rem)));
+             String.format("closing in %.1f s   (w reopens this summary)", max(0, rem)));
         return y;
     }
 

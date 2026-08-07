@@ -37,6 +37,13 @@ class Sidecar {
     // which is the paddle-vs-boat rest offset and unrelated to entry/exit.
     float yawManualAdjustDeg = 0;
 
+    // Physical paddle geometry (spec §14.9) — total (tip-to-tip) length and
+    // blade length, metres. Drive the 3D paddle model scale and the
+    // side-profile blade. Default to the last-used values so a new sidecar
+    // offers them; overwritten by loadFromFile() when the JSON records them.
+    float paddleLengthM = lastPaddleLenM;
+    float bladeLengthM  = lastBladeLenM;
+
     int   restPadStart  = -1, restPadEnd  = -1;
     int   restBoatStart = -1, restBoatEnd = -1;
     float restDurationS   = 0;
@@ -95,6 +102,9 @@ class Sidecar {
         root.setFloat("yaw_datum_offset_deg", yawDatumDeg);
         root.setFloat("yaw_manual_adjust_deg", yawManualAdjustDeg);
 
+        root.setFloat("paddle_total_length_m", paddleLengthM);
+        root.setFloat("blade_length_m",        bladeLengthM);
+
         // Only set the sub-keys we actually know. Missing = unknown; the
         // reader treats absence and null the same way (see loadFromFile).
         JSONObject mag = new JSONObject();
@@ -144,6 +154,13 @@ class Sidecar {
             // Older sidecar files predate this field — default to no adjustment.
             yawManualAdjustDeg = root.hasKey("yaw_manual_adjust_deg")
                                   ? root.getFloat("yaw_manual_adjust_deg") : 0;
+
+            // Paddle geometry — older files predate these; fall back to the
+            // last-used values so the model/side-view still have a sensible size.
+            paddleLengthM = root.hasKey("paddle_total_length_m")
+                             ? root.getFloat("paddle_total_length_m") : lastPaddleLenM;
+            bladeLengthM  = root.hasKey("blade_length_m")
+                             ? root.getFloat("blade_length_m") : lastBladeLenM;
 
             if (root.hasKey("mag_cal_status_at_rest")) {
                 JSONObject mag = root.getJSONObject("mag_cal_status_at_rest");

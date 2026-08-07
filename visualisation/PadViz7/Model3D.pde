@@ -7,22 +7,34 @@
 class Model3D {
     PShape paddle;
 
+    // Native tip-to-tip length of paddle60.obj along its shaft (X) axis, metres
+    // (measured from the OBJ: X spans -0.9091..+0.9091). drawPaddle() scales the
+    // mesh so its rendered length matches the session's real paddle total length
+    // (spec §14.9) rather than baking a fixed size at load.
+    static final float NATIVE_TIP_TO_TIP_M = 1.8182f;
+
     void loadPaddle(String path) {
         paddle = loadShape(path);
         if (paddle == null) {
             println("Model3D: failed to load OBJ '" + path + "'");
             return;
         }
-        // Display scale — not a physical correction, just a size for the
-        // window. OBJ vertices are in metres; 300 px/m fits the paddle in
-        // a 1400x900 window with margin.
-        paddle.scale(300);
-        println("Model3D: loaded paddle OBJ '" + path + "'");
+        // Left at native size (OBJ vertices are in metres); drawPaddle() applies
+        // the per-session scale so the model can be re-sized to the real paddle
+        // length without reloading.
+        println("Model3D: loaded paddle OBJ '" + path + "'  (native "
+                + nf(NATIVE_TIP_TO_TIP_M, 0, 3) + " m tip-to-tip)");
     }
 
-    void drawPaddle() {
+    // Draw the paddle scaled so its tip-to-tip length is totalLenM metres, at
+    // MODEL_SCALE px/m. Uniform scale about the shaft centre (mesh origin).
+    void drawPaddle(float totalLenM) {
         if (paddle == null) return;
+        float s = MODEL_SCALE * totalLenM / NATIVE_TIP_TO_TIP_M;
+        pushMatrix();
+        scale(s);
         shape(paddle);
+        popMatrix();
     }
 
     // Procedural kayak in the boat-IMU frame:

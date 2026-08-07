@@ -84,6 +84,9 @@ class Menu {
         items.add(new MenuItem("2", "Slice B — kayak",             '2', 0));
         items.add(new MenuItem("3", "Slice C — combined",          '3', 0));
         items.add(new MenuItem("Bksp", "Previous slice (ping-pong)", (char) 8, 0));
+        items.add(header("ANALYSIS WINDOWS"));
+        items.add(new MenuItem("w", "Session-setup wizard (show / hide)",         'w', 0));
+        items.add(new MenuItem("x", "Side-profile blade window (ZY plane, L/R)",  'x', 0));
         items.add(header("CAMERA"));
         items.add(new MenuItem("V", "Snap side / top preset (recentres)", 'V', 0));
         items.add(info("drag",  "orbit camera (left-drag in 3D area)"));
@@ -91,7 +94,8 @@ class Menu {
         items.add(header("CALIBRATION"));
         items.add(new MenuItem("k", "Capture reference (mean ±50 frames)", 'k', 0));
         items.add(new MenuItem("u", "Clear reference",                     'u', 0));
-        items.add(new MenuItem("C", "Build session sidecar (from cursor)", 'C', 0));
+        items.add(new MenuItem("m", "Set paddle & blade length (last = default)", 'm', 0));
+        items.add(new MenuItem("C", "Build session sidecar (asks lengths, from cursor)", 'C', 0));
         items.add(header("GRAPH"));
         items.add(new MenuItem("S", "Reset graph zoom to full range", 'S', 0));
         items.add(info("click",   "seek playback cursor"));
