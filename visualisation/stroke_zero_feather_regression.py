@@ -22,16 +22,38 @@ Test 2 (arbiter suppression, source=2): 11 Jul padbad. Uses the CSV's own
     unrelated to this test. Using the recorded column sidesteps it and
     matches the already-validated §16.9 methodology exactly.
 
+Test 3 (zero-feather field, 12 Aug 2026): the deployed PadLog v8.10/PadDis
+    v8.14 build's OWN field recording (PadLog20260812.CSV, which carries the
+    cpm / cpm_source columns). On the PadViz-classified 'zero' section
+    (sidecar frames 33470-50499) the firmware's recorded cpm_source is 1 for
+    ~98% at cpm ~33.0, and a fresh offline sim over the same rows agrees
+    (source=1 100%, ~32.8). Real-world confirmation of the source=1 fallback.
+
+Test 4 (white + arbiter field, 12 Aug 2026): the right-handed (feathered)
+    section (frames 65766-341749) of the same file. Feathered = asymmetric,
+    so roll AND pitch spectral both give the true rate (~35, no 2x). Firmware
+    recorded cpm_source=0 (white peak detector) ~98% at cpm ~35, and the
+    arbiter (source=2) fires only ~0.3% -- the key false-positive check. The
+    offline sim (bounded sub-window) cross-checks that the arbiter stays quiet
+    and the rate is right; it is NOT asserted to keep source=0 dominant
+    offline, because the stroke_detector_sim port times out more eagerly than
+    the firmware (the Test-2 fidelity gap again) and drops to ACF more often.
+
+Tests 1, 3, 4 read large, git-ignored field CSVs; each SKIPs (rather than
+failing the suite) when its file isn't present locally.
+
 Run from repo root: python visualisation/stroke_zero_feather_regression.py
 """
 import csv
 import os
+import sys
 
 import numpy as np
 
 from stroke_detector_sim import StrokeDetector
 from stroke_acf import acf_estimate, FS as ACF_FS, WIN_S as ACF_WIN_S, \
     DECIM as ACF_DECIM, MIN_FILL as ACF_MIN_FILL
+from stroke_spectral import spectral_rate
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
@@ -54,6 +76,51 @@ def load(fn, cols):
             for c, v in zip(cols, vals):
                 out[c].append(v)
     return {c: np.array(v) for c, v in out.items()}
+
+
+def find_file(*candidates):
+    """First existing path among candidates, else None. Field CSVs are large
+    and git-ignored, and move between visualisation/ , data/<date>/ and
+    visualisation/recordings/ over a session -- so a test that can't find its
+    file SKIPs rather than crashing the whole suite."""
+    for c in candidates:
+        if c and os.path.isfile(c):
+            return c
+    return None
+
+
+def load_rows(fn, cols, lo, hi):
+    """Read only data rows [lo, hi] inclusive for the named columns (0 = first
+    data row, after the comment + header lines -- matches PadViz frame
+    indexing). Column positions come from the header, not hard-coded, and only
+    the wanted slice is parsed so a 90 MB file loads a small section fast."""
+    out = {c: [] for c in cols}
+    with open(fn, encoding='utf-8-sig') as f:
+        f.readline()                                  # comment line
+        header = f.readline().rstrip('\n').split(',')
+        idx = {c: header.index(c) for c in cols}
+        for i, line in enumerate(f):
+            if i < lo:
+                continue
+            if i > hi:
+                break
+            p = line.rstrip('\n').split(',')
+            try:
+                vals = [float(p[idx[c]]) for c in cols]
+            except (ValueError, IndexError):
+                continue
+            for c, v in zip(cols, vals):
+                out[c].append(v)
+    return {c: np.array(v) for c, v in out.items()}
+
+
+# 12 Aug 2026 field session (the deployed PadLog v8.10 / PadDis v8.14 build's
+# own recording, with cpm + cpm_source columns). Large + git-ignored; sections
+# are the PadViz sidecar's classification frame ranges.
+PAD_12AUG = [
+    os.path.join(REPO, 'visualisation', 'recordings', 'PadLog20260812.CSV'),
+    os.path.join(REPO, 'data', '2026-08-12', 'PadLog20260812.CSV'),
+]
 
 
 def simulate(ts_ms, roll, pitch, prom_deg=30.0):
@@ -126,8 +193,13 @@ def simulate(ts_ms, roll, pitch, prom_deg=30.0):
 
 
 def test_zero_feather():
-    p = load(os.path.join(REPO, 'visualisation', 'PadLog20260716.csv'),
-              ['timestamp_ms', 'roll', 'pitch'])
+    fn = find_file(os.path.join(REPO, 'visualisation', 'PadLog20260716.csv'),
+                   os.path.join(REPO, 'data', '2026-07-16', 'PadLog20260716.csv'),
+                   os.path.join(REPO, 'visualisation', 'recordings', 'PadLog20260716.csv'))
+    if fn is None:
+        print('[SKIP] 16 Jul zero-feather: PadLog20260716.csv not found (large, git-ignored)')
+        return None
+    p = load(fn, ['timestamp_ms', 'roll', 'pitch'])
     lo, hi = 40252 - 3, 45369 - 3   # 'zero' segment, spec §13.5 / stroke_catch_explore.py
     ts, roll, pitch = p['timestamp_ms'][lo:hi], p['roll'][lo:hi], p['pitch'][lo:hi]
 
@@ -151,8 +223,12 @@ def test_zero_feather():
 def test_padbad_arbiter():
     from stroke_acf import stream as acf_stream
 
-    p = load(os.path.join(REPO, 'data', '2026-07-11', 'padbad20260711.csv'),
-              ['timestamp_ms', 'pitch', 'cpm'])
+    fn = find_file(os.path.join(REPO, 'data', '2026-07-11', 'padbad20260711.csv'),
+                   os.path.join(REPO, 'visualisation', 'padbad20260711.csv'))
+    if fn is None:
+        print('[SKIP] 11 Jul padbad arbiter: padbad20260711.csv not found (large, git-ignored)')
+        return None
+    p = load(fn, ['timestamp_ms', 'pitch', 'cpm'])
     ts, pitch, reported = p['timestamp_ms'], p['pitch'], p['cpm']
 
     # stream() decimates/estimates internally; feeding pitch instead of
@@ -174,8 +250,98 @@ def test_padbad_arbiter():
     return ok
 
 
+def test_zero_feather_field_12aug():
+    """Field confirmation of the zero-feather fallback (source=1) on the
+    12 Aug 2026 session -- the deployed build's OWN recording. Checks both the
+    firmware's recorded cpm_source column and a fresh offline sim over the
+    PadViz-classified 'zero' section (sidecar frames 33470-50499)."""
+    fn = find_file(*PAD_12AUG)
+    if fn is None:
+        print('[SKIP] 12 Aug zero-feather field: PadLog20260812.CSV not found (large, git-ignored)')
+        return None
+    lo, hi = 33470, 50499
+    d = load_rows(fn, ['timestamp_ms', 'roll', 'pitch', 'cpm', 'cpm_source'], lo, hi)
+    ts, roll, pitch, rec_cpm, rec_src = (d['timestamp_ms'], d['roll'], d['pitch'],
+                                         d['cpm'], d['cpm_source'])
+
+    out = simulate(ts, roll, pitch)
+    settled = [(t, c, s) for t, c, s in out if t - out[0][0] > 13.0]
+    srcs = np.array([s for _, _, s in settled])
+    acf = [c for _, c, s in settled if s == 1]
+    sim_frac1 = float(np.mean(srcs == 1)) if len(srcs) else 0.0
+    sim_med = float(np.median(acf)) if acf else 0.0
+
+    rec_frac1 = float(np.mean(rec_src == 1))
+    rec1 = rec_cpm[(rec_src == 1) & (rec_cpm > 0)]
+    rec_med = float(np.median(rec1)) if len(rec1) else 0.0
+
+    ok = (sim_frac1 > 0.8 and abs(sim_med - 33.0) < 3.0
+          and rec_frac1 > 0.8 and abs(rec_med - 33.0) < 3.0)
+    tag = 'PASS' if ok else 'FAIL'
+    print(f'[{tag}] 12 Aug zero-feather field (frames {lo}-{hi}): '
+          f'firmware source=1 {rec_frac1*100:.0f}% @ {rec_med:.1f} CPM, '
+          f'offline sim source=1 {sim_frac1*100:.0f}% @ {sim_med:.1f} CPM '
+          f'(expect both >80% source=1, CPM ~33)')
+    return ok
+
+
+def test_white_arbiter_field_12aug():
+    """Field confirmation of the white peak-detector path (source=0) and the
+    arbiter false-positive rate (source=2) on the 12 Aug 2026 right-handed
+    (feathered) section (sidecar frames 65766-341749). Feathered = asymmetric,
+    so roll/pitch spectral both give the TRUE rate (no 2x half-period). Primary
+    assertion is on the firmware's own recorded columns over the full section;
+    an offline sim on a bounded sub-window cross-checks that the arbiter stays
+    quiet and the rate is right (NOT that source=0 dominates offline -- the
+    stroke_detector_sim Python port times out more eagerly than the firmware, a
+    known fidelity gap, so it drops to ACF more often)."""
+    fn = find_file(*PAD_12AUG)
+    if fn is None:
+        print('[SKIP] 12 Aug white+arbiter field: PadLog20260812.CSV not found (large, git-ignored)')
+        return None
+    lo, hi = 65766, 341749
+    d = load_rows(fn, ['timestamp_ms', 'roll', 'pitch', 'cpm', 'cpm_source'], lo, hi)
+    ts, roll, pitch, rec_cpm, rec_src = (d['timestamp_ms'], d['roll'], d['pitch'],
+                                         d['cpm'], d['cpm_source'])
+    fs = 1000.0 / np.median(np.diff(ts))
+
+    truth = spectral_rate(roll, fs, band=(0.25, 1.5))          # ground truth
+
+    rec_white = float(np.mean(rec_src == 0))                   # firmware, full section
+    rec_arb   = float(np.mean(rec_src == 2))
+    nz = rec_cpm[rec_cpm > 0]
+    rec_med = float(np.median(nz)) if len(nz) else 0.0
+
+    SUB = 90000                                                # offline sim ~15 min
+    out = simulate(ts[:SUB], roll[:SUB], pitch[:SUB])
+    settled = [(t, c, s) for t, c, s in out if t - out[0][0] > 13.0]
+    ssrc = np.array([s for _, _, s in settled])
+    scpm = [c for _, c, s in settled if s in (0, 1) and c > 0]
+    sim_arb = float(np.mean(ssrc == 2)) if len(ssrc) else 0.0
+    sim_med = float(np.median(scpm)) if scpm else 0.0
+
+    ok = (rec_white > 0.8 and rec_arb < 0.02 and abs(rec_med - 35.0) < 3.0
+          and abs(truth - 35.0) < 3.0
+          and sim_arb < 0.03 and abs(sim_med - 35.0) < 3.0)
+    tag = 'PASS' if ok else 'FAIL'
+    print(f'[{tag}] 12 Aug right white+arbiter (frames {lo}-{hi}): '
+          f'firmware source=0 {rec_white*100:.0f}% @ {rec_med:.1f} CPM, '
+          f'arbiter source=2 {rec_arb*100:.1f}%; roll-spectral {truth:.1f}; '
+          f'offline arbiter {sim_arb*100:.1f}% @ {sim_med:.1f} CPM '
+          f'(expect white >80%, arbiter <2%, CPM ~35)')
+    return ok
+
+
 if __name__ == '__main__':
-    r1 = test_zero_feather()
-    r2 = test_padbad_arbiter()
-    n_pass = int(r1) + int(r2)
-    print(f'\nResults: {n_pass} passed, {2 - n_pass} failed')
+    results = [
+        test_zero_feather(),
+        test_padbad_arbiter(),
+        test_zero_feather_field_12aug(),
+        test_white_arbiter_field_12aug(),
+    ]
+    n_skip = sum(1 for r in results if r is None)
+    done   = [r for r in results if r is not None]   # numpy bools -> use truthiness
+    n_pass = sum(1 for r in done if r)
+    n_fail = sum(1 for r in done if not r)
+    print(f'\nResults: {n_pass} passed, {n_fail} failed, {n_skip} skipped')
+    sys.exit(1 if n_fail else 0)

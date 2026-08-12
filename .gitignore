@@ -1,5 +1,9 @@
 # Field session data logs — large CSVs, keep local only
 data/**/*.CSV
+# Session recordings loaded by PadViz / the stroke_*.py toolkit — large, local only
+# (both cases: firmware writes .CSV, some trimmed exports are .csv)
+visualisation/recordings/*.CSV
+visualisation/recordings/*.csv
 
 # Instruction and error report working notes — local only
 firmware/instructions/*
