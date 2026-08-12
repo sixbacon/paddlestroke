@@ -49,10 +49,12 @@ class TrackPanel {
     final int COL_END   = color(235, 60, 60);     // end marker (red)
     final int COL_NOW   = color(60, 150, 255);    // live position (blue)
 
-    // Cached scan of the boat file — recomputed when the frame count changes.
+    // Cached scan of the boat file — recomputed when the frame count changes or
+    // (via invalidate()) when the classification changes.
     int              cachedCount = -1;
     float[]          bounds;                       // {latMin,latMax,lonMin,lonMax}
-    ArrayList<float[]> pts;                        // valid fixes: {lat, lon, frameIdx}
+    ArrayList<float[]> pts;                        // valid, non-excluded fixes: {lat, lon, frameIdx}
+    boolean          filteredByClass = false;      // true when excluded ranges were dropped
 
     // Tile store + background fetch.
     ConcurrentHashMap<String, PImage> tiles = new ConcurrentHashMap<String, PImage>();
@@ -86,10 +88,12 @@ class TrackPanel {
         int H = height - GRAPH_H;
         noStroke();  fill(24, 26, 32);  rect(0, 0, width, H);
 
-        rescan(boat);
+        rescan(boat, sync);
         if (bounds == null || pts == null || pts.size() == 0) {
             fill(200);  textAlign(CENTER, CENTER);  textSize(15);
-            text("No GPS fixes in this boat CSV", width / 2, H / 2);
+            text(filteredByClass ? "No GPS fixes left after classification (all excluded?)"
+                                 : "No GPS fixes in this boat CSV",
+                 width / 2, H / 2);
             return;
         }
 
@@ -109,18 +113,61 @@ class TrackPanel {
         drawChrome(z, plotH);
     }
 
-    // Recompute the bounds + valid-point list if the boat data changed.
-    void rescan(BoatSource boat) {
+    // Recompute the bounds + valid-point list if the boat data or the
+    // classification changed (invalidate() forces the latter).
+    //
+    // Classification filtering: classification is defined in PADDLE frames, so
+    // when any EXCLUDED range is marked (e.g. the drive home) we map each boat
+    // fix back to its paddle frame via SyncMap and drop the fixes that land in
+    // an excluded range. The bounds — and therefore the auto-zoom — are computed
+    // from the KEPT fixes only, so the map frames the paddling area instead of
+    // the whole drive. With no exclusions (or no paddle/sync) this reduces to
+    // "every valid boat fix", exactly as before.
+    void rescan(BoatSource boat, SyncMap syncMap) {
         int n = (boat == null) ? 0 : boat.frameCount();
         if (n == cachedCount && bounds != null) return;
         cachedCount = n;
-        bounds = (boat == null) ? null : boat.latLonRange();
         pts = new ArrayList<float[]>();
+        bounds = null;
+        filteredByClass = false;
         if (boat == null) return;
+
+        boolean filter = classify != null && classify.hasExclusions()
+                      && paddleData != null && paddleData.frameCount() > 0
+                      && syncMap != null;
+
+        // Map boat frame → excluded? A boat frame is excluded only if an
+        // excluded paddle frame maps to it AND no NON-excluded paddle frame
+        // also does (so a boundary boat fix straddling the edge is kept).
+        boolean[] boatExcl = null, boatKeep = null;
+        if (filter) {
+            boatExcl = new boolean[n];
+            boatKeep = new boolean[n];
+            int pc = paddleData.frameCount();
+            for (int p = 0; p < pc; p++) {
+                int bi = syncMap.boatIdxFor(p);
+                if (bi < 0 || bi >= n) continue;
+                if (classify.isExcluded(p)) boatExcl[bi] = true;
+                else                        boatKeep[bi] = true;
+            }
+        }
+
         ArrayList<BoatFrameData> fr = boat.getFrames();
         for (int i = 0; i < fr.size(); i++) {
             BoatFrameData f = fr.get(i);
-            if (boat.validFix(f)) pts.add(new float[]{ f.gpsLat, f.gpsLon, i });
+            if (!boat.validFix(f)) continue;
+            if (filter && boatExcl[i] && !boatKeep[i]) { filteredByClass = true; continue; }
+            pts.add(new float[]{ f.gpsLat, f.gpsLon, i });
+        }
+
+        // Bounds from the kept fixes, so the auto-zoom frames the valid track.
+        if (pts.size() > 0) {
+            float latMin = 1e9f, latMax = -1e9f, lonMin = 1e9f, lonMax = -1e9f;
+            for (float[] p : pts) {
+                latMin = min(latMin, p[0]);  latMax = max(latMax, p[0]);
+                lonMin = min(lonMin, p[1]);  lonMax = max(lonMax, p[1]);
+            }
+            bounds = new float[]{ latMin, latMax, lonMin, lonMax };
         }
     }
 
@@ -314,7 +361,8 @@ class TrackPanel {
         text("TRACK — GPS over OpenStreetMap   (z" + z + ")", 12, 30);
         // Footer: point count + attribution (attribution is required by OSM).
         fill(200);  textSize(11);  textAlign(LEFT, BOTTOM);
-        text(pts.size() + " fixes", 12, plotH - 6);
+        text(pts.size() + " fixes" + (filteredByClass ? "  (excluded ranges hidden)" : ""),
+             12, plotH - 6);
         textAlign(RIGHT, BOTTOM);
         text(ATTRIB, width - 10, plotH - 6);
     }

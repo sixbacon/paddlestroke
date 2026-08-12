@@ -1,5 +1,5 @@
 // ############################################################################
-// #  PadViz8   —   LAST EDITED: 2026-08-12 21:59   —   v0.28                  #
+// #  PadViz8   —   LAST EDITED: 2026-08-12 22:25   —   v0.29                  #
 // #  (BUILD_STAMP below feeds the window title bar — keep the two in sync.)   #
 // ############################################################################
 //
@@ -23,7 +23,7 @@
 // Human-readable build stamp — shown in the window title bar so the running
 // version is identifiable at a glance. Keep in sync with the LAST EDITED banner
 // at the very top of this file; bump both on every edit.
-final String BUILD_STAMP = "PadViz8  v0.28  (last edited 2026-08-12 21:59)";
+final String BUILD_STAMP = "PadViz8  v0.29  (last edited 2026-08-12 22:25)";
 
 Calibration cal;
 Model3D     model3D;
@@ -1549,6 +1549,10 @@ void rebuildClassificationIndex() {
     ArrayList<ClassificationSection> secs =
         (sidecar != null) ? sidecar.classification : null;
     classify.rebuild(n, secs);
+    // The Track view filters its GPS fixes by the exclusion index, so a change
+    // to classification must drop its cached scan (frame count alone is
+    // unchanged, so the rescan gate wouldn't otherwise notice).
+    if (trackView != null) trackView.invalidate();
 }
 
 // ── Sidecar auto-load ──────────────────────────────────────────────────────
