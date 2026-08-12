@@ -2946,9 +2946,12 @@ does not, so a stale PadDis simply ignores the byte):**
    (nuisance-flag rate was 0–3 % offline — if the field rate annoys,
    raise the disagreement threshold before touching anything else).
 
-**Implementation status (20 Jul 2026) — steps 1-2/4 of the PadLog/PadDis
-plan above DONE, both sketches compile clean (`arduino-cli compile`);
-step 1 of the test ladder DONE (offline, passing); the rest not started:**
+**Implementation status (20 Jul 2026; field-validated 12 Aug 2026) — steps
+1-2/4 of the PadLog/PadDis plan above DONE, both sketches compile clean
+(`arduino-cli compile`); offline test suite passing AND the field test now
+PASSED (12 Aug, see the "FIELD TEST PASSED" block below — fallback, white
+path, and arbiter all confirmed on the deployed build's own recording); only
+the on-hardware 20-test-suite additions remain:**
 
 - **`CadenceACF.h/.cpp`** (new, `firmware/production/PadLog/`, synced
   copy in `firmware/test/paddlestroke_sim_test/`) — direct port of
@@ -3023,13 +3026,29 @@ step 1 of the test ladder DONE (offline, passing); the rest not started:**
   about garbled text input — a stuck approval dialog is a plausible but
   not-yet-confirmed extension of it). User chose to go straight to a
   field session rather than retry the bench steps.
-- **Field test PENDING** — awaiting the returned SD CSV for offline
-  verification against `stroke_zero_feather_regression.py`'s logic:
-  watch for `cpm_source` values in the CSV, any `?? cpm` moments during
-  otherwise-normal paddling (arbiter false positive — if the field rate
-  is annoying, raise `ARBITER_DISAGREE_FRAC` past 30 % before anything
-  else), and whether a zero-feather stretch (if any) shows source=1 at
-  a sensible rate.
+- **FIELD TEST PASSED — 12 Aug 2026.** The deployed build's own recording
+  `visualisation/recordings/PadLog20260812.CSV` (header
+  `PadDis v8.14 | PadLog v8.10`, carrying the `cpm` + `cpm_source` columns)
+  was analysed on its two PadViz-classified sections; both are now permanent
+  cases in `stroke_zero_feather_regression.py` (tests 3 & 4, **4 passed /
+  0 failed**):
+  - **Zero-feather section** (frames 33470–50499, 171 s): the firmware
+    recorded `cpm_source=1` (ACF yellow fallback) for **97.7 %** of the
+    section at recorded `cpm` median **33.0**, matching the pitch spectral
+    truth (~32.5) — while roll spectral read ~65 (the 2× half-period
+    ambiguity the fix targets). A fresh offline sim over the same rows
+    agrees (source=1 100 %, ACF median 32.8), matching the 16 Jul segment's
+    32.8 (§16.10). **The zero-feather fallback works in the field.**
+  - **Right-handed (feathered) section** (frames 65766–341749, 46 min):
+    `cpm_source=0` (white peak detector) for **97.9 %** at `cpm` median
+    **35.0** = roll/pitch spectral truth (both 35.0, feathered ⇒ no 2×).
+    The arbiter (`cpm_source=2` `?? cpm`) fired only **0.3 %** — brief
+    transient blips at rate changes, no meaningful false-positive problem.
+    **The 30 % `ARBITER_DISAGREE_FRAC` is validated as-is; do not raise it.**
+  - Note: the sidecar calibration only affects PadViz's offline 3-D view;
+    `roll/pitch/stroke_count/cpm/cpm_source` are firmware channels, so a
+    wrong-for-section calibration does not change detection. §16.12 is now
+    field-validated end-to-end (fallback, white path, and arbiter).
 - **Not started:** on-hardware 20-test-suite additions (needs synthetic,
   not field, signals — the standalone sim sketch has no SD/file access;
   designing a convincing synthetic arbiter-disagreement case is the
