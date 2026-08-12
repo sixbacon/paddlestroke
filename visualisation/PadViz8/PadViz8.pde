@@ -1,5 +1,5 @@
 // ############################################################################
-// #  PadViz8   —   LAST EDITED: 2026-08-12 22:25   —   v0.29                  #
+// #  PadViz8   —   LAST EDITED: 2026-08-12 22:37   —   v0.30                  #
 // #  (BUILD_STAMP below feeds the window title bar — keep the two in sync.)   #
 // ############################################################################
 //
@@ -23,7 +23,7 @@
 // Human-readable build stamp — shown in the window title bar so the running
 // version is identifiable at a glance. Keep in sync with the LAST EDITED banner
 // at the very top of this file; bump both on every edit.
-final String BUILD_STAMP = "PadViz8  v0.29  (last edited 2026-08-12 22:25)";
+final String BUILD_STAMP = "PadViz8  v0.30  (last edited 2026-08-12 22:37)";
 
 Calibration cal;
 Model3D     model3D;
@@ -1538,6 +1538,10 @@ void rebuildSync() {
     if (paddleData == null || boatData == null) return;
     if (paddleData.frameCount() == 0 || boatData.frameCount() == 0) return;
     sync.build(paddleData, boatData);
+    // The Track view clips its GPS fixes to the paddle session via this map, so
+    // a fresh sync must drop its cached scan (the boat frame count — the rescan
+    // gate — may be unchanged when the paddle CSV loads after the boat).
+    if (trackView != null) trackView.invalidate();
 }
 
 // v0.16 — rebuild the classification exclusion/visibility index whenever the

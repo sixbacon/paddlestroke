@@ -91,7 +91,7 @@ class TrackPanel {
         rescan(boat, sync);
         if (bounds == null || pts == null || pts.size() == 0) {
             fill(200);  textAlign(CENTER, CENTER);  textSize(15);
-            text(filteredByClass ? "No GPS fixes left after classification (all excluded?)"
+            text(filteredByClass ? "No GPS fixes inside the paddling session"
                                  : "No GPS fixes in this boat CSV",
                  width / 2, H / 2);
             return;
@@ -116,13 +116,18 @@ class TrackPanel {
     // Recompute the bounds + valid-point list if the boat data or the
     // classification changed (invalidate() forces the latter).
     //
-    // Classification filtering: classification is defined in PADDLE frames, so
-    // when any EXCLUDED range is marked (e.g. the drive home) we map each boat
-    // fix back to its paddle frame via SyncMap and drop the fixes that land in
-    // an excluded range. The bounds — and therefore the auto-zoom — are computed
-    // from the KEPT fixes only, so the map frames the paddling area instead of
-    // the whole drive. With no exclusions (or no paddle/sync) this reduces to
-    // "every valid boat fix", exactly as before.
+    // Session clipping. The boat unit's GPS often keeps logging through the
+    // drive home after the paddle unit has stopped, so the drive appears on the
+    // map with NO paddle frames behind it — classification (which is paddle-
+    // frame based) can't mark data that isn't in the paddle timeline. So instead
+    // of only dropping paddle-marked EXCLUDED ranges, we clip the track to where
+    // the paddle session actually has data: keep a boat fix only if it falls
+    // inside a run of NON-excluded paddle coverage (mapped boat↔paddle via
+    // SyncMap). That removes (a) the drive-home tail after the paddle stops,
+    // (b) any explicitly EXCLUDED range in the middle, and (c) a boat-only
+    // lead-in before the paddle starts. The bounds — hence the auto-zoom — come
+    // from the kept fixes, so the map frames the paddling area. With no paddle /
+    // no sync (boat-only session) this reduces to "every valid boat fix".
     void rescan(BoatSource boat, SyncMap syncMap) {
         int n = (boat == null) ? 0 : boat.frameCount();
         if (n == cachedCount && bounds != null) return;
@@ -132,33 +137,49 @@ class TrackPanel {
         filteredByClass = false;
         if (boat == null) return;
 
-        boolean filter = classify != null && classify.hasExclusions()
-                      && paddleData != null && paddleData.frameCount() > 0
-                      && syncMap != null;
+        boolean filter = paddleData != null && paddleData.frameCount() > 0
+                      && syncMap != null && classify != null;
 
-        // Map boat frame → excluded? A boat frame is excluded only if an
-        // excluded paddle frame maps to it AND no NON-excluded paddle frame
-        // also does (so a boundary boat fix straddling the edge is kept).
-        boolean[] boatExcl = null, boatKeep = null;
+        // Build a keep-mask over boat frames from contiguous runs of non-
+        // excluded paddle coverage. boatIdxFor is monotonic in the paddle
+        // frame, so each run maps to a contiguous boat range. An EXCLUDED paddle
+        // frame (or the end of the paddle file) closes the current run; an
+        // unmapped-but-non-excluded paddle frame (a sync hole mid-paddling) is
+        // skipped so it doesn't fragment the range.
+        boolean[] keepBoat = null;
         if (filter) {
-            boatExcl = new boolean[n];
-            boatKeep = new boolean[n];
+            keepBoat = new boolean[n];
             int pc = paddleData.frameCount();
-            for (int p = 0; p < pc; p++) {
-                int bi = syncMap.boatIdxFor(p);
-                if (bi < 0 || bi >= n) continue;
-                if (classify.isExcluded(p)) boatExcl[bi] = true;
-                else                        boatKeep[bi] = true;
+            int runLo = -1, runHi = -1;
+            boolean anyMapped = false;
+            for (int p = 0; p <= pc; p++) {
+                boolean endRun = (p == pc) || classify.isExcluded(p);
+                if (!endRun) {
+                    int bi = syncMap.boatIdxFor(p);
+                    if (bi >= 0 && bi < n) {
+                        if (runLo < 0) runLo = bi;
+                        runHi = bi;
+                        anyMapped = true;
+                    }
+                } else {
+                    if (runLo >= 0 && runHi >= runLo)
+                        for (int b = runLo; b <= runHi; b++) keepBoat[b] = true;
+                    runLo = runHi = -1;
+                }
             }
+            // A totally broken sync would blank the map — fall back to show-all.
+            if (!anyMapped) { filter = false; keepBoat = null; }
         }
 
         ArrayList<BoatFrameData> fr = boat.getFrames();
+        int dropped = 0;
         for (int i = 0; i < fr.size(); i++) {
             BoatFrameData f = fr.get(i);
             if (!boat.validFix(f)) continue;
-            if (filter && boatExcl[i] && !boatKeep[i]) { filteredByClass = true; continue; }
+            if (filter && !keepBoat[i]) { dropped++; continue; }
             pts.add(new float[]{ f.gpsLat, f.gpsLon, i });
         }
+        filteredByClass = (dropped > 0);
 
         // Bounds from the kept fixes, so the auto-zoom frames the valid track.
         if (pts.size() > 0) {
@@ -361,7 +382,7 @@ class TrackPanel {
         text("TRACK — GPS over OpenStreetMap   (z" + z + ")", 12, 30);
         // Footer: point count + attribution (attribution is required by OSM).
         fill(200);  textSize(11);  textAlign(LEFT, BOTTOM);
-        text(pts.size() + " fixes" + (filteredByClass ? "  (excluded ranges hidden)" : ""),
+        text(pts.size() + " fixes" + (filteredByClass ? "  (clipped to paddling session)" : ""),
              12, plotH - 6);
         textAlign(RIGHT, BOTTOM);
         text(ATTRIB, width - 10, plotH - 6);
