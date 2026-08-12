@@ -1,5 +1,5 @@
 // ############################################################################
-// #  PadViz8   —   LAST EDITED: 2026-08-12 14:17   —   v0.26                  #
+// #  PadViz8   —   LAST EDITED: 2026-08-12 21:43   —   v0.27                  #
 // #  (BUILD_STAMP below feeds the window title bar — keep the two in sync.)   #
 // ############################################################################
 //
@@ -23,7 +23,7 @@
 // Human-readable build stamp — shown in the window title bar so the running
 // version is identifiable at a glance. Keep in sync with the LAST EDITED banner
 // at the very top of this file; bump both on every edit.
-final String BUILD_STAMP = "PadViz8  v0.26  (last edited 2026-08-12 14:17)";
+final String BUILD_STAMP = "PadViz8  v0.27  (last edited 2026-08-12 21:43)";
 
 Calibration cal;
 Model3D     model3D;
@@ -1078,6 +1078,38 @@ void stepPlayback() {
     }
 }
 
+// Standalone clear-classification (q key). Two-press confirm: -1 = disarmed,
+// else the millis() of the arming press. A second q within CLEAR_CLASS_CONFIRM_MS
+// commits the wipe.
+int clearClassArmedMs = -1;
+static final int CLEAR_CLASS_CONFIRM_MS = 3000;
+
+void clearClassificationRequested() {
+    int n = (sidecar != null && sidecar.classification != null)
+            ? sidecar.classification.size() : 0;
+    if (n == 0) {
+        clearClassArmedMs = -1;
+        triggerRefFlash("NO CLASSIFICATION TO CLEAR");
+        return;
+    }
+    int now = millis();
+    // First press (or a stale arm) only arms + warns; it never wipes.
+    if (clearClassArmedMs < 0 || now - clearClassArmedMs > CLEAR_CLASS_CONFIRM_MS) {
+        clearClassArmedMs = now;
+        triggerRefFlash("PRESS q AGAIN TO CLEAR " + n
+                        + " CLASSIFICATION SECTION" + (n == 1 ? "" : "S"));
+        return;
+    }
+    // Confirmed within the window — wipe, persist, and rebuild the index.
+    sidecar.classification.clear();
+    saveSidecarQuiet();
+    rebuildClassificationIndex();
+    if (classify != null) paddleFrameIdx = classify.nearestVisible(paddleFrameIdx);
+    clearClassArmedMs = -1;
+    triggerRefFlash("CLASSIFICATION CLEARED  (" + n
+                    + " section" + (n == 1 ? "" : "s") + " removed)");
+}
+
 void keyPressed() {
     // The paddle-dimension prompt captures all keys while it's up.
     if (dimPromptActive()) { dimPromptKey(); return; }
@@ -1107,6 +1139,16 @@ void keyPressed() {
         if (wizard != null) wizard.toggle();
         return;
     }
+    // q = clear ALL classification sections (standalone). The wizard's Step-4
+    // reset (r/R) is the in-flow way to wipe classification, but once setup has
+    // completed the wizard reopens read-only and can't re-enter Step 4, leaving
+    // no live way to undo a bad classification. This key fills that gap and works
+    // in any slice. Two-press guard against an accidental full wipe: the first
+    // press arms and flashes a prompt, a second q within CLEAR_CLASS_CONFIRM_MS
+    // commits — clearing the in-memory sections, rewriting the sidecar, and
+    // rebuilding the exclusion/visibility index so any previously excluded (d/D)
+    // ranges become navigable again. Roll calibration is untouched.
+    if (key == 'q' || key == 'Q') { clearClassificationRequested(); return; }
     // x = side-profile blade window (ZY plane) — a full-window alternative to
     // the main 3D view. It plots the paddle blade in the boat's ZY (side)
     // plane, so switch to a paddle timeline (Slice A, or C if a boat CSV is
