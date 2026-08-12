@@ -1768,8 +1768,10 @@ change (paddle/boat load, wizard edit, `q` clear, session load).
 
 Implementation: `TrackPanel.rescan(BoatSource, SyncMap)` (keep-run mask) +
 `filteredByClass` flag in `TrackPanel.pde`; `trackView.invalidate()` from
-`rebuildSync()` and `rebuildClassificationIndex()` in `PadViz8.pde`. BUILT +
-compiles clean; on-screen confirmation pending (compile-vs-runtime caveat).
+`rebuildSync()` and `rebuildClassificationIndex()` in `PadViz8.pde`. **CONFIRMED
+on screen 12 Aug 2026** — once the drive-home tail was excluded (§15.7) the clip
+dropped it and the map framed the paddling area ("drive-home is gone from the
+map").
 
 ## 15.7 Classification "exclude cursor → end of file" (v0.31, 12 Aug 2026)
 
@@ -1795,4 +1797,6 @@ press `e`. The tail is excluded to the file end and the Track map's clip
 
 Implementation: `Wizard.excludeCursorToEnd()` + the `e/E` branch at the top of
 `Wizard.handleKeyStep4()` in `Wizard.pde`; Step-4 instruction lines updated.
-BUILT + compiles clean; on-screen confirmation pending.
+**CONFIRMED on screen 12 Aug 2026** ("excluded the tail, drive-home is gone from
+the map") — end-to-end proof of `e` exclude-cursor→end + sidecar save + the
+§15.6 Track clip on real data.
