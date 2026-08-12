@@ -1,5 +1,5 @@
 // ############################################################################
-// #  PadViz7   —   LAST EDITED: 2026-08-12 11:06   —   v0.24                  #
+// #  PadViz7   —   LAST EDITED: 2026-08-12 11:43   —   v0.25                  #
 // #  (BUILD_STAMP below feeds the window title bar — keep the two in sync.)   #
 // ############################################################################
 //
@@ -19,7 +19,7 @@
 // Human-readable build stamp — shown in the window title bar so the running
 // version is identifiable at a glance. Keep in sync with the LAST EDITED banner
 // at the very top of this file; bump both on every edit.
-final String BUILD_STAMP = "v0.24  (last edited 2026-08-12 11:06)";
+final String BUILD_STAMP = "v0.25  (last edited 2026-08-12 11:43)";
 
 Calibration cal;
 Model3D     model3D;
@@ -36,6 +36,7 @@ EntryExitPanel eePanel;   // left 20% boat-frame scatter (v0.14, spec §13.4)
 DetailPanel detailPanel;  // collapsible HUD text box (v0.15, spec §13.8)
 StrokeAveragePanel avgPanel; // right 20% averaged L/R roll traces (v0.15, spec §13.8)
 SideProfilePanel sideView; // 'x' (F2 alt) full-window ZY-plane blade profiles (v0.22, spec §14.9)
+Tabs        tabs;         // top-centre view-switch tabs: 3D view / side profile (v0.25)
 
 // True when visualisation/recordings/ holds at least one *.session.json at
 // startup — enables the wizard's "J = load a saved session" one-step shortcut
@@ -285,6 +286,7 @@ void setup() {
     detailPanel = new DetailPanel();
     avgPanel    = new StrokeAveragePanel();
     sideView    = new SideProfilePanel();
+    tabs        = new Tabs();
 
     loadPaddleDims();
     g_sessionsAvailable = hasSessionJson();
@@ -338,12 +340,14 @@ void draw() {
         drawHUD();
         drawAxisCompass();
         popMatrix();
-        drawAxisLegend();
+        // Axis definitions moved into the Detail box (v0.25) — see drawAxisDefs()
+        // called from drawHUD() — so they no longer clutter the top-right.
     }
     if (side) sideView.draw(catchEvents, paddleFrameIdx);
     if (isGraphVisible()) graph.draw(paddleData, boatData, sync, paddleFrameIdx);
     if (wizard != null) wizard.draw();
     if (menu != null) menu.draw();
+    if (tabs != null) tabs.draw();
     drawRefFlash();
     drawDimPrompt();
     hint(ENABLE_DEPTH_TEST);
@@ -373,6 +377,25 @@ boolean sideActive() {
     return sideView != null && sideView.shown
         && paddleData != null && paddleData.frameCount() > 0
         && catchEvents != null && catchEvents.uzTip != null;
+}
+
+// Switch between the two full-window views. Single code path shared by the
+// `x` key, the Commands menu, and the top-centre Tabs (v0.25): on = show the
+// side-profile window, off = return to the 3D scene. Turning it on with no
+// paddle data just flashes a hint (sideActive() then stays false, so the 3D
+// view keeps the screen); turning it on from a non-paddle slice snaps to a
+// paddle timeline (A, or C when a boat CSV is loaded) so playback drives it.
+void showSideProfile(boolean on) {
+    if (sideView == null) return;
+    sideView.shown = on;
+    if (!on) return;
+    boolean haveData = paddleData != null && paddleData.frameCount() > 0
+                       && catchEvents != null && catchEvents.uzTip != null;
+    if (!haveData) {
+        triggerRefFlash("SIDE PROFILE — load a paddle CSV first");
+    } else if (sliceMode == 0 || sliceMode == 2) {
+        switchSlice((boatData != null && boatData.frameCount() > 0) ? 3 : 1);
+    }
 }
 
 // Width in px of the entry/exit panel, 0 when hidden. HUD, compass, menu
@@ -771,8 +794,9 @@ void drawHUD() {
     else                     drawHUD_sliceC();
     popMatrix();
 
-    // (Axis legend is drawn by draw() outside the panel translate so it
-    //  stays anchored to the window's right edge.)
+    // Axis definitions (v0.25) — moved off the main view into this box, one
+    // colour-coded line just above the classification/footer lines.
+    drawAxisDefs(DetailPanel.BOX_Y + DetailPanel.BOX_H - 54);
 
     // Classification summary (v0.16, spec §14) — counts per type + total
     // excluded duration; the "note that data has been excluded" line the user
@@ -790,26 +814,26 @@ void drawHUD() {
     text("model calibration file:  " + cal.savePath, 20, DetailPanel.BOX_Y + DetailPanel.BOX_H - 16);
 }
 
-void drawAxisLegend() {
-    // Shifts left by rightPanelWidth() so the stroke-average panel (v0.15)
-    // doesn't sit behind it.
-    int lx = width - 380 - rightPanelWidth();
-    textSize(13);
-    fill(220);
-    if (sliceMode == 2 || sliceMode == 3) {
-        // Slice B: kayak alone. Slice C: kayak drives world, so world axes = boat frame.
-        text("Boat sensor axes at origin", lx, 16);
-        textSize(12);
-        fill(255, 80, 80);   text("+X  starboard",              lx, 42);
-        fill(80, 255, 80);   text("+Y  bow (forward)",           lx, 60);
-        fill(100, 140, 255); text("+Z  up (deck)",               lx, 78);
-    } else {
-        text("Paddle sensor axes at origin", lx, 16);
-        textSize(12);
-        fill(255, 80, 80);   text("+X  shaft toward right blade", lx, 42);
-        fill(80, 255, 80);   text("+Y  blade normal",             lx, 60);
-        fill(100, 140, 255); text("+Z  in-blade (up in cal pose)",lx, 78);
-    }
+// Axis definitions, drawn as a single colour-coded line inside the Detail box
+// (v0.25). Moved here from the old top-right floating legend so it no longer
+// sits under the title on the main view. Called from drawHUD() in the box's
+// left-translated frame (x = 20 is leftPanelWidth()+20 on screen); y is an
+// absolute box coordinate like the classification/footer lines. Which frame's
+// axes are shown follows the slice (boat for B/C, paddle otherwise).
+void drawAxisDefs(int y) {
+    boolean boat = (sliceMode == 2 || sliceMode == 3);
+    textAlign(LEFT, TOP);
+    textSize(11);
+    float x = 20;
+    String head = boat ? "Boat sensor axes @ origin:   "
+                       : "Paddle sensor axes @ origin:   ";
+    String xl   = boat ? "+X starboard    "  : "+X shaft toward right blade    ";
+    String yl   = boat ? "+Y bow (forward)    " : "+Y blade normal    ";
+    String zl   = boat ? "+Z up (deck)"      : "+Z in-blade (up in cal pose)";
+    fill(200);           text(head, x, y);  x += textWidth(head);
+    fill(255, 80, 80);   text(xl,   x, y);  x += textWidth(xl);
+    fill(80, 255, 80);   text(yl,   x, y);  x += textWidth(yl);
+    fill(100, 140, 255); text(zl,   x, y);
 }
 
 void drawHUD_slice0() {
@@ -1052,18 +1076,7 @@ void keyPressed() {
     // loaded) when turning it on from a non-paddle slice, so playback,
     // scrubbing and the graph strip all drive it.
     if (key == 'x' || key == 'X' || (key == CODED && keyCode == 113)) {
-        if (sideView != null) {
-            sideView.toggle();
-            if (sideView.shown) {
-                boolean haveData = paddleData != null && paddleData.frameCount() > 0
-                                   && catchEvents != null && catchEvents.uzTip != null;
-                if (!haveData) {
-                    triggerRefFlash("SIDE PROFILE — load a paddle CSV first");
-                } else if (sliceMode == 0 || sliceMode == 2) {
-                    switchSlice((boatData != null && boatData.frameCount() > 0) ? 3 : 1);
-                }
-            }
-        }
+        if (sideView != null) showSideProfile(!sideView.shown);
         return;
     }
     // m = set paddle & blade length (numeric prompt, last values pre-filled).
@@ -1644,6 +1657,10 @@ void mousePressed() {
     // orbit.
     if (dismissFlashClicked(mouseX, mouseY)) return;
     if (menu != null && menu.mousePressed(mouseX, mouseY)) return;
+    // View-switch tabs (v0.25) — checked after the Commands drop-down (so an
+    // open menu wins) but before the side-profile early-return below, so the
+    // tabs are clickable in both the 3D and side-profile views.
+    if (tabs != null && tabs.mousePressed(mouseX, mouseY)) return;
     // When the side-profile window owns the screen, the graph strip still
     // scrubs; a right-click above it restarts the arc accumulation. The
     // main-view detail button / side panels / 3D orbit are all inactive.
