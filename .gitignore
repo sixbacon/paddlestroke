@@ -12,3 +12,12 @@ visualisation/error_reports/*
 
 # Python bytecode cache (from visualisation/stroke_*.py analysis scripts)
 __pycache__/
+
+# PadViz Processing sketch local artefacts
+# (gitignore has no inline comments — keep each note on its own line)
+# OSM map tiles cached by the PadViz8 Track view
+visualisation/**/tilecache/
+# Processing PDE autosaves
+visualisation/**/*.autosave
+# per-machine last-used paddle dimensions
+visualisation/**/paddle_dims.json
