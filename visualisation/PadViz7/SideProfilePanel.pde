@@ -104,6 +104,13 @@ class SideProfilePanel {
         int H = height - GRAPH_H;             // area above the graph strip
         int half = H / 2;
 
+        // The band only ever spans resetAtFrame..cursor, so a restart point left
+        // AHEAD of the cursor (e.g. restart near the end, then rewind to replay)
+        // would draw nothing. Re-anchor the restart point to the cursor whenever
+        // the cursor moves behind it, so "restart, then run again from earlier"
+        // rebuilds the band as playback advances.
+        if (curFrame < resetAtFrame) resetAtFrame = max(0, curFrame);
+
         noStroke();
         fill(18, 20, 26);
         rect(0, 0, width, H);

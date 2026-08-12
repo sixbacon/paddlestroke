@@ -1,5 +1,5 @@
 // ############################################################################
-// #  PadViz7   —   LAST EDITED: 2026-08-12 11:43   —   v0.25                  #
+// #  PadViz7   —   LAST EDITED: 2026-08-12 14:17   —   v0.25                  #
 // #  (BUILD_STAMP below feeds the window title bar — keep the two in sync.)   #
 // ############################################################################
 //
@@ -19,7 +19,7 @@
 // Human-readable build stamp — shown in the window title bar so the running
 // version is identifiable at a glance. Keep in sync with the LAST EDITED banner
 // at the very top of this file; bump both on every edit.
-final String BUILD_STAMP = "v0.25  (last edited 2026-08-12 11:43)";
+final String BUILD_STAMP = "v0.25  (last edited 2026-08-12 14:17, band-fix backport)";
 
 Calibration cal;
 Model3D     model3D;
