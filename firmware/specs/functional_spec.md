@@ -368,6 +368,38 @@ The following are excluded from the current implementation. Items marked with a 
 | **8** | Production integration — full-IMU ESPnow payload in PadLog; SD logging in PadDis; SD card removed from paddle device. Sketches renamed PadLog / PadDis with version scheme phase.iteration. v8.1: hardware validated 12 May 2026 (63 min session, 100 Hz, <0.03% loss, 51–76 CPM). v8.2: streak gate, separate rate buffers, asymmetry bar. v8.3: doze/wake bug fixed — accelerometer left active in doze mode was consuming all wakeup events, blocking RV data; fix disables accelerometer on doze entry. Full cycle validated 14 May 2026. v8.4: `isRateMature()` gate prevents post-wake CPM spike; rolling-midpoint asymmetry replaces `pitch >= 0` classifier. Field test 18 May 2026 revealed feather rotation artefacts inflating CPM 1.7× at 45° gate. v8.5 (PadDis only): CSV column selector (`CSV_COLUMNS_REDUCED`) reduces SD write volume 72%; 20-second EMA on displayed CPM (raw CSV unchanged). v8.6: `AMPLITUDE_GATE_DEG` raised 45°→90° (PadLog + sim_test) — rejects feather rotation events; Option 3 consecutive-event asymmetry replaces v8.4 rolling-midpoint EMA; dark display theme (black background, white text). v8.7 (PadDis only): asymmetry bar and all related state removed (timing asymmetry is structural — see §3.5); CPM display EMA 20 s→10 s; yellow NO SD CARD warning on splash screen. *(Complete — v8.7 flashed and validated 20 May 2026)* v8.8 (PadDis only): `CSV_COLUMNS_REDUCED` commented out — full 15-column set default for PadViz4 data collection. v8.9 (PadDis only): boat unit ESPnow integration (BoatLog v1.0); CPM 1 dp display; speed in knots; GPS time stamped into paddle CSV; display rewritten to three-line layout (Font 4 throughout — time+dots line 1, speed line 2 size 2 centred, CPM line 3 size 2 centred). *(Complete — v8.9 flashed 30 Jun 2026; BoatLog T1+T2 PASS 30 Jun 2026)* v8.7 diagnostic (PadLog only, 2 Jul 2026): `#define DOZE_DISABLED` added — bypasses doze entry and doze loop so PadLog logs continuously; onboard LED (GPIO 22, active LOW) flashes 50 ms every 2 s as a heartbeat. Comment out `DOZE_DISABLED` to restore normal doze behaviour. |
 | **9** | Blade entry/exit detection — use `accel_x`/`accel_y` transients to detect blade catch and release independently of roll oscillation. Enables stroke quality metrics (catch angle, release timing). *(Pending — design not started)* |
 
+### 8.1 Future sensor-unit iteration — paddle-vs-boat position sensing
+
+*(Note for the next hardware iteration — recorded 12 Aug 2026, not yet scheduled.)*
+
+The visualiser currently places the paddle relative to the boat from **assumed
+constants** (`PADDLE_BOW_OFFSET_M`, `PADDLE_FWD_OF_CENTRE_M` in PadViz). A
+start-of-session **reference-pose capture** (paddle held at a tape-measured or
+fixtured position relative to the boat sensor) would fix the *anchor* and give a
+full 3-axis boresight between the two IMU frames — but it only calibrates one
+instant. In use the paddle is then moved to the paddling position, **and the
+centre of the paddle's motion itself shifts as paddling style changes**, so a
+static anchor plus orientation is not enough to locate the paddle through the
+stroke.
+
+The missing piece is **live hand-translation** (how the shaft centre moves
+relative to the boat during the stroke). Two IMUs alone cannot supply this —
+double-integrating relative acceleration drifts within seconds. Options to carry
+into the next unit design:
+
+- **GPS-anchored per-stroke re-zeroing (software, no new hardware):** during the
+  power phase the planted blade tip is ~stationary in the water, so in the boat
+  frame it moves backward at ~boat speed (available from GPS). Use this recurring
+  constraint as a pseudo-ZUPT to bound integration drift each stroke. Prototype
+  offline in `visualisation/stroke_*.py` on a real CSV before committing hardware.
+- **A ranging/position sensor in the next unit:** e.g. UWB (DW3000-class)
+  two-way ranging between a paddle tag and one or more boat anchors, or a short
+  camera/IR-marker baseline — to measure paddle-vs-boat position directly rather
+  than infer it. Adds BOM + power but removes the drift problem entirely.
+
+Decision deferred to the next sensor-unit revision. See visualisation spec §15
+context and the calibration-methodology note (§7 revisit).
+
 ---
 
 ## 9. Test Plan
