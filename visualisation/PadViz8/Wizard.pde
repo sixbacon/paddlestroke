@@ -161,6 +161,13 @@ class Wizard {
     }
 
     boolean handleKeyStep4(char k, boolean ret) {
+        // Quick "exclude from the cursor to the END of the file (inclusive)" —
+        // the common case of dropping a drive-home tail without having to land
+        // the end mark on the very last frame. Works whether reviewing saved
+        // sections (4b) or marking new ones (4a); it just adds one section and
+        // leaves the others alone.
+        if (k == 'e' || k == 'E') { excludeCursorToEnd(); return true; }
+
         if (classReview) {                                  // 4b
             if (ret)                  { gotoStep5(); return true; }
             if (k == 'r' || k == 'R') {
@@ -219,6 +226,29 @@ class Wizard {
         paddleFrameIdx = classify.nearestVisible(paddleFrameIdx);
         classify.markReset();
         errorMsg = "";
+    }
+
+    // Exclude the range [cursor .. last frame of the paddle file] (inclusive).
+    // Adds one EXCLUDED section; leaves any existing sections untouched. Rejects
+    // only if it would overlap an existing section (move the cursor past it).
+    void excludeCursorToEnd() {
+        int last = (paddleData != null) ? paddleData.frameCount() - 1 : -1;
+        if (last < 0) { setError("no paddle data loaded"); return; }
+        int start = constrain(paddleFrameIdx, 0, last);
+        for (ClassificationSection ex : sidecar.classification) {
+            if (start <= ex.endFrame && ex.startFrame <= last) {
+                setError("cursor→end overlaps an existing section — move the cursor past it");
+                return;
+            }
+        }
+        sidecar.classification.add(new ClassificationSection(start, last, CLASS_EXCLUDED));
+        saveSidecarQuiet();
+        rebuildClassificationIndex();
+        paddleFrameIdx = classify.nearestVisible(paddleFrameIdx);
+        classify.markReset();
+        classReview = false;     // drop into 4a so more can be marked / finished
+        errorMsg = "";
+        triggerRefFlash("EXCLUDED  frame " + start + " → end (" + last + ")");
     }
 
     // ── Mouse — dismiss the error line / consume clicks inside the panel ─────
@@ -366,24 +396,24 @@ class Wizard {
         if (classReview) {
             y = line(x, y, 16, color(230), "4.  Classification  —  saved sections found");
             y = line(x, y, 13, color(180), classificationSummary(sidecar.classification));
-            y = opts(x, y, "Return  =  use them        r/R  =  reset & reclassify");
+            y = opts(x, y, "Return  =  use them        r/R  =  reset & reclassify        e/E  =  exclude cursor→end");
             return y;
         }
         y = line(x, y, 16, color(230), "4.  Classification");
         switch (classify.markPhase) {
             case MARK_IDLE:
                 y = line(x, y, 13, color(180), "Position the graph cursor at the START of a section, then press Return.");
-                y = opts(x, y, "Return  =  mark start        f/F  =  finish");
+                y = opts(x, y, "Return  =  mark start        e/E  =  exclude cursor→end of file        f/F  =  finish");
                 break;
             case MARK_START:
                 y = line(x, y, 13, color(255, 235, 90),
                         "START marked at frame " + classify.pendingStart + " (yellow). Now position the cursor at the END.");
-                y = opts(x, y, "Return  =  mark end        a/A  =  abort pair        f/F  =  finish");
+                y = opts(x, y, "Return  =  mark end        e/E  =  exclude cursor→end        a/A  =  abort pair        f/F  =  finish");
                 break;
             case MARK_END:
                 y = line(x, y, 13, color(255, 160, 160),
                         "Section " + classify.pendingStart + "–" + classify.pendingEnd + " marked. Classify it:");
-                y = opts(x, y, "r/R right    l/L left    z/Z zero-feather    d/D exclude    a/A abort    f/F finish");
+                y = opts(x, y, "r/R right    l/L left    z/Z zero    d/D exclude    e/E excl→end    a/A abort    f/F finish");
                 break;
         }
         y = line(x, y, 11, color(140), classificationSummary(sidecar.classification));
