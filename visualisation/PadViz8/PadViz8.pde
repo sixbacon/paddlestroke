@@ -1,5 +1,5 @@
 // ############################################################################
-// #  PadViz8   —   LAST EDITED: 2026-08-12 21:43   —   v0.27                  #
+// #  PadViz8   —   LAST EDITED: 2026-08-12 21:59   —   v0.28                  #
 // #  (BUILD_STAMP below feeds the window title bar — keep the two in sync.)   #
 // ############################################################################
 //
@@ -23,7 +23,7 @@
 // Human-readable build stamp — shown in the window title bar so the running
 // version is identifiable at a glance. Keep in sync with the LAST EDITED banner
 // at the very top of this file; bump both on every edit.
-final String BUILD_STAMP = "PadViz8  v0.27  (last edited 2026-08-12 21:43)";
+final String BUILD_STAMP = "PadViz8  v0.28  (last edited 2026-08-12 21:59)";
 
 Calibration cal;
 Model3D     model3D;
@@ -1078,34 +1078,23 @@ void stepPlayback() {
     }
 }
 
-// Standalone clear-classification (q key). Two-press confirm: -1 = disarmed,
-// else the millis() of the arming press. A second q within CLEAR_CLASS_CONFIRM_MS
-// commits the wipe.
-int clearClassArmedMs = -1;
-static final int CLEAR_CLASS_CONFIRM_MS = 3000;
+// Classification stashed across a roll-cal reset (Wizard.resetRollCal nulls the
+// sidecar to force Step 3a; buildAndSaveSidecar restores this onto the rebuilt
+// sidecar, so recalibrating a session keeps its good/left/right/zero/excluded
+// markings — the two are independent). null = nothing stashed.
+ArrayList<ClassificationSection> stashedClassification = null;
 
+// Standalone clear-classification (q key). Single press, matching the wizard's
+// own Step-4 reset — clears all sections, persists, and rebuilds the exclusion
+// index. Recoverable by re-classifying, so no confirm prompt.
 void clearClassificationRequested() {
     int n = (sidecar != null && sidecar.classification != null)
             ? sidecar.classification.size() : 0;
-    if (n == 0) {
-        clearClassArmedMs = -1;
-        triggerRefFlash("NO CLASSIFICATION TO CLEAR");
-        return;
-    }
-    int now = millis();
-    // First press (or a stale arm) only arms + warns; it never wipes.
-    if (clearClassArmedMs < 0 || now - clearClassArmedMs > CLEAR_CLASS_CONFIRM_MS) {
-        clearClassArmedMs = now;
-        triggerRefFlash("PRESS q AGAIN TO CLEAR " + n
-                        + " CLASSIFICATION SECTION" + (n == 1 ? "" : "S"));
-        return;
-    }
-    // Confirmed within the window — wipe, persist, and rebuild the index.
+    if (n == 0) { triggerRefFlash("NO CLASSIFICATION TO CLEAR"); return; }
     sidecar.classification.clear();
     saveSidecarQuiet();
     rebuildClassificationIndex();
     if (classify != null) paddleFrameIdx = classify.nearestVisible(paddleFrameIdx);
-    clearClassArmedMs = -1;
     triggerRefFlash("CLASSIFICATION CLEARED  (" + n
                     + " section" + (n == 1 ? "" : "s") + " removed)");
 }
@@ -1139,15 +1128,11 @@ void keyPressed() {
         if (wizard != null) wizard.toggle();
         return;
     }
-    // q = clear ALL classification sections (standalone). The wizard's Step-4
-    // reset (r/R) is the in-flow way to wipe classification, but once setup has
-    // completed the wizard reopens read-only and can't re-enter Step 4, leaving
-    // no live way to undo a bad classification. This key fills that gap and works
-    // in any slice. Two-press guard against an accidental full wipe: the first
-    // press arms and flashes a prompt, a second q within CLEAR_CLASS_CONFIRM_MS
-    // commits — clearing the in-memory sections, rewriting the sidecar, and
-    // rebuilding the exclusion/visibility index so any previously excluded (d/D)
-    // ranges become navigable again. Roll calibration is untouched.
+    // q = clear ALL classification sections (standalone, any slice). A quick
+    // one-press wipe (rewrites the sidecar + rebuilds the exclusion index so
+    // previously excluded d/D ranges become navigable again). Roll calibration
+    // is untouched. For fixing individual marks, reopen the wizard (w) and use
+    // Step-4's reset/re-mark instead.
     if (key == 'q' || key == 'Q') { clearClassificationRequested(); return; }
     // x = side-profile blade window (ZY plane) — a full-window alternative to
     // the main 3D view. It plots the paddle blade in the boat's ZY (side)
@@ -1849,6 +1834,19 @@ boolean buildAndSaveSidecar() {
     }
     int searchStart = paddleFrameIdx;
     Sidecar built = buildSidecar(paddleData, boatData, sync, searchStart);
+
+    // Carry classification across a recalibration — it's independent of the
+    // roll cal (spec §14). Prefer the current sidecar's list (plain C-key
+    // rebuild with a sidecar still in hand); fall back to the stash saved when
+    // the wizard's Step-3 reset nulled the sidecar. So "exclude the drive-home,
+    // then recalibrate" keeps the exclusion.
+    ArrayList<ClassificationSection> keepClass =
+        (sidecar != null && sidecar.classification.size() > 0)
+            ? sidecar.classification : stashedClassification;
+    if (keepClass != null && keepClass.size() > 0)
+        built.classification.addAll(keepClass);
+    stashedClassification = null;
+
     sidecar = built;
 
     println("Sidecar build result:");
@@ -1891,8 +1889,9 @@ boolean buildAndSaveSidecar() {
     // Sidecar changed — the entry/exit yaw datum depends on it. Fresh C run
     // also resets any manual yaw-datum nudge (built is a brand-new Sidecar)
     // and any panel clear marker, since this is effectively a new calibration.
-    // A fresh sidecar has no classification sections, so the exclusion index
-    // resets to "nothing excluded" (spec §14).
+    // Classification was carried over onto `built` above (it's independent of
+    // the roll cal), so rebuild the exclusion index from the preserved sections
+    // rather than clearing it (spec §14).
     rebuildCatchEvents();
     rebuildClassificationIndex();
     if (eePanel != null) eePanel.clear(0);

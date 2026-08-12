@@ -89,7 +89,7 @@ class Menu {
         items.add(new MenuItem("x", "Side-profile blade window (ZY plane, L/R)",  'x', 0));
         items.add(new MenuItem("t", "Track window (GPS over OpenStreetMap)",      't', 0));
         items.add(header("CLASSIFICATION"));
-        items.add(new MenuItem("q", "Clear ALL classification (press twice)",     'q', 0));
+        items.add(new MenuItem("q", "Clear ALL classification",                    'q', 0));
         items.add(header("CAMERA"));
         items.add(new MenuItem("V", "Snap side / top preset (recentres)", 'V', 0));
         items.add(info("drag",  "orbit camera (left-drag in 3D area)"));

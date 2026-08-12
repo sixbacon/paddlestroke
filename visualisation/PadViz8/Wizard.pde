@@ -60,7 +60,28 @@ class Wizard {
         return sidecar != null && sidecar.classification.size() > 0;
     }
 
-    void toggle() { shown = !shown; }
+    void toggle() {
+        if (!shown && complete) {
+            // Reopen a COMPLETED wizard as a live flow at Step 3 — not a dead
+            // read-only summary. Steps 3b/4b already show the saved calibration
+            // and classification with "use it (Return) / reset (r/R)" options,
+            // so this is the way to recalibrate the paddle and re-classify a
+            // long session after setup has finished (the old summary just
+            // displayed the numbers with no way to act). Force a paddle graph
+            // slice so the cursor can be positioned for the rest window / the
+            // section marks.
+            complete    = false;
+            doneAtMs    = -1;
+            step        = 3;
+            classReview = hasClassification();
+            classify.markReset();
+            errorMsg    = "";
+            shown       = true;
+            if (sliceMode == 0) switchSlice(1);
+        } else {
+            shown = !shown;
+        }
+    }
 
     void setError(String msg) { errorMsg = msg; }
 
@@ -82,8 +103,13 @@ class Wizard {
         errorMsg = "";
     }
 
-    // Discard the whole sidecar and fall back into Step 3a (spec §14, 3b reset).
+    // Discard the roll calibration and fall back into Step 3a (spec §14, 3b
+    // reset). Classification is INDEPENDENT of the roll calibration, so stash it
+    // first — buildAndSaveSidecar() restores it onto the rebuilt sidecar, so
+    // "exclude the drive-home, then recalibrate" keeps the exclusion.
     void resetRollCal() {
+        if (sidecar != null && sidecar.classification.size() > 0)
+            stashedClassification = new ArrayList<ClassificationSection>(sidecar.classification);
         sidecar = null;
         qRefPad  = new float[]{ 1, 0, 0, 0 };
         qRefBoat = new float[]{ 1, 0, 0, 0 };
