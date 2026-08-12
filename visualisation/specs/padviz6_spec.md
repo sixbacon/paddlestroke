@@ -1,6 +1,6 @@
 # PadViz6 — Disciplined Orientation Specification
 
-**Version:** 0.23
+**Version:** 0.24
 **Date:** 2026-07-21
 **Status:** v0.23 (7 Aug 2026, §14.9) — **real paddle geometry** is now session metadata: paddle **total length** + **blade length** stored in the sidecar (`paddle_total_length_m` / `blade_length_m`), shown in the Detail panel, entered via an in-sketch numeric prompt (**`m`**, or on `C` build) that **pre-fills the last-used values** (persisted to `paddle_dims.json`). These scale the **3D paddle model** to the real length (`paddle60.obj` native 1.8182 m) and the **side-view blade** (`visBladeCentreM`/`visBladeLenM`); the catch detector is untouched. **Side-profile window CONFIRMED on screen** (`x` opens it, `m` opens the prompt). — v0.22 (7 Aug 2026) — side-profile reworked to a **blade-immersion** view: blade drawn as a **segment** (red right / yellow left) live + faint-per-stroke-deepest; **blue waterline** referenced to the blade **tip** (`bladeTipZ`); **fixed vertical scale** (no more resize). Window keys rebound off Fn-shifted F1/F2 to **`w`** (wizard) / **`x`** (side profile), F1/F2 kept as alternates. `PadViz7.pde` gained a `LAST EDITED` banner + title-bar `BUILD_STAMP`. — v0.21 — first cut of the side-profile window: two boat **ZY**-plane profiles, bow red on each; drew tip arcs + a data-fitted scale (both replaced in v0.22). — v0.20 (23 Jul 2026, §14.8) — both side panels (`EntryExitPanel`, `StrokeAveragePanel`) now scale to fill the tall panel: plot scale fitted to the plot **height** (kayak length) instead of the narrow panel width, so the kayak fills ~94% of the height (was ~59%) — a ~1.5× enlargement bounded by keeping the whole kayak in view — with larger fonts throughout. — v0.19 (23 Jul 2026, §14.7) — axis compass moved to the bottom-**right** corner (out of the Commands drop-down's path — the drop-down still doesn't reliably occlude it in P3D), and a stroke-average **symmetry overlay**: `o` mirrors the right blade path about the Y (fore-aft) axis and overlays it on the left, so left/right asymmetry reads as a gap between the two curves. — v0.18 (23 Jul 2026, §14.6) — startup one-step **saved-session loader** (`J` at wizard Step 1 when `visualisation/recordings/` holds any `*.session.json` — picks one JSON and loads paddle CSV + boat CSV + calibration + classification in a single step) and **stroke-average panel metrics** (right-hand panel now shows, per blade, the averaged entry→exit time and straight-line distance alongside the stroke count). Classification incl. the `d/D` exclude path is now **confirmed working on screen** (excluded section cut from the graph and stayed excluded on reload). **Calibration methodology flagged for revisit** — a 1° yaw-datum nudge is visibly significant, so the rest-pose hold (paddle exactly along the kayak axis) is more sensitive than the current accel-rest-window procedure assumes (§7 note). — v0.17 (23 Jul 2026, §14.5) — UI polish on PadViz7, reviewed on screen (user: "better"): opaque grey backgrounds on the setup wizard + Commands drop-down; the Commands list is now height-capped and scrollable (slide bar + wheel + track paging) so it no longer runs off the page; file-open dialogs default to `visualisation/recordings/`; the setup/summary window hides the 3D scene + analysis overlays (side panels, HUD/detail box, axis compass + legend) while shown so it presents cleanly on a plain background (graph strip stays for cursor positioning); Slice 0 nudge default step 5°→1° for finer rest-pose correction. — v0.16 (21 Jul 2026, §14) forks a **new sketch `PadViz7/`** from PadViz6 v0.15 — guided 5-step session-setup wizard (`Wizard.pde`, replacing `Checklist.pde`) plus a Classification Section in the sidecar (`Classification.pde` + `classification_sections` JSON, §7.5) recording good right/left/zero-feather stretches and excluding ranges from the graph + all navigation. BUILT + compiles clean; on-screen walkthrough pending (§14.4). PadViz6 left untouched at v0.15. — v0.15 ACCEPTED 20 Jul 2026 ("that is enough on visualisation for this session, it is doing what I want for now" — §13.9). §13.7: four field-use fixes from the user's on-screen check of v0.14 — pitch nudge moved off the double-bound `p`/`P` to `i`/`I`; playback speed multiplier (`>` doubles, `<` resets to x1); entry/exit panel right-click clears accumulated dots; entry/exit yaw-datum manual override (`n`/`N` nudge, `g` reset, shown in Slice 0, saved in the sidecar) as an explicit stop-gap for a ~30° automatic-datum error found on replay; Slice C paddle base position moved +0.45 m toward the bow (measured average paddle-centre offset from boat centre). Slices 0–C + bottom GraphPanel with two-click zoom (right-click), double-right-click revert, `S`-key zoom reset, and merged CSV export (curated + all-fields). Corner axis compass (2D, ~1/3 the old on-screen size) with a `P`/`K`/`W` frame letter that also acts as the slice-switch shortcut. §7 expanded (v0.7) from single yaw-alignment rotation to a three-offset per-session procedure — sensor-mount roll/pitch (from accel) + magnetic-yaw datum (from mean quats) — with pre-session magnetometer figure-8 and DCD save. Requires three firmware additions listed in §7.8 (formalised in firmware spec §15, v2.7). v0.8: the three 8 Jul 2026 field-use notes (§12.10) are now DONE — `k`/`u` HUD flash, Slice B hint to `W`, and Backspace/`-` back-slice ping-pong. v0.9: free-orbit camera — left-drag orbits, wheel zooms, V snaps to side/top preset; 2D axis compass now rotates in step with the 3D camera basis. v0.10: first-pass session sidecar builder (`Sidecar.pde`, C key) — rest-window detector + mean-based mount offsets + yaw datum + JSON save per §7.5. Slice-switch letter shortcuts P/K/W dropped (Caps-Lock case ambiguity); digits 0/1/2/3 only. v0.11: startup onboarding checklist (`Checklist.pde`) in the bottom strip when no paddle CSV is loaded — three rows auto-ticked and clickable. v0.12: sidecar auto-load — on paddle-CSV open, look for a sibling `<basename>.session.json`, parse it, and reseed rest-window references so the correction is active without pressing C. Third checklist row auto-ticks in that case; boat CSV load extends the seeding to the boat side. v0.13 (9 Jul 2026): three field-use fixes driven by the 9 Jul session — (a) C-key rest-window search now starts at the current playback frame (was frame 0), so the user can seek to the intended still moment before building; (b) checklist strip hides as soon as the paddle CSV loads (was blocking the graph until sidecar built), and a yellow "SIDECAR not built — seek then press C" HUD hint appears in its place; (c) `DataSource.computePaddleCentreMotion` — accel double-integration with a three-stage HPF cascade (fc ≈ 0.3 Hz) drives a per-frame paddle-centre offset (±0.3 m clamped) that translates the mesh in Slices A + C during render, so the shaft midpoint visibly swings with the stroke. v0.14 (17 Jul 2026, §13): startup checklist becomes a floating overlay above the graph strip (graph appears on paddle-CSV load, overlay stays through seek-and-`C`); left key-list HUD replaced by a Commands pull-down menu; new `CatchEvents.pde` offline blade entry/exit detector (port of firmware spec §13.5 feasibility method); new `EntryExitPanel.pde` — left 20 % boat-frame top-down scatter of entry/exit points, red = right blade, green = left, filled = entry, hollow = exit, accumulating with playback.
 
@@ -1466,7 +1466,7 @@ true 2× would need to crop the bow/stern. Grid rings reduced to 0.5 m / 1 m (th
 laid out with more vertical room. Applies to both `EntryExitPanel` and
 `StrokeAveragePanel` identically.
 
-### 14.9 side-profile blade-immersion window + real paddle geometry (v0.21–0.23, 7 Aug 2026)
+### 14.9 side-profile blade-immersion window + real paddle geometry (v0.21–0.24, 7–12 Aug 2026)
 
 A second full-window **alternative** view (like the setup wizard, it owns the
 screen rather than drawing on top — `draw()` skips the 3D scene, both side
@@ -1492,23 +1492,48 @@ profiles, each showing ONE blade edge-on down the boat's across-boat (X) axis:
   from +X) → bow (+Y) on the screen **right**, blade drawn **red**.
 
 The two halves look at the boat from **opposite** sides, so +Y falls on
-opposite screen sides — hence the **bow is marked red** on each (a filled red
-wedge at the +Y hull tip + "BOW"): it removes the L/R ambiguity.
+opposite screen sides — hence the **bow is marked red** on each: it removes the
+L/R ambiguity.
 
-**Blade-immersion rendering (v0.22).** Instead of a tip point, the blade is
-drawn as a **physical segment** (`CatchEvents.bladeSegmentYZ`) throat→tip:
-- **live blade** at the playback cursor (bold), plus faintly at each completed
-  stroke's **deepest** point, so every stroke's immersion depth stacks up;
+**Real hull outline (v0.24).** The kayak is drawn as the **real sea-kayak side
+profile** traced from `visualisation/seakayakside.svg` (a Visio SVG export the
+user supplied), scaled to its true **5.1816 m (17 ft)** length — **outline
+only**, no deck/cockpit detail. The 13-vertex outline is baked into
+`SideProfilePanel.HULL` in metres (SVG units × 0.0107526; y flipped, keel
+datum). It is positioned so:
+- its **waterline** — a fixed **0.1143 m (4.5 in)** above the keel, the hull's
+  real draft — coincides with the blue mean-catch waterline; and
+- the paddle **shaft centre sits 0.3048 m (1 ft) forward** of the hull
+  mid-point (`boatCentreY = PADDLE_BOW_OFFSET_M − 0.3048`), so the blade band
+  lands where the paddler actually reaches.
+The forward **nose** of that outline (forefoot → bow tip → deck, `HULL[5..8]`)
+is filled **red** as the bow marker, so the coloured area overlays the real
+hull rather than floating past its tip. `VIEW_HALF_LEN_M` raised 2.45→2.90 to
+fit the 17 ft hull with the forward offset.
+
+**Blade-immersion rendering (v0.22, band v0.24).** The blade is drawn as a
+**physical segment** (`CatchEvents.bladeSegmentYZ`) throat→tip:
+- the **live blade** at the playback cursor (bold) is drawn **only while it is
+  in the water** — its tip below the waterline, immersed to any extent
+  (`bladeTipZ < waterM`); on the out-of-water recovery it isn't shown;
+- **persistent immersion band (v0.24):** at **every** in-water frame up to the
+  cursor (stepped by 2 for cost), the **immersed part** of the blade — clipped
+  at the waterline down to the tip (`drawImmersed`) — is drawn faintly, so the
+  marks accumulate into a **band of colour along the hull side** showing where
+  and how deep the blade works across the whole session. (This replaces v0.22's
+  faint-blade-at-each-stroke's-deepest-point; right-click still restarts the
+  accumulation via `resetAtFrame`.)
 - a **blue waterline** referenced to the blade **tip** (`bladeTipZ`, the leading
   edge that enters first), averaged over all catches of that blade — this fixed
   the earlier error of referencing the blade *centre* (~10–14 cm too high);
-- a kayak side silhouette anchored to the waterline, bow red;
 - footer: stroke count + average / max **immersion depth** below the water.
 
 The **vertical scale is fixed** (`Z_TOP_M..Z_BOT_M` vs the hands/shaft centre),
 so the panels don't resize as strokes accumulate (they did in v0.21). Fore/aft
 (Y) is a fixed scale fitting the whole kayak length across the width; the two
-axes have different px/metre, so both carry metre tick labels.
+axes have different px/metre, so both carry metre tick labels. All lengths in
+this view are **metric**. **Confirmed working on screen 12 Aug** (hull, red bow,
+accumulating band, in-water-only live blade; not sluggish).
 
 **Real paddle geometry (v0.23).** The paddle **total length** and **blade
 length** are now session metadata, stored in the sidecar

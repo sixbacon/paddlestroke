@@ -1,5 +1,5 @@
 // SideProfilePanel — full-window ZY-plane (side-on) blade-immersion analysis
-// (v0.22, spec §14.9). Toggled with x (F2 alt); an ALTERNATIVE to the main 3D
+// (v0.24, spec §14.9). Toggled with x (F2 alt); an ALTERNATIVE to the main 3D
 // visualisation, not an overlay drawn on top of it: while shown, draw() skips
 // the 3D scene, the left/right analysis panels, the HUD, the axis compass and
 // the legend (same screen-owning gate the setup Wizard uses), keeping only the
@@ -16,45 +16,89 @@
 // opposite screen sides in each — which is why the bow is marked in RED on both:
 // it removes the left/right ambiguity when comparing them.
 //
+// The hull is the REAL sea-kayak side profile traced from
+// visualisation/seakayakside.svg (Visio export), scaled to its true 5.1816 m
+// (17 ft) length — outline only, no deck/cockpit detail. It is positioned so:
+//   - its WATERLINE (a fixed 0.1143 m / 4.5 in above the keel, per the real
+//     hull's draft) coincides with the panel's blue waterline; and
+//   - the paddle's shaft centre sits 0.3048 m (1 ft) FORWARD of the hull's
+//     mid-point, so the blade band lands where the paddler actually reaches.
+// The forward nose of that outline is filled RED as the bow marker, tracing the
+// real hull so the coloured area overlays the boat properly.
+//
 // Each view draws:
 //   - a BLUE waterline = mean blade-TIP height at that blade's catch (entry)
 //     events, over the whole file (the tip is the leading edge that breaks the
 //     surface first — spec §14.9). Static, so the view doesn't jump.
-//   - a kayak side silhouette anchored to that waterline, bow tip in RED;
-//   - the paddle BLADE drawn as a 32 cm segment (CatchEvents.bladeSegmentYZ) —
-//     RED for the right blade, YELLOW for the left — at the live playback frame
-//     (bold), plus faintly at each completed stroke's deepest point, so the
-//     depth of immersion of every stroke is visible at a glance;
+//   - the real kayak side outline anchored to that waterline, bow nose RED;
+//   - the immersed part of the paddle BLADE at EVERY in-water frame up to the
+//     cursor, drawn faintly — RED for the right blade, YELLOW for the left — so
+//     the marks accumulate into a persistent BAND of colour along the hull side
+//     showing where, and how deep, the blade works across the whole session;
+//   - the live blade at the playback frame (bold) — drawn ONLY while it is in
+//     the water (tip below the waterline), to any extent;
 //   - a footer: stroke count, average and max immersion depth below the water.
 //
 // The vertical scale is FIXED (Z_TOP_M..Z_BOT_M, metres vs the hands/shaft
 // centre), not fitted to the data, so the panels keep a constant height and
 // don't resize as strokes accumulate. Fore/aft (Y) is drawn to a fixed scale
 // that fits the whole kayak length across the width, so the two axes have
-// different px/metre — both carry metre tick labels to make the scales explicit
-// (the boat silhouette is a scale / orientation reference, not a metric hull).
+// different px/metre — both carry metre tick labels to make the scales explicit.
 
 class SideProfilePanel {
     boolean shown = false;
 
-    static final float VIEW_HALF_LEN_M = 2.45f;  // kayak half-length + margin (Y)
+    static final float KAYAK_LEN_M     = 5.1816f;  // real hull length, 17 ft
+    static final float WL_ABOVE_KEEL_M = 0.1143f;  // waterline 4.5 in above keel
+    // Paddle shaft centre sits this far FORWARD of the hull mid-point (1 ft).
+    static final float PADDLE_FWD_OF_CENTRE_M = 0.3048f;
+
+    static final float VIEW_HALF_LEN_M = 2.90f;  // half-length + margin (Y), fits 17 ft
     static final float Z_TOP_M         = 0.45f;  // fixed vertical window, top (vs hands)
     static final float Z_BOT_M         = -1.30f; // fixed vertical window, bottom
-    static final float HULL_ABOVE_WL_M = 0.22f;  // deck height above waterline (ref)
-    static final float HULL_BELOW_WL_M = 0.22f;  // hull depth below waterline (ref)
     static final float DEFAULT_WL_M    = -0.55f; // fallback waterline if no catches
 
     final int COL_RIGHT = color(235, 60, 60);    // right blade — red
     final int COL_LEFT  = color(240, 210, 40);   // left blade  — yellow
     final int COL_WATER = color(70, 130, 255);   // waterline   — blue
     final int COL_BOW   = color(255, 60, 60);    // bow marker  — red
+    final int COL_HULL  = color(150, 170, 200);  // hull outline
 
-    // Strokes starting before this frame are excluded from the faint history
+    // Real sea-kayak side outline, traced from seakayakside.svg (Visio export)
+    // and converted to metres: { fore/aft, height } where fore/aft is +bow,
+    // measured from the hull mid-point, and height is +up, measured from the
+    // WATERLINE (so keel points sit at −WL_ABOVE_KEEL_M). Bow tip is index 7.
+    // SVG→m: x·0.0107526 (481.89 units = 5.1816 m); y flipped, keel datum, −WL.
+    final float[][] HULL = {
+        { -2.591f,  0.221f },   //  0 stern, deck line
+        { -2.408f,  0.038f },   //  1
+        { -2.332f, -0.038f },   //  2
+        { -0.579f, -0.114f },   //  3 keel
+        {  0.335f, -0.114f },   //  4 keel
+        {  1.890f, -0.023f },   //  5 forefoot
+        {  2.164f,  0.038f },   //  6
+        {  2.591f,  0.297f },   //  7 BOW TIP
+        {  1.981f,  0.221f },   //  8 deck at bow
+        {  0.793f,  0.221f },   //  9 deck
+        {  0.183f,  0.221f },   // 10 deck
+        { -0.610f,  0.099f },   // 11
+        { -1.722f,  0.145f }    // 12
+    };
+    // Forward nose vertices (indices into HULL) filled red as the bow marker,
+    // tracing the real outline: forefoot → bow tip → deck.
+    final int[] BOW_NOSE = { 5, 6, 7, 8 };
+
+    // Strokes/frames before this frame are excluded from the accumulated band
     // (right-click restart). The waterline stays whole-file for stability.
     int resetAtFrame = 0;
 
     void toggle() { shown = !shown; }
     void reset(int atFrame) { resetAtFrame = atFrame; }
+
+    // Boat-frame Y of the hull mid-point: the shaft centre lives at
+    // PADDLE_BOW_OFFSET_M, and the paddle is PADDLE_FWD_OF_CENTRE_M ahead of the
+    // hull centre, so the hull centre sits that much sternward of the shaft.
+    float boatCentreY() { return PADDLE_BOW_OFFSET_M - PADDLE_FWD_OF_CENTRE_M; }
 
     void draw(CatchEvents ce, int curFrame) {
         int H = height - GRAPH_H;             // area above the graph strip
@@ -96,6 +140,7 @@ class SideProfilePanel {
 
         // Fore/aft: fixed scale that fits the whole kayak length across width.
         float scaleY = (width - 2 * MARGIN_X) / (2 * VIEW_HALF_LEN_M);
+        float bcY    = boatCentreY();
 
         // Title.
         fill(200, 220, 255);  textAlign(LEFT, TOP);  textSize(17);
@@ -114,10 +159,7 @@ class SideProfilePanel {
         // steady rather than creeping as you play.
         float waterM = meanEntryTipZ(ce, rightBlade);
 
-        // Fixed vertical scale — panels keep a constant height, no resize.
-        float scaleZ = (plotBot - plotTop) / (Z_TOP_M - Z_BOT_M);
-
-        // Vertical fore/aft grid lines every 1 m.
+        // Vertical fore/aft grid lines every 1 m (boat-frame Y reference).
         stroke(38);  strokeWeight(1);
         for (int m = -2; m <= 2; m++) {
             float gx = cx + yDir * m * scaleY;
@@ -141,8 +183,8 @@ class SideProfilePanel {
         noStroke();  fill(120, 160, 120);  textAlign(LEFT, BOTTOM);  textSize(10);
         text("hands (shaft centre)", MARGIN_X + 4, syFor0 - 2);
 
-        // Kayak side silhouette anchored to the waterline, bow in red.
-        drawKayakSide(cx, yDir, scaleY, plotTop, plotBot, waterM);
+        // Real kayak side outline anchored to the waterline, bow nose in red.
+        drawKayakSide(cx, yDir, scaleY, bcY, plotTop, plotBot, waterM);
 
         // Blue waterline (drawn after the hull so it reads on top).
         float syWater = zToScreen(waterM, plotTop, plotBot);
@@ -151,29 +193,42 @@ class SideProfilePanel {
         noStroke();  fill(COL_WATER);  textAlign(RIGHT, BOTTOM);  textSize(10);
         text("water (mean catch)", width - MARGIN_X - 4, syWater - 2);
 
-        // Faint blade at each completed stroke's deepest-immersion frame, up to
-        // the cursor — so every stroke's max depth is visible stacked together.
+        // Persistent immersion band: the immersed part of the blade at EVERY
+        // in-water frame up to the cursor. Marks accumulate into a band of
+        // colour along the hull side. Stepped by 2 (frames are ~10 ms apart) to
+        // halve the draw cost with no visible loss.
+        int upto = min(curFrame, last);
+        for (int i = max(0, resetAtFrame); i <= upto; i += 2) {
+            if (ce.bladeTipZ(i, rightBlade) >= waterM) continue;   // out of water
+            drawImmersed(ce, i, rightBlade, cx, yDir, scaleY, plotTop, plotBot,
+                         waterM, bladeCol, 34);
+        }
+
+        // Live blade at the playback cursor (bold) — only while in the water.
+        int liveIdx = constrain(curFrame, 0, last);
+        if (ce.bladeTipZ(liveIdx, rightBlade) < waterM)
+            drawBlade(ce, liveIdx, rightBlade, cx, yDir, scaleY, plotTop, plotBot,
+                      bladeCol, 255, 4);
+
+        // Per-stroke immersion stats for the footer (deepest frame of each run).
         ArrayList<int[]> runs = rightBlade ? ce.rightRuns : ce.leftRuns;
         int nStrokes = 0;  float sumDepth = 0, maxDepth = -1e9;
         if (runs != null) {
             for (int[] run : runs) {
                 int s = run[0], e = run[1];
-                if (s < resetAtFrame || e > curFrame || e <= s || s < 0 || e > last) continue;
+                if (s < resetAtFrame || e > upto || e <= s || s < 0 || e > last) continue;
                 int di = deepestFrame(ce, s, e, rightBlade);
-                drawBlade(ce, di, rightBlade, cx, yDir, scaleY, plotTop, plotBot, bladeCol, 55, 2);
                 float depth = waterM - ce.bladeTipZ(di, rightBlade);
                 sumDepth += depth;  maxDepth = max(maxDepth, depth);  nStrokes++;
             }
         }
 
-        // Live blade at the playback cursor (bold), red/yellow.
-        int liveIdx = constrain(curFrame, 0, last);
-        drawBlade(ce, liveIdx, rightBlade, cx, yDir, scaleY, plotTop, plotBot, bladeCol, 255, 4);
-
-        // Fore/aft axis labels — stern ↔ bow along the bottom.
+        // Fore/aft axis labels — stern ↔ bow at the real hull tips.
+        float bowY   = bcY + KAYAK_LEN_M / 2;
+        float sternY = bcY - KAYAK_LEN_M / 2;
         fill(120);  textSize(10);  textAlign(CENTER, TOP);
-        text(yDir < 0 ? "← bow" : "bow →", cx + yDir * 2 * scaleY, plotBot + 4);
-        text(yDir < 0 ? "stern →" : "← stern", cx - yDir * 2 * scaleY, plotBot + 4);
+        text(yDir < 0 ? "← bow"   : "bow →",   cx + yDir * bowY   * scaleY, plotBot + 4);
+        text(yDir < 0 ? "stern →" : "← stern", cx + yDir * sternY * scaleY, plotBot + 4);
 
         // Footer: strokes + average / max immersion depth below the water.
         fill(bladeCol);  textSize(12);  textAlign(LEFT, TOP);
@@ -184,9 +239,8 @@ class SideProfilePanel {
         text(s, MARGIN_X, y0 + hh - BOT_PAD + 14);
     }
 
-    // Draw the 32 cm blade at frame i as a segment throat→tip, clamped to the
-    // plot band so it never bleeds into the other half. alpha/weight set the
-    // faint-history vs bold-live look.
+    // Draw the blade at frame i as a full segment throat→tip (used for the bold
+    // live blade), clamped to the plot band. alpha/weight set the look.
     void drawBlade(CatchEvents ce, int i, boolean rightBlade,
                    int cx, int yDir, float scaleY, int plotTop, int plotBot,
                    int col, int alpha, float weight) {
@@ -202,39 +256,57 @@ class SideProfilePanel {
         ellipse(sxTip, syTip, weight + 3, weight + 3);
     }
 
-    // Kayak side silhouette (a scale / orientation reference, not a metric hull),
-    // anchored so its waterline sits at waterM. Bow (+Y tip) drawn in red.
-    void drawKayakSide(int cx, int yDir, float scaleY, int plotTop, int plotBot, float waterM) {
-        float hl  = 2.30f;                        // half-length (matches other panels)
-        float top = waterM + HULL_ABOVE_WL_M;     // deck line
-        float bot = waterM - HULL_BELOW_WL_M;     // keel line
-        float[][] pts = {
-            { +hl,         waterM },   // bow tip (at waterline)
-            { +hl * 0.55f, top    },   // deck rise toward cockpit
-            { 0,           top    },   // cockpit coaming (deck high)
-            { -hl * 0.55f, top    },
-            { -hl,         waterM },   // stern tip
-            { -hl * 0.55f, bot    },   // keel
-            { 0,           bot    },
-            { +hl * 0.55f, bot    }
-        };
-        stroke(90, 110, 140);  strokeWeight(1.5);  noFill();
+    // Draw ONLY the immersed part of the blade at frame i (from the waterline
+    // down to the tip). Caller has already checked the tip is below waterM.
+    void drawImmersed(CatchEvents ce, int i, boolean rightBlade,
+                      int cx, int yDir, float scaleY, int plotTop, int plotBot,
+                      float waterM, int col, int alpha) {
+        float[] seg = ce.bladeSegmentYZ(i, rightBlade);   // {yThr, zThr, yTip, zTip}
+        float yThr = seg[0], zThr = seg[1], yTip = seg[2], zTip = seg[3];
+        float yA, zA;
+        if (zThr <= waterM) {                 // whole blade immersed
+            yA = yThr;  zA = zThr;
+        } else {                              // clip to where it crosses the water
+            float t = (waterM - zThr) / (zTip - zThr);   // 0..1 (tip below, throat above)
+            yA = yThr + t * (yTip - yThr);
+            zA = waterM;
+        }
+        float sxA = cx + yDir * yA   * scaleY, syA = zToScreen(zA,   plotTop, plotBot);
+        float sxT = cx + yDir * yTip * scaleY, syT = zToScreen(zTip, plotTop, plotBot);
+        stroke(col, alpha);  strokeWeight(2);
+        line(sxA, syA, sxT, syT);
+        noStroke();
+    }
+
+    // Real kayak side outline (from seakayakside.svg, scaled to 17 ft),
+    // anchored so its waterline sits at waterM and its centre at boat-frame bcY.
+    // Outline only; the forward nose is filled red as the bow marker.
+    void drawKayakSide(int cx, int yDir, float scaleY, float bcY,
+                       int plotTop, int plotBot, float waterM) {
+        // Outline.
+        stroke(COL_HULL);  strokeWeight(1.5);  noFill();
         beginShape();
-        for (float[] p : pts)
-            vertex(cx + yDir * p[0] * scaleY, zToScreen(p[1], plotTop, plotBot));
+        for (float[] p : HULL)
+            vertex(cx + yDir * (bcY + p[0]) * scaleY,
+                   zToScreen(waterM + p[1], plotTop, plotBot));
         endShape(CLOSE);
         strokeWeight(1);  noStroke();
 
-        // Red bow marker — a filled wedge at the +Y tip plus a label.
-        float bx = cx + yDir * hl * scaleY;
-        float by = zToScreen(waterM, plotTop, plotBot);
-        float tx = cx + yDir * (hl * 0.7f) * scaleY;
-        fill(COL_BOW);  noStroke();
+        // Red bow nose — filled region tracing the real forward outline, so the
+        // coloured area overlays the hull rather than floating past its tip.
+        fill(COL_BOW, 165);  noStroke();
         beginShape();
-        vertex(bx, by);
-        vertex(tx, zToScreen(top, plotTop, plotBot));
-        vertex(tx, zToScreen(bot, plotTop, plotBot));
+        for (int idx : BOW_NOSE) {
+            float[] p = HULL[idx];
+            vertex(cx + yDir * (bcY + p[0]) * scaleY,
+                   zToScreen(waterM + p[1], plotTop, plotBot));
+        }
         endShape(CLOSE);
+
+        // BOW label at the bow tip.
+        float[] tip = HULL[7];
+        float bx = cx + yDir * (bcY + tip[0]) * scaleY;
+        float by = zToScreen(waterM + tip[1], plotTop, plotBot);
         fill(COL_BOW);  textSize(11);
         textAlign(yDir < 0 ? LEFT : RIGHT, CENTER);
         text("BOW", bx + yDir * 6, by);
