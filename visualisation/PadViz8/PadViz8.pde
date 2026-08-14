@@ -1,5 +1,5 @@
 // ############################################################################
-// #  PadViz8   —   LAST EDITED: 2026-08-14 20:51   —   v0.33                  #
+// #  PadViz8   —   LAST EDITED: 2026-08-14 21:15   —   v0.34                  #
 // #  (BUILD_STAMP below feeds the window title bar — keep the two in sync.)   #
 // ############################################################################
 //
@@ -23,7 +23,7 @@
 // Human-readable build stamp — shown in the window title bar so the running
 // version is identifiable at a glance. Keep in sync with the LAST EDITED banner
 // at the very top of this file; bump both on every edit.
-final String BUILD_STAMP = "PadViz8  v0.33  (last edited 2026-08-14 20:51)";
+final String BUILD_STAMP = "PadViz8  v0.34  (last edited 2026-08-14 21:15)";
 
 Calibration cal;
 Model3D     model3D;
@@ -63,6 +63,9 @@ final float MODEL_SCALE = 300;
 // side-profile blade geometry (spec §14.9). A typical touring-kayak paddle.
 final float DEFAULT_PADDLE_LEN_M = 2.10f;
 final float DEFAULT_BLADE_LEN_M  = 0.32f;
+// Feather angle, signed degrees (spec §15.10): + = right-handed, − = left-handed,
+// 0 = straight. Default matches the OBJ's as-built right-handed 60°.
+final float DEFAULT_FEATHER_DEG  = 60f;
 
 // Last-used paddle dimensions, persisted to paddle_dims.json in the sketch
 // folder and reloaded at startup, so building a new session sidecar offers the
@@ -70,11 +73,18 @@ final float DEFAULT_BLADE_LEN_M  = 0.32f;
 // 7 Aug 2026). Seeded from the defaults until a config file / entry sets them.
 float lastPaddleLenM = DEFAULT_PADDLE_LEN_M;
 float lastBladeLenM  = DEFAULT_BLADE_LEN_M;
+float lastFeatherDeg = DEFAULT_FEATHER_DEG;
 
 // The paddle total length in effect (from the sidecar, else the last-used).
 float paddleTotalLenM() {
     return (sidecar != null && sidecar.paddleLengthM > 0)
            ? sidecar.paddleLengthM : lastPaddleLenM;
+}
+
+// The feather angle in effect (from the sidecar, else the last-used). Signed —
+// 0 is a valid value (straight paddle), so this can't use a >0 guard.
+float paddleFeatherDeg() {
+    return (sidecar != null) ? sidecar.featherDeg : lastFeatherDeg;
 }
 
 String paddleDimsPath() { return sketchPath("paddle_dims.json"); }
@@ -87,8 +97,10 @@ void loadPaddleDims() {
         if (o == null) return;
         if (o.hasKey("paddle_total_length_m")) lastPaddleLenM = o.getFloat("paddle_total_length_m");
         if (o.hasKey("blade_length_m"))        lastBladeLenM  = o.getFloat("blade_length_m");
+        if (o.hasKey("feather_deg"))           lastFeatherDeg = o.getFloat("feather_deg");
         println("Paddle dims loaded: total " + nf(lastPaddleLenM, 0, 2)
-                + " m, blade " + nf(lastBladeLenM, 0, 2) + " m");
+                + " m, blade " + nf(lastBladeLenM, 0, 2) + " m, feather "
+                + nf(lastFeatherDeg, 0, 0) + "°");
     } catch (Exception e) {
         println("Paddle dims load failed: " + e.getMessage());
     }
@@ -99,6 +111,7 @@ void savePaddleDims() {
         JSONObject o = new JSONObject();
         o.setFloat("paddle_total_length_m", lastPaddleLenM);
         o.setFloat("blade_length_m",        lastBladeLenM);
+        o.setFloat("feather_deg",           lastFeatherDeg);
         saveJSONObject(o, paddleDimsPath());
     } catch (Exception e) {
         println("Paddle dims save failed: " + e.getMessage());
@@ -114,10 +127,11 @@ void savePaddleDims() {
 // persists the values (paddle_dims.json) so they become the default next time,
 // updates the current sidecar if one is loaded, and — when opened as part of a
 // sidecar build (C) — proceeds to build. 'm' opens it standalone.
-int     dimStage        = 0;    // 0 = off, 1 = asking paddle total, 2 = asking blade
+int     dimStage        = 0;    // 0=off, 1=paddle total, 2=blade, 3=feather angle
 String  dimBuf          = "";
 boolean dimThenBuild    = false;
 float   dimEnteredPaddle = 0;
+float   dimEnteredBlade  = 0;
 
 boolean dimPromptActive() { return dimStage > 0; }
 
@@ -135,17 +149,31 @@ float dimParse(String s) {
     try { return Float.parseFloat(s.trim()); } catch (Exception e) { return -1; }
 }
 
+// Signed parse for the feather field: blank / lone sign keeps the last value;
+// 0 and negatives are legal (0 = straight, − = left-handed).
+float dimParseFeather(String s) {
+    String t = s.trim();
+    if (t.length() == 0 || t.equals("-") || t.equals("+")) return lastFeatherDeg;
+    try { return Float.parseFloat(t.replace("+", "")); }
+    catch (Exception e) { return lastFeatherDeg; }
+}
+
 void dimPromptKey() {
     if (key == ESC) { dimStage = 0; dimThenBuild = false; return; }
     if (key == ENTER || key == RETURN) {
-        float v = dimParse(dimBuf);
         if (dimStage == 1) {
+            float v = dimParse(dimBuf);
             dimEnteredPaddle = (v > 0) ? v : lastPaddleLenM;   // blank keeps last
             dimStage = 2;
             dimBuf   = nf(lastBladeLenM, 0, 2);
+        } else if (dimStage == 2) {
+            float v = dimParse(dimBuf);
+            dimEnteredBlade = (v > 0) ? v : lastBladeLenM;
+            dimStage = 3;
+            dimBuf   = str(round(lastFeatherDeg));   // shows a leading − if negative
         } else {
-            float blade = (v > 0) ? v : lastBladeLenM;
-            applyPaddleDims(dimEnteredPaddle, blade);
+            float feather = dimParseFeather(dimBuf);
+            applyPaddleDims(dimEnteredPaddle, dimEnteredBlade, feather);
             dimStage = 0;
             if (dimThenBuild) { dimThenBuild = false; buildAndSaveSidecar(); }
         }
@@ -155,7 +183,13 @@ void dimPromptKey() {
         if (dimBuf.length() > 0) dimBuf = dimBuf.substring(0, dimBuf.length() - 1);
         return;
     }
+    // Feather (stage 3) accepts a leading sign; length/blade are positive only.
+    if (dimStage == 3 && (key == '-' || key == '+') && dimBuf.length() == 0) {
+        dimBuf += key;
+        return;
+    }
     if ((key >= '0' && key <= '9') || key == '.') {
+        if (key == '.' && dimStage == 3) return;              // feather is whole degrees
         if (key == '.' && dimBuf.indexOf('.') >= 0) return;   // at most one dot
         if (dimBuf.length() < 6) dimBuf += key;
     }
@@ -164,27 +198,42 @@ void dimPromptKey() {
 // Clamp to sane ranges, persist as the new last-used, and push into the loaded
 // sidecar (rebuilding catch events, whose side-view blade geometry depends on
 // them) so the change shows immediately.
-void applyPaddleDims(float paddleLen, float bladeLen) {
-    paddleLen = constrain(paddleLen, 0.5f, 3.5f);
-    bladeLen  = constrain(bladeLen, 0.05f, min(1.0f, paddleLen - 0.10f));
+void applyPaddleDims(float paddleLen, float bladeLen, float featherDeg) {
+    paddleLen  = constrain(paddleLen, 0.5f, 3.5f);
+    bladeLen   = constrain(bladeLen, 0.05f, min(1.0f, paddleLen - 0.10f));
+    featherDeg = constrain(featherDeg, -90, 90);
     lastPaddleLenM = paddleLen;
     lastBladeLenM  = bladeLen;
+    lastFeatherDeg = featherDeg;
     savePaddleDims();
     if (sidecar != null) {
         sidecar.paddleLengthM = paddleLen;
         sidecar.bladeLengthM  = bladeLen;
+        sidecar.featherDeg    = featherDeg;    // model-only; no catch-event rebuild
         rebuildCatchEvents();
         saveSidecarQuiet();
     }
-    triggerRefFlash(String.format("PADDLE %.2f m   BLADE %.2f m", paddleLen, bladeLen));
+    triggerRefFlash(String.format("PADDLE %.2f m   BLADE %.2f m   FEATHER %+.0f°",
+                                  paddleLen, bladeLen, featherDeg));
 }
 
 void drawDimPrompt() {
     if (dimStage == 0) return;
-    String label = (dimStage == 1) ? "Paddle TOTAL length, tip-to-tip (m)"
-                                    : "Blade length (m)";
-    String last  = (dimStage == 1) ? nf(lastPaddleLenM, 0, 2) : nf(lastBladeLenM, 0, 2);
-    float boxW = 470, boxH = 122;
+    String label, last, hint;
+    if (dimStage == 1) {
+        label = "Paddle TOTAL length, tip-to-tip (m)";
+        last  = "last " + nf(lastPaddleLenM, 0, 2) + " m";
+        hint  = "Enter = accept (blank keeps " + last + ")     Esc = cancel";
+    } else if (dimStage == 2) {
+        label = "Blade length (m)";
+        last  = "last " + nf(lastBladeLenM, 0, 2) + " m";
+        hint  = "Enter = accept (blank keeps " + last + ")     Esc = cancel";
+    } else {
+        label = "Feather angle (deg):  + right-handed   − left-handed   0 straight";
+        last  = "last " + str(round(lastFeatherDeg)) + "°";
+        hint  = "Enter = accept (blank keeps " + last + ")     Esc = cancel";
+    }
+    float boxW = 520, boxH = 122;
     float bx = width / 2 - boxW / 2, by = height / 2 - boxH / 2;
     rectMode(CORNER);
     noStroke();  fill(20, 24, 34, 248);  rect(bx, by, boxW, boxH, 8);
@@ -192,11 +241,11 @@ void drawDimPrompt() {
     noStroke();  strokeWeight(1);
     textAlign(LEFT, TOP);
     fill(160, 190, 240);  textSize(13);
-    text("SET PADDLE DIMENSIONS   (" + dimStage + " of 2)", bx + 16, by + 12);
+    text("SET PADDLE DIMENSIONS   (" + dimStage + " of 3)", bx + 16, by + 12);
     fill(230);  textSize(15);  text(label, bx + 16, by + 38);
     fill(255, 245, 180);  textSize(22);  text(dimBuf + "_", bx + 16, by + 60);
     fill(150);  textSize(11);
-    text("Enter = accept (blank keeps last " + last + " m)     Esc = cancel", bx + 16, by + 98);
+    text(hint, bx + 16, by + 98);
     textAlign(LEFT, TOP);
 }
 
@@ -483,11 +532,11 @@ void drawScene3D() {
         translate(fd.posX * MODEL_SCALE, fd.posY * MODEL_SCALE, fd.posZ * MODEL_SCALE);
         applyCalTriple();
         model3D.applyQuat(qDisp[0], qDisp[1], qDisp[2], qDisp[3]);
-        model3D.drawPaddle(paddleTotalLenM());
+        model3D.drawPaddle(paddleTotalLenM(), paddleFeatherDeg());
     } else {
         // Slice 0 or empty data — draw paddle at identity, under cal triple.
         applyCalTriple();
-        model3D.drawPaddle(paddleTotalLenM());
+        model3D.drawPaddle(paddleTotalLenM(), paddleFeatherDeg());
     }
 
     popMatrix();
@@ -610,7 +659,7 @@ void drawSliceC() {
     // kayakLH ← paddleLH ← blenderLH
     applyCalTriple();
     model3D.applyQuat(qRelDisp[0], qRelDisp[1], qRelDisp[2], qRelDisp[3]);
-    model3D.drawPaddle(paddleTotalLenM());
+    model3D.drawPaddle(paddleTotalLenM(), paddleFeatherDeg());
     popMatrix();
 }
 
@@ -805,20 +854,20 @@ void drawHUD() {
                 :                                         color(230, 140, 140);
         fill(col);
         textSize(12);
-        text(String.format("SIDECAR [%s]  padMount r=%+.1f° p=%+.1f°  boatMount r=%+.1f° p=%+.1f°  yaw datum=%+.1f°   |   paddle %.2f m  blade %.2f m  (m to change)",
+        text(String.format("SIDECAR [%s]  padMount r=%+.1f° p=%+.1f°  boatMount r=%+.1f° p=%+.1f°  yaw datum=%+.1f°   |   paddle %.2f m  blade %.2f m  feather %+.0f°  (m to change)",
                            sidecar.confidence,
                            sidecar.rollOffsetPadDeg,  sidecar.pitchOffsetPadDeg,
                            sidecar.rollOffsetBoatDeg, sidecar.pitchOffsetBoatDeg,
                            sidecar.yawDatumDeg,
-                           sidecar.paddleLengthM, sidecar.bladeLengthM),
+                           sidecar.paddleLengthM, sidecar.bladeLengthM, sidecar.featherDeg),
              20, 38);
         textSize(13);
     } else {
         // No sidecar yet — still surface the paddle geometry that will be used
         // (the last-used values), and how to change it.
         fill(180, 190, 210);  textSize(12);
-        text(String.format("paddle %.2f m  blade %.2f m  (press m to set — last used shown)",
-                           lastPaddleLenM, lastBladeLenM), 20, 38);
+        text(String.format("paddle %.2f m  blade %.2f m  feather %+.0f°  (press m to set — last used shown)",
+                           lastPaddleLenM, lastBladeLenM, lastFeatherDeg), 20, 38);
         textSize(13);
     }
     // (v0.14: the "SIDECAR not built" hint is gone — the startup overlay
@@ -1596,6 +1645,14 @@ void tryAutoLoadSidecar(String paddleCsvPath) {
 // call whenever CSV state changes; no-ops when the required data is absent.
 void applySidecarToDisplay() {
     if (sidecar == null || !sidecar.valid) return;
+
+    // Seed the last-used geometry from the loaded session, so a later
+    // recalibration (which rebuilds the sidecar from the last-used values)
+    // preserves this session's paddle length / blade / feather rather than
+    // resetting them to whatever was last typed.
+    lastPaddleLenM = sidecar.paddleLengthM;
+    lastBladeLenM  = sidecar.bladeLengthM;
+    lastFeatherDeg = sidecar.featherDeg;
 
     if (paddleData != null && paddleData.frameCount() > 0
         && sidecar.restPadStart >= 0 && sidecar.restPadEnd > sidecar.restPadStart) {

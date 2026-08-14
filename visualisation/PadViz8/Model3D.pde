@@ -13,23 +13,102 @@ class Model3D {
     // (spec §14.9) rather than baking a fixed size at load.
     static final float NATIVE_TIP_TO_TIP_M = 1.8182f;
 
+    // The OBJ was modelled with the LEFT (yellow) blade feathered at +60°
+    // relative to the right (red) blade. drawPaddle() can re-angle the left
+    // blade to the session's actual feather by rotating the left half of the
+    // mesh about the shaft (X) axis by (sessionFeather − BUILT_FEATHER_DEG).
+    // The shaft cross-section is a perfect circle at X=0, so rotating everything
+    // with X<0 about the shaft carries the whole left blade (yellow front, grey
+    // back, edges) as a unit and only twists the round left half of the shaft —
+    // invisible, no seam (spec §15.10).
+    static final float BUILT_FEATHER_DEG = 60;
+    // Sign of the applied rotation about +X. Verified from the OBJ geometry: the
+    // as-built left blade sits at −58.5° (≈ −60°) relative to the right blade in
+    // the +X-rotation sense, so SIGN = −1 makes feather 0 give a flat (coplanar)
+    // paddle, +60 the as-built right-handed paddle, and −60 the left-handed
+    // mirror. (Confirmed by an offline render of feather 60/0/−60, spec §15.10.)
+    static final float FEATHER_SIGN = -1;
+
+    // Left-half (X<0) triangles and their ORIGINAL native vertices, captured
+    // once at load. setFeather() rebuilds each triangle's vertices from these,
+    // so re-angling is always relative to the as-built mesh (no drift from
+    // repeated relative rotations).
+    ArrayList<PShape> leftTris  = new ArrayList<PShape>();
+    ArrayList<float[]> leftOrig = new ArrayList<float[]>();   // [x0,y0,z0, x1..]
+    float appliedFeatherDeg = BUILT_FEATHER_DEG;
+
     void loadPaddle(String path) {
         paddle = loadShape(path);
         if (paddle == null) {
             println("Model3D: failed to load OBJ '" + path + "'");
             return;
         }
+        indexLeftBlade();
         // Left at native size (OBJ vertices are in metres); drawPaddle() applies
         // the per-session scale so the model can be re-sized to the real paddle
         // length without reloading.
         println("Model3D: loaded paddle OBJ '" + path + "'  (native "
-                + nf(NATIVE_TIP_TO_TIP_M, 0, 3) + " m tip-to-tip)");
+                + nf(NATIVE_TIP_TO_TIP_M, 0, 3) + " m tip-to-tip, "
+                + leftTris.size() + " left-blade tris)");
+    }
+
+    // Collect every leaf triangle whose centroid is on the left (X<0) half, with
+    // a copy of its original vertices. Processing explodes the OBJ into one
+    // GEOMETRY child per face, each with its own (unshared) vertices, so a
+    // triangle can be rotated without disturbing its neighbours.
+    void indexLeftBlade() {
+        leftTris.clear();  leftOrig.clear();
+        collectLeftLeaves(paddle);
+    }
+
+    void collectLeftLeaves(PShape s) {
+        if (s == null) return;
+        int nc = s.getChildCount();
+        if (nc > 0) {
+            for (int i = 0; i < nc; i++) collectLeftLeaves(s.getChild(i));
+            return;
+        }
+        int vc = s.getVertexCount();
+        if (vc < 3) return;
+        float cx = 0;
+        for (int i = 0; i < vc; i++) cx += s.getVertex(i).x;
+        cx /= vc;
+        if (cx >= 0) return;                       // right blade / right shaft
+        float[] orig = new float[vc * 3];
+        for (int i = 0; i < vc; i++) {
+            PVector p = s.getVertex(i);
+            orig[i * 3] = p.x;  orig[i * 3 + 1] = p.y;  orig[i * 3 + 2] = p.z;
+        }
+        leftTris.add(s);  leftOrig.add(orig);
+    }
+
+    // Re-angle the left (yellow) blade to featherDeg (signed: + right-handed,
+    // − left-handed, 0 straight). Rotates the stored ORIGINAL left-half vertices
+    // about the shaft X-axis by (featherDeg − BUILT_FEATHER_DEG). No-op if the
+    // angle is unchanged, so it's cheap to call every frame.
+    void setFeather(float featherDeg) {
+        if (leftTris.isEmpty()) return;
+        if (abs(featherDeg - appliedFeatherDeg) < 0.01) return;
+        float a = radians((featherDeg - BUILT_FEATHER_DEG) * FEATHER_SIGN);
+        float c = cos(a), sn = sin(a);
+        for (int t = 0; t < leftTris.size(); t++) {
+            PShape s = leftTris.get(t);
+            float[] o = leftOrig.get(t);
+            int vc = s.getVertexCount();
+            for (int i = 0; i < vc; i++) {
+                float x = o[i * 3], y = o[i * 3 + 1], z = o[i * 3 + 2];
+                s.setVertex(i, x, y * c - z * sn, y * sn + z * c);
+            }
+        }
+        appliedFeatherDeg = featherDeg;
     }
 
     // Draw the paddle scaled so its tip-to-tip length is totalLenM metres, at
-    // MODEL_SCALE px/m. Uniform scale about the shaft centre (mesh origin).
-    void drawPaddle(float totalLenM) {
+    // MODEL_SCALE px/m, with the left blade re-angled to featherDeg. Uniform
+    // scale about the shaft centre (mesh origin).
+    void drawPaddle(float totalLenM, float featherDeg) {
         if (paddle == null) return;
+        setFeather(featherDeg);
         float s = MODEL_SCALE * totalLenM / NATIVE_TIP_TO_TIP_M;
         pushMatrix();
         scale(s);

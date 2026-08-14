@@ -44,6 +44,12 @@ class Sidecar {
     float paddleLengthM = lastPaddleLenM;
     float bladeLengthM  = lastBladeLenM;
 
+    // Paddle feather angle, signed degrees (spec §15.10): + = right-handed,
+    // − = left-handed, 0 = straight (zero feather). One value per session — the
+    // physical paddle setting. Drives the 3D model's left-blade angle only
+    // (Model3D.setFeather); the catch detector and side view are unaffected.
+    float featherDeg = lastFeatherDeg;
+
     int   restPadStart  = -1, restPadEnd  = -1;
     int   restBoatStart = -1, restBoatEnd = -1;
     float restDurationS   = 0;
@@ -104,6 +110,7 @@ class Sidecar {
 
         root.setFloat("paddle_total_length_m", paddleLengthM);
         root.setFloat("blade_length_m",        bladeLengthM);
+        root.setFloat("feather_deg",           featherDeg);
 
         // Only set the sub-keys we actually know. Missing = unknown; the
         // reader treats absence and null the same way (see loadFromFile).
@@ -161,6 +168,10 @@ class Sidecar {
                              ? root.getFloat("paddle_total_length_m") : lastPaddleLenM;
             bladeLengthM  = root.hasKey("blade_length_m")
                              ? root.getFloat("blade_length_m") : lastBladeLenM;
+            // Older files predate feather — default to the last-used value
+            // (right-handed 60° until set), so the model still has a sensible angle.
+            featherDeg    = root.hasKey("feather_deg")
+                             ? root.getFloat("feather_deg") : lastFeatherDeg;
 
             if (root.hasKey("mag_cal_status_at_rest")) {
                 JSONObject mag = root.getJSONObject("mag_cal_status_at_rest");
