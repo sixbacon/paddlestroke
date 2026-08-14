@@ -2,6 +2,7 @@
 
 **Project:** paddlestroke  
 **Date:** 2026-07-09  
+**Version:** 2.10  (§8.1 extended — 14 Aug 2026 design discussion on paddle-vs-boat position: a clip-on calibration jig captures the constant orientation boresight + an anchor pose; live paddle-centre translation is unobservable from two IMUs by integration, but a seat-anchored kinematic model driven by the well-measured shaft orientation (+ per-stroke GPS-velocity re-zero) can approximate it, bounded by an unobservable torso lean/twist residual. User to collect a well-calibrated forward-paddling session so the kinematic-model estimate can be examined offline.)  
 **Version:** 2.9  (Phase 10 RELEASED — commit d8ce219 bumps PadLog v8.7→v8.8, BoatLog v1.0→v1.1, PadDis v8.10→v8.11 as a coordinated set. Bench-verified: banners + payload sizes + MAG_CAL emission on both TX units + new SD file naming (`/PadLog##.CSV`). Outstanding hardware tests documented in §15.7.)  
 **Version:** 2.8  (§15 extended — Phase 10 now also bundles boat accelerometer forwarding: `BoatDataPayload` gains three `float` accel fields, boat CSV gains `boat_accel_x/y/z` columns, test T-46 added. Same coordinated release: PadLog v8.8 / BoatLog v1.1 / PadDis v8.11.)  
 **Version:** 2.7  (§15 added — Phase 10 magnetometer calibration support: mag report enable, on-change serial status, DCD save on first convergence, `mag_cal` CSV column on paddle + boat, Phase 10 test plan T-40 to T-45, release-coupling requirement PadLog v8.8 / BoatLog v1.1 / PadDis v8.11.)
@@ -399,6 +400,52 @@ into the next unit design:
 
 Decision deferred to the next sensor-unit revision. See visualisation spec §15
 context and the calibration-methodology note (§7 revisit).
+
+#### 8.1.1 Clip-on calibration jig + kinematic-model estimate (discussion, 14 Aug 2026)
+
+Follow-up discussion refining the two halves of the problem — **orientation** (solvable,
+constant) vs **position** (time-varying, the hard part):
+
+- **A clip-on frame that holds the paddle in a known pose relative to the hull is
+  worth building.** With both units rigidly held, reading the two fused quaternions
+  once gives the **orientation boresight** `q_offset = q_boat⁻¹ · q_paddle`, which is
+  genuinely constant per mounting and only needs capturing once — a cleaner method than
+  the current rest-pose hold, which is already flagged as over-sensitive (a 1° yaw-datum
+  nudge is visibly significant; see the calibration-revisit note). Feeding in the
+  measured sensor separation in the jig also fixes **one anchor position**. The jig
+  solves the *static* problem well; it does **not** by itself track translation.
+
+- **Live paddle-centre translation from the two IMUs alone remains unobservable.**
+  The only translational signal is linear acceleration; double-integrating the
+  difference of the two units' accelerations diverges quadratically (metres within
+  ~1–2 s), and a 0.5° orientation error leaks ~0.085 m/s² of gravity into the
+  horizontal channel. No inertial trick avoids this.
+
+- **The constraint the user described is the way in.** The paddle centre is not free —
+  it is governed by arm-bone lengths, grip position, torso twist and forward lean, each
+  with a maximum. That is a **kinematic chain anchored at the seat/shoulders (fixed in
+  the boat frame)**. Modelling the paddler as a linkage (seat → shoulders → upper arm →
+  forearm → hands at fixed grip points on the shaft) makes the paddle-centre position a
+  forward-kinematics function of the **well-measured shaft orientation (GRV)** plus a few
+  joint angles — a few-DOF constrained-pose estimate, far better bounded than
+  integration. Limb lengths calibrated once (the jig session can help). A **per-stroke
+  GPS-velocity re-zero** (planted blade ≈ moving backward at boat speed during the power
+  phase) can reset residual drift each stroke.
+
+- **The residual you cannot escape without more hardware:** torso lean/twist translates
+  the shaft **without rotating it** (both hands move together), so orientation alone
+  cannot recover that component — it is the dominant unobservable and matches exactly the
+  "how much I twist and lean" term. The model captures the arm-swing part well; lean/twist
+  is left as a bounded residual. Likely accuracy on the observable directions ≈ ±5–15 cm,
+  degrading with lean/twist. Exact live tracking still wants a ranging sensor (UWB /
+  camera baseline) in the next unit.
+
+- **Validation gap / next step:** no current recording has ground-truth paddle-centre
+  position, and the last session was not well calibrated. **The user will collect a good,
+  well-calibrated forward-paddling session**, against which the seat-anchored
+  kinematic-model estimate (orientation-only forward kinematics, then + GPS-velocity
+  re-zero) can be examined offline in `visualisation/stroke_*.py` to see how far it gets
+  before the lean/twist residual dominates.
 
 ---
 
