@@ -87,6 +87,7 @@ class Menu {
         items.add(header("ANALYSIS WINDOWS"));
         items.add(new MenuItem("w", "Session-setup wizard (show / hide)",         'w', 0));
         items.add(new MenuItem("x", "Side-profile blade window (ZY plane, L/R)",  'x', 0));
+        items.add(new MenuItem("f", "  └ flip left-blade view (bow to right)",  'f', 0));
         items.add(new MenuItem("t", "Track window (GPS over OpenStreetMap)",      't', 0));
         items.add(header("CLASSIFICATION"));
         items.add(new MenuItem("q", "Clear ALL classification",                    'q', 0));

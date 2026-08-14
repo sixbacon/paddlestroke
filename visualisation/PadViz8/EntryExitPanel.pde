@@ -108,6 +108,12 @@ class EntryExitPanel {
         ellipse(cxp, cyp, 0.5f * scale, 0.9f * scale);
         strokeWeight(1);  noStroke();
 
+        // Red bow marker — a filled triangle at the bow tip (points forward /
+        // up), so the boat's front is unambiguous.
+        fill(230, 40, 40);  noStroke();
+        float bowY = cyp - halfLen;
+        triangle(cxp, bowY, cxp - 12, bowY + 26, cxp + 12, bowY + 26);
+
         // Events up to the playback cursor.
         int shown = 0;
         if (ce != null) {

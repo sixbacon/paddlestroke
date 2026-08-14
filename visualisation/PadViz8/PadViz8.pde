@@ -1,5 +1,5 @@
 // ############################################################################
-// #  PadViz8   —   LAST EDITED: 2026-08-12 22:46   —   v0.31                  #
+// #  PadViz8   —   LAST EDITED: 2026-08-14 20:51   —   v0.33                  #
 // #  (BUILD_STAMP below feeds the window title bar — keep the two in sync.)   #
 // ############################################################################
 //
@@ -23,7 +23,7 @@
 // Human-readable build stamp — shown in the window title bar so the running
 // version is identifiable at a glance. Keep in sync with the LAST EDITED banner
 // at the very top of this file; bump both on every edit.
-final String BUILD_STAMP = "PadViz8  v0.31  (last edited 2026-08-12 22:46)";
+final String BUILD_STAMP = "PadViz8  v0.33  (last edited 2026-08-14 20:51)";
 
 Calibration cal;
 Model3D     model3D;
@@ -1141,6 +1141,14 @@ void keyPressed() {
     // scrubbing and the graph strip all drive it.
     if (key == 'x' || key == 'X' || (key == CODED && keyCode == 113)) {
         showView(viewMode == 1 ? 0 : 1);
+        return;
+    }
+    // f = (side-profile view only) mirror the LEFT-blade half so its bow sits on
+    // the right, matching the right-blade half for a same-way-round comparison.
+    if ((key == 'f' || key == 'F') && viewMode == 1 && sideView != null) {
+        sideView.toggleLeftBow();
+        triggerRefFlash("LEFT-BLADE VIEW  bow "
+                        + (sideView.leftBowRight ? "RIGHT (mirrored)" : "LEFT (from port)"));
         return;
     }
     // t = track window — the whole GPS track over an OpenStreetMap backdrop, a

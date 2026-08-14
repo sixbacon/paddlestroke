@@ -14,7 +14,9 @@
 //
 // The two views look at the boat from opposite sides, so +Y (bow) falls on
 // opposite screen sides in each — which is why the bow is marked in RED on both:
-// it removes the left/right ambiguity when comparing them.
+// it removes the left/right ambiguity when comparing them. Pressing f mirrors
+// the TOP (left-blade) half so its bow sits on the RIGHT too, giving both halves
+// the same orientation for a direct side-by-side comparison (spec §15.8).
 //
 // The hull is the REAL sea-kayak side profile traced from
 // visualisation/seakayakside.svg (Visio export), scaled to its true 5.1816 m
@@ -92,8 +94,15 @@ class SideProfilePanel {
     // (right-click restart). The waterline stays whole-file for stability.
     int resetAtFrame = 0;
 
+    // When true, the TOP (left-blade) half is mirrored horizontally so its bow
+    // sits on the RIGHT, matching the bottom (right-blade) half — makes the two
+    // views read the same way round for side-by-side comparison. Toggled with f.
+    // The right-blade half is never flipped. (spec §15.8)
+    boolean leftBowRight = false;
+
     void toggle() { shown = !shown; }
     void reset(int atFrame) { resetAtFrame = atFrame; }
+    void toggleLeftBow() { leftBowRight = !leftBowRight; }
 
     // Boat-frame Y of the hull mid-point: the shaft centre lives at
     // PADDLE_BOW_OFFSET_M, and the paddle is PADDLE_FWD_OF_CENTRE_M ahead of the
@@ -117,10 +126,15 @@ class SideProfilePanel {
 
         boolean ready = (ce != null && ce.uzTip != null && ce.phi != null);
 
-        // TOP: left blade, port-side view (looking +X from −X) → bow (+Y) on the
-        // LEFT of the screen, so yDir = −1.
-        drawHalf(ce, curFrame, ready, 0,    half, false, -1,
-                 "LEFT blade — view from PORT  (looking +X)", COL_LEFT);
+        // TOP: left blade. Default port-side view (looking +X from −X) → bow
+        // (+Y) on the LEFT, yDir = −1. When leftBowRight is set the half is
+        // mirrored so the bow sits on the RIGHT (yDir = +1), matching the
+        // right-blade half below for a same-way-round comparison.
+        int    lDir   = leftBowRight ? +1 : -1;
+        String lTitle = leftBowRight
+                        ? "LEFT blade — mirrored (bow right)"
+                        : "LEFT blade — view from PORT  (looking +X)";
+        drawHalf(ce, curFrame, ready, 0,    half, false, lDir, lTitle, COL_LEFT);
         // BOTTOM: right blade, starboard-side view (looking −X from +X) → bow
         // (+Y) on the RIGHT, so yDir = +1.
         drawHalf(ce, curFrame, ready, half, half, true,  +1,
