@@ -52,11 +52,13 @@ class DataSource {
     private String               srcPath = "";
     boolean                      hasRxMs = false;
     boolean                      hasGrv  = false;
+    boolean                      hasAccel = false;
 
     void loadCSV(String path) {
         frames.clear();
         hasRxMs = false;
         hasGrv  = false;
+        hasAccel = false;
         String[] lines = loadStrings(path);
         if (lines == null) {
             println("DataSource: cannot load " + path);
@@ -77,6 +79,7 @@ class DataSource {
             if (line.startsWith("seq") || line.startsWith("timestamp")) {
                 if (line.contains("rx_ms"))  hasRxMs = true;
                 if (line.contains("grv_qw")) hasGrv  = true;
+                if (line.contains("accel_x")) hasAccel = true;   // full-column log
                 continue;
             }
             FrameData fd = parseLine(line);
@@ -84,7 +87,8 @@ class DataSource {
         }
         println("DataSource: loaded " + frames.size() + " frames from " + srcName
                 + (hasRxMs ? "  (rx_ms)" : "  (v8.9 or older)")
-                + (hasGrv  ? " (grv)"    : ""));
+                + (hasGrv  ? " (grv)"    : "")
+                + (hasAccel ? " (accel)" : " (reduced/no-accel)"));
         computePaddleCentreMotion();
     }
 

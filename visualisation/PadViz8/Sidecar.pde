@@ -331,9 +331,11 @@ Sidecar buildSidecar(DataSource pad, BoatSource boat, SyncMap sync, int searchSt
         s.notes = "No paddle CSV loaded.";
         return s;
     }
-    if (pad.getFrames().get(0).accelX == 0 && pad.getFrames().get(0).accelY == 0
-        && pad.getFrames().get(0).accelZ == 0) {
-        // Very rough sanity check: reduced-column CSVs don't populate accel.
+    if (!pad.hasAccel) {
+        // Reduced-column CSVs have no accel_x column at all. (Detected from the
+        // header, not from frame 0's values — row 0 of a FULL log is legitimately
+        // 0,0,0, the startup frame emitted before the BNO085's first accel sample,
+        // which used to false-trigger this bail-out and abort the sidecar.)
         s.notes = "Paddle CSV has no accelerometer data — need PadDis v8.10 full-column log.";
         return s;
     }
