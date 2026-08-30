@@ -1,5 +1,5 @@
 // ############################################################################
-// #  PadViz8   —   LAST EDITED: 2026-08-30 18:22   —   v0.36                  #
+// #  PadViz8   —   LAST EDITED: 2026-08-30 20:45   —   v0.37                  #
 // #  (BUILD_STAMP below feeds the window title bar — keep the two in sync.)   #
 // ############################################################################
 //
@@ -23,7 +23,7 @@
 // Human-readable build stamp — shown in the window title bar so the running
 // version is identifiable at a glance. Keep in sync with the LAST EDITED banner
 // at the very top of this file; bump both on every edit.
-final String BUILD_STAMP = "PadViz8  v0.36  (last edited 2026-08-30 18:22)";
+final String BUILD_STAMP = "PadViz8  v0.37  (last edited 2026-08-30 20:45)";
 
 Calibration cal;
 Model3D     model3D;
@@ -121,13 +121,19 @@ void savePaddleDims() {
 // ── Paddle-dimension entry prompt (spec §14.9) ──────────────────────────────
 //
 // A small in-sketch numeric prompt (no AWT dialog — the OS file dialogs have
-// been unreliable on this setup, feedback_processing_compile_vs_runtime) that
-// asks for the paddle total length then the blade length, each pre-filled with
-// the LAST-used value so the common case is just Enter, Enter. On accept it
-// persists the values (paddle_dims.json) so they become the default next time,
-// updates the current sidecar if one is loaded, and — when opened as part of a
-// sidecar build (C) — proceeds to build. 'm' opens it standalone.
-int     dimStage        = 0;    // 0=off, 1=paddle total, 2=blade, 3=feather angle
+// been unreliable on this setup, feedback_processing_compile_vs_runtime).
+//
+// The prompt opens on a REVIEW screen (stage 4) that shows the three last-used
+// paddle parameters and asks the operator to either accept them all or edit —
+// so a new session sidecar can never silently inherit the previous paddle's
+// geometry/feather without the operator seeing and confirming it (user, 30 Aug
+// 2026). 'E' from review drops into the per-field editor (stages 1→2→3), each
+// field pre-filled with the last value so an edit is just type-over-then-Enter;
+// 'A'/Enter accepts the last-used values as-is. On accept it persists the
+// values (paddle_dims.json) so they become the default next time, updates the
+// current sidecar if one is loaded, and — when opened as part of a sidecar
+// build (C) — proceeds to build. 'm' opens it standalone.
+int     dimStage        = 0;    // 0=off, 1=paddle total, 2=blade, 3=feather angle, 4=review
 String  dimBuf          = "";
 boolean dimThenBuild    = false;
 float   dimEnteredPaddle = 0;
@@ -141,8 +147,14 @@ void beginDimPrompt(boolean thenBuild) {
         return;
     }
     dimThenBuild = thenBuild;
-    dimStage = 1;
-    dimBuf   = nf(lastPaddleLenM, 0, 2);
+    dimStage = 4;      // open on the review screen (accept-all / edit / cancel)
+}
+
+// Feather handedness phrase for the review screen.
+String featherHand(float d) {
+    if (d >  0.5) return "  (right-handed)";
+    if (d < -0.5) return "  (left-handed)";
+    return "  (straight)";
 }
 
 float dimParse(String s) {
@@ -160,6 +172,19 @@ float dimParseFeather(String s) {
 
 void dimPromptKey() {
     if (key == ESC) { dimStage = 0; dimThenBuild = false; return; }
+
+    // Review screen: accept all last-used values, or drop into the editor.
+    if (dimStage == 4) {
+        if (key == 'e' || key == 'E') {
+            dimStage = 1;
+            dimBuf   = nf(lastPaddleLenM, 0, 2);
+        } else if (key == 'a' || key == 'A' || key == ENTER || key == RETURN) {
+            applyPaddleDims(lastPaddleLenM, lastBladeLenM, lastFeatherDeg);
+            dimStage = 0;
+            if (dimThenBuild) { dimThenBuild = false; buildAndSaveSidecar(); }
+        }
+        return;
+    }
     if (key == ENTER || key == RETURN) {
         if (dimStage == 1) {
             float v = dimParse(dimBuf);
@@ -219,6 +244,7 @@ void applyPaddleDims(float paddleLen, float bladeLen, float featherDeg) {
 
 void drawDimPrompt() {
     if (dimStage == 0) return;
+    if (dimStage == 4) { drawDimReview(); return; }
     String label, last, hint;
     if (dimStage == 1) {
         label = "Paddle TOTAL length, tip-to-tip (m)";
@@ -246,6 +272,29 @@ void drawDimPrompt() {
     fill(255, 245, 180);  textSize(22);  text(dimBuf + "_", bx + 16, by + 60);
     fill(150);  textSize(11);
     text(hint, bx + 16, by + 98);
+    textAlign(LEFT, TOP);
+}
+
+// Review screen shown when the dimension prompt first opens (spec §15.13): the
+// three last-used paddle parameters, with accept-all / edit / cancel — so a new
+// sidecar never inherits the previous paddle's geometry without confirmation.
+void drawDimReview() {
+    float boxW = 520, boxH = 172;
+    float bx = width / 2 - boxW / 2, by = height / 2 - boxH / 2;
+    rectMode(CORNER);
+    noStroke();  fill(20, 24, 34, 248);  rect(bx, by, boxW, boxH, 8);
+    stroke(120, 150, 210);  strokeWeight(1.5);  noFill();  rect(bx, by, boxW, boxH, 8);
+    noStroke();  strokeWeight(1);
+    textAlign(LEFT, TOP);
+    fill(160, 190, 240);  textSize(13);
+    text("PADDLE DIMENSIONS — last used", bx + 16, by + 12);
+    fill(255, 245, 180);  textSize(17);
+    text("Total length    " + nf(lastPaddleLenM, 0, 2) + " m", bx + 16, by + 40);
+    text("Blade length    " + nf(lastBladeLenM, 0, 2) + " m", bx + 16, by + 66);
+    text("Feather          " + String.format("%+.0f", lastFeatherDeg) + "°"
+         + featherHand(lastFeatherDeg), bx + 16, by + 92);
+    fill(150);  textSize(12);
+    text("A / Enter = accept all      E = edit      Esc = cancel", bx + 16, by + 134);
     textAlign(LEFT, TOP);
 }
 

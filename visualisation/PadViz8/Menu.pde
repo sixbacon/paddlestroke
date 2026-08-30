@@ -99,7 +99,7 @@ class Menu {
         items.add(header("CALIBRATION"));
         items.add(new MenuItem("k", "Capture reference (mean ±50 frames)", 'k', 0));
         items.add(new MenuItem("u", "Clear reference",                     'u', 0));
-        items.add(new MenuItem("m", "Set paddle & blade length (last = default)", 'm', 0));
+        items.add(new MenuItem("m", "Paddle length / blade / feather (review last, accept or edit)", 'm', 0));
         items.add(new MenuItem("C", "Build session sidecar (asks lengths, from cursor)", 'C', 0));
         items.add(header("GRAPH"));
         items.add(new MenuItem("S", "Reset graph zoom to full range", 'S', 0));
