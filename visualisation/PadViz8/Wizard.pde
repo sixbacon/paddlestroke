@@ -7,9 +7,10 @@
 //
 //   Step 1  paddle CSV        (Return = choose)
 //   Step 2  boat CSV          (Return = choose, X = skip)
-//   Step 3  roll calibration  (3a build from cursor, or 3b use/reset a saved one)
-//   Step 4  classification    (4a mark right/left/zero/exclude, or 4b use/reset)
-//   Step 5  done              (short dismiss delay)
+//   Step 3  paddle dimensions (review last-used total/blade/feather; A = accept, E = edit)
+//   Step 4  roll calibration  (4a build from cursor, or 4b use/reset a saved one)
+//   Step 5  classification    (5a mark right/left/zero/exclude, or 5b use/reset)
+//   Step 6  done              (short dismiss delay)
 //
 // It is a docked panel, NOT a second OS window — same pattern as the old
 // Checklist / Menu / DetailPanel, avoiding the multi-window/AWT-threading risk
@@ -28,14 +29,14 @@
 // while the wizard is active.
 
 class Wizard {
-    int step   = 1;          // 1..5
+    int step   = 1;          // 1..6
     boolean shown    = true;
     boolean complete = false;
 
-    // Step 4 sub-mode: reviewing existing classification (4b) vs marking (4a).
+    // Step 5 sub-mode: reviewing existing classification (5b) vs marking (5a).
     boolean classReview = false;
 
-    // Step 5 dismiss delay.
+    // Step 6 dismiss delay.
     int doneAtMs = -1;
     static final int DISMISS_DELAY_MS = 2500;
 
@@ -49,9 +50,9 @@ class Wizard {
 
     // ── State queries ────────────────────────────────────────────────────────
     boolean active()       { return shown && !complete; }
-    // Graph shows classification shading + pending cursors throughout Step 4
-    // (both the 4a marking flow and the 4b review of loaded sections).
-    boolean isClassifying(){ return active() && step == 4; }
+    // Graph shows classification shading + pending cursors throughout Step 5
+    // (both the 5a marking flow and the 5b review of loaded sections).
+    boolean isClassifying(){ return active() && step == 5; }
 
     boolean hasRestCal() {
         return sidecar != null && sidecar.valid && sidecar.restPadStart >= 0;
@@ -62,17 +63,18 @@ class Wizard {
 
     void toggle() {
         if (!shown && complete) {
-            // Reopen a COMPLETED wizard as a live flow at Step 3 — not a dead
-            // read-only summary. Steps 3b/4b already show the saved calibration
-            // and classification with "use it (Return) / reset (r/R)" options,
-            // so this is the way to recalibrate the paddle and re-classify a
-            // long session after setup has finished (the old summary just
-            // displayed the numbers with no way to act). Force a paddle graph
-            // slice so the cursor can be positioned for the rest window / the
-            // section marks.
+            // Reopen a COMPLETED wizard as a live flow at the roll-calibration
+            // step (Step 4) — not a dead read-only summary. Steps 4b/5b already
+            // show the saved calibration and classification with "use it
+            // (Return) / reset (r/R)" options, so this is the way to recalibrate
+            // the paddle and re-classify a long session after setup has finished
+            // (the old summary just displayed the numbers with no way to act).
+            // The paddle-dimensions step (3) is skipped on reopen — dimensions
+            // have their own standalone editor (m). Force a paddle graph slice
+            // so the cursor can be positioned for the rest window / section marks.
             complete    = false;
             doneAtMs    = -1;
-            step        = 3;
+            step        = 4;
             classReview = hasClassification();
             classify.markReset();
             errorMsg    = "";
@@ -90,15 +92,21 @@ class Wizard {
     void onBoatLoaded()   { if (active() && step == 2) { step = 3; errorMsg = ""; } }
 
     // ── Step transitions ─────────────────────────────────────────────────────
-    void enterStep4() {
+    // Called by the paddle-dimension editor modal (beginDimPromptEdit) when it
+    // finishes, and by the Step-3 accept keys, to advance to roll calibration.
+    void dimsAccepted() {
+        if (step == 3) { step = 4; errorMsg = ""; }
+    }
+
+    void enterClassify() {
         classReview = hasClassification();
         classify.markReset();
         errorMsg = "";
     }
 
-    void gotoStep5() {
+    void gotoDone() {
         classify.markReset();
-        step = 5;
+        step = 6;
         doneAtMs = millis();
         errorMsg = "";
     }
@@ -139,37 +147,46 @@ class Wizard {
                 if (k == 'x' || k == 'X') { step = 3; errorMsg = ""; return true; }   // skip boat
                 return false;
 
-            case 3:
-                if (hasRestCal()) {                         // 3b
-                    if (ret)                  { enterStep4(); step = 4; return true; }
+            case 3:   // paddle dimensions — accept the last-used values or edit them
+                if (k == 'e' || k == 'E') { beginDimPromptEdit(true); return true; }
+                if (ret || k == 'a' || k == 'A') {
+                    applyPaddleDims(lastPaddleLenM, lastBladeLenM, lastFeatherDeg);
+                    step = 4; errorMsg = "";
+                    return true;
+                }
+                return false;
+
+            case 4:
+                if (hasRestCal()) {                         // 4b
+                    if (ret)                  { enterClassify(); step = 5; return true; }
                     if (k == 'r' || k == 'R') { resetRollCal(); return true; }
                     return false;
-                } else {                                    // 3a
+                } else {                                    // 4a
                     if (ret) {
                         boolean ok = buildAndSaveSidecar();
-                        if (ok) { enterStep4(); step = 4; }
+                        if (ok) { enterClassify(); step = 5; }
                         // failure message already routed here via triggerErrorFlash
                         return true;
                     }
                     return false;
                 }
 
-            case 4:
-                return handleKeyStep4(k, ret);
+            case 5:
+                return handleKeyStep5(k, ret);
         }
         return false;
     }
 
-    boolean handleKeyStep4(char k, boolean ret) {
+    boolean handleKeyStep5(char k, boolean ret) {
         // Quick "exclude from the cursor to the END of the file (inclusive)" —
         // the common case of dropping a drive-home tail without having to land
         // the end mark on the very last frame. Works whether reviewing saved
-        // sections (4b) or marking new ones (4a); it just adds one section and
+        // sections (5b) or marking new ones (5a); it just adds one section and
         // leaves the others alone.
         if (k == 'e' || k == 'E') { excludeCursorToEnd(); return true; }
 
-        if (classReview) {                                  // 4b
-            if (ret)                  { gotoStep5(); return true; }
+        if (classReview) {                                  // 5b
+            if (ret)                  { gotoDone(); return true; }
             if (k == 'r' || k == 'R') {
                 sidecar.classification.clear();
                 saveSidecarQuiet();
@@ -183,8 +200,8 @@ class Wizard {
             return false;
         }
 
-        // 4a — marking.
-        if (k == 'f' || k == 'F') { gotoStep5(); return true; }
+        // 5a — marking.
+        if (k == 'f' || k == 'F') { gotoDone(); return true; }
 
         switch (classify.markPhase) {
             case MARK_IDLE:
@@ -265,8 +282,8 @@ class Wizard {
 
     // ── Draw ─────────────────────────────────────────────────────────────────
     void draw() {
-        // Auto-dismiss after Step 5's delay.
-        if (step == 5 && !complete) {
+        // Auto-dismiss after the final step's delay.
+        if (step == 6 && !complete) {
             if (doneAtMs < 0) doneAtMs = millis();
             if (millis() - doneAtMs >= DISMISS_DELAY_MS) { complete = true; shown = false; }
         }
@@ -303,7 +320,7 @@ class Wizard {
         if (!complete) {
             fill(150);
             textSize(12);  textAlign(RIGHT, TOP);
-            text("Step " + step + " of 5", pw - PADX, 15);
+            text("Step " + step + " of 6", pw - PADX, 15);
         }
         fill(150);
         textSize(10);  textAlign(RIGHT, BOTTOM);
@@ -316,9 +333,10 @@ class Wizard {
             switch (step) {
                 case 1: y = drawStep1(PADX, y); break;
                 case 2: y = drawStep2(PADX, y); break;
-                case 3: y = drawStep3(PADX, y); break;
-                case 4: y = drawStep4(PADX, y); break;
-                case 5: y = drawStep5(PADX, y); break;
+                case 3: y = drawStep3Dims(PADX, y); break;
+                case 4: y = drawStep4Cal(PADX, y); break;
+                case 5: y = drawStep5Class(PADX, y); break;
+                case 6: y = drawStep6Done(PADX, y); break;
             }
         }
 
@@ -372,9 +390,23 @@ class Wizard {
         return y;
     }
 
-    int drawStep3(int x, int y) {
+    int drawStep3Dims(int x, int y) {
+        y = line(x, y, 16, color(230), "3.  Paddle dimensions");
+        y = line(x, y, 13, color(180),
+                 "Confirm the paddle this session was recorded with — these scale the 3D model + side view.");
+        y = line(x, y, 14, color(255, 235, 150),
+                 "Total  " + nf(lastPaddleLenM, 0, 2) + " m       Blade  " + nf(lastBladeLenM, 0, 2) + " m");
+        y = line(x, y, 14, color(255, 235, 150),
+                 "Feather  " + String.format("%+.0f", lastFeatherDeg) + "°" + featherHand(lastFeatherDeg));
+        y = line(x, y, 11, color(150),
+                 "(these are the LAST-used values — check the feather sign matches this session's paddle)");
+        y = opts(x, y, "Return / A  =  accept these        E  =  edit");
+        return y;
+    }
+
+    int drawStep4Cal(int x, int y) {
         if (hasRestCal()) {
-            y = line(x, y, 16, color(230), "3.  Roll calibration  —  saved calibration found");
+            y = line(x, y, 16, color(230), "4.  Roll calibration  —  saved calibration found");
             y = line(x, y, 12, color(170), String.format(
                 "confidence %s   padMount r=%+.1f° p=%+.1f°   boatMount r=%+.1f° p=%+.1f°   yaw datum=%+.1f°",
                 sidecar.confidence,
@@ -385,21 +417,21 @@ class Wizard {
                 "rest window  pad %d–%d  (%.1fs)", sidecar.restPadStart, sidecar.restPadEnd, sidecar.restDurationS));
             y = opts(x, y, "Return  =  use it        r/R  =  reset & recalibrate");
         } else {
-            y = line(x, y, 16, color(230), "3.  Roll calibration");
+            y = line(x, y, 16, color(230), "4.  Roll calibration");
             y = line(x, y, 13, color(180), "Drag the graph cursor to the START of a still (rest) moment, then press Return.");
             y = opts(x, y, "Return  =  detect rest window & build calibration");
         }
         return y;
     }
 
-    int drawStep4(int x, int y) {
+    int drawStep5Class(int x, int y) {
         if (classReview) {
-            y = line(x, y, 16, color(230), "4.  Classification  —  saved sections found");
+            y = line(x, y, 16, color(230), "5.  Classification  —  saved sections found");
             y = line(x, y, 13, color(180), classificationSummary(sidecar.classification));
             y = opts(x, y, "Return  =  use them        r/R  =  reset & reclassify        e/E  =  exclude cursor→end");
             return y;
         }
-        y = line(x, y, 16, color(230), "4.  Classification");
+        y = line(x, y, 16, color(230), "5.  Classification");
         switch (classify.markPhase) {
             case MARK_IDLE:
                 y = line(x, y, 13, color(180), "Position the graph cursor at the START of a section, then press Return.");
@@ -420,7 +452,7 @@ class Wizard {
         return y;
     }
 
-    int drawStep5(int x, int y) {
+    int drawStep6Done(int x, int y) {
         y = line(x, y, 16, color(150, 230, 170), "Done — session ready.");
         drawSummaryBody(x, y);
         float rem = (doneAtMs < 0) ? 0 : (DISMISS_DELAY_MS - (millis() - doneAtMs)) / 1000.0f;

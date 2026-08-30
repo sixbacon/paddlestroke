@@ -1,5 +1,5 @@
 // ############################################################################
-// #  PadViz8   —   LAST EDITED: 2026-08-30 20:45   —   v0.37                  #
+// #  PadViz8   —   LAST EDITED: 2026-08-30 21:03   —   v0.38                  #
 // #  (BUILD_STAMP below feeds the window title bar — keep the two in sync.)   #
 // ############################################################################
 //
@@ -23,7 +23,7 @@
 // Human-readable build stamp — shown in the window title bar so the running
 // version is identifiable at a glance. Keep in sync with the LAST EDITED banner
 // at the very top of this file; bump both on every edit.
-final String BUILD_STAMP = "PadViz8  v0.37  (last edited 2026-08-30 20:45)";
+final String BUILD_STAMP = "PadViz8  v0.38  (last edited 2026-08-30 21:03)";
 
 Calibration cal;
 Model3D     model3D;
@@ -136,6 +136,7 @@ void savePaddleDims() {
 int     dimStage        = 0;    // 0=off, 1=paddle total, 2=blade, 3=feather angle, 4=review
 String  dimBuf          = "";
 boolean dimThenBuild    = false;
+boolean dimFromWizard   = false;   // opened from the wizard's dimensions step → advance it on finish
 float   dimEnteredPaddle = 0;
 float   dimEnteredBlade  = 0;
 
@@ -146,8 +147,28 @@ void beginDimPrompt(boolean thenBuild) {
         buildAndSaveSidecar();   // no data → let it flash "LOAD PADDLE CSV FIRST"
         return;
     }
-    dimThenBuild = thenBuild;
+    dimThenBuild  = thenBuild;
+    dimFromWizard = false;
     dimStage = 4;      // open on the review screen (accept-all / edit / cancel)
+}
+
+// Open the per-field editor directly (skipping the review screen) from the
+// wizard's dimensions step — the wizard panel already shows the last-used
+// values inline, so pressing E there goes straight to editing. On finish the
+// editor advances the wizard (see dimComplete()).
+void beginDimPromptEdit(boolean fromWizard) {
+    dimThenBuild  = false;
+    dimFromWizard = fromWizard;
+    dimStage = 1;
+    dimBuf   = nf(lastPaddleLenM, 0, 2);
+}
+
+// Run the "then" action after the dimension prompt closes on accept: build the
+// sidecar (C flow), advance the wizard (its dimensions step), or nothing (m).
+void dimComplete() {
+    dimStage = 0;
+    if (dimThenBuild)       { dimThenBuild = false; buildAndSaveSidecar(); }
+    else if (dimFromWizard) { dimFromWizard = false; if (wizard != null) wizard.dimsAccepted(); }
 }
 
 // Feather handedness phrase for the review screen.
@@ -171,7 +192,7 @@ float dimParseFeather(String s) {
 }
 
 void dimPromptKey() {
-    if (key == ESC) { dimStage = 0; dimThenBuild = false; return; }
+    if (key == ESC) { dimStage = 0; dimThenBuild = false; dimFromWizard = false; return; }
 
     // Review screen: accept all last-used values, or drop into the editor.
     if (dimStage == 4) {
@@ -180,8 +201,7 @@ void dimPromptKey() {
             dimBuf   = nf(lastPaddleLenM, 0, 2);
         } else if (key == 'a' || key == 'A' || key == ENTER || key == RETURN) {
             applyPaddleDims(lastPaddleLenM, lastBladeLenM, lastFeatherDeg);
-            dimStage = 0;
-            if (dimThenBuild) { dimThenBuild = false; buildAndSaveSidecar(); }
+            dimComplete();
         }
         return;
     }
@@ -199,8 +219,7 @@ void dimPromptKey() {
         } else {
             float feather = dimParseFeather(dimBuf);
             applyPaddleDims(dimEnteredPaddle, dimEnteredBlade, feather);
-            dimStage = 0;
-            if (dimThenBuild) { dimThenBuild = false; buildAndSaveSidecar(); }
+            dimComplete();
         }
         return;
     }
@@ -1608,7 +1627,7 @@ void onSessionJsonSelected(File selection) {
     rebuildCatchEvents();
     rebuildClassificationIndex();
     if (classify != null) paddleFrameIdx = classify.nearestVisible(0);
-    if (wizard != null) wizard.gotoStep5();
+    if (wizard != null) wizard.gotoDone();
     triggerRefFlash("SESSION LOADED  ←  " + selection.getName());
 }
 
