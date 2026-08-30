@@ -91,6 +91,39 @@ Boat↔paddle synchronised by nearest `rx_ms`: median gap **5 ms** (95th pct 10 
   explained), consistent with the PadViz §15.12 finding that GRV's yaw drift makes
   it the worse relative-orientation source here.
 
+## Calibrating the body constants from the jig pose (30 Aug 2026)
+
+The first pass used *assumed* constants (reach `R = 0.55 m`, rest direction
+`d̂ = [0, 0.97, −0.24]`, no boresight). Calibrating them from the jig/rest window
+(`stroke_kinematic_model.py`, calibration block):
+
+| Constants | Var-explained |
+|---|---|
+| Assumed (no calibration) | 0.55 |
+| **+ jig boresight** (assumed d̂) | **0.59** |
+| + fitted d̂ (no boresight) | 0.57 |
+| **+ jig boresight + fitted d̂** | **0.60** |
+
+- **Jig boresight = 10.9°.** The two sensor frames are not perfectly aligned even
+  in the jig; removing that constant skew (reference the relative orientation to
+  the jig pose) is the **single biggest improvement** (0.55 → 0.59) — and it is
+  exactly what the jig pose can genuinely supply.
+- **Fitted reach direction** `d̂ = [0.134, 0.957, −0.259]` (8° toward the stroke
+  side, 15° below horizontal) — physically sensible, adds a little more (→ 0.60).
+- **Reach magnitude R is *not* recoverable** from inertial + GPS data. The
+  blade-tip velocity is dominated by the *measured* blade rotation (independent of
+  R), and the acceleration score is scale-free (a best-fit scale absorbs R), so the
+  arm length simply does not enter. The GPS solve for R returns a nonsensical
+  negative value — not a bug, an ill-posed constraint. R must stay anthropometric,
+  or come from the jig's *measured geometry* (tape-measured sensor separation), not
+  from the motion.
+
+**Takeaway:** the jig pose calibrates the orientation *reference* (worth ~4 points
+of variance-explained here) and, with the data, the reach *direction*; it cannot
+give the reach *magnitude*. This mirrors the whole result — orientation is
+recoverable, absolute scale/translation is not without measured geometry or a
+ranging sensor.
+
 ## Bottom line
 
 On a well-calibrated session the seat-anchored kinematic model recovers the

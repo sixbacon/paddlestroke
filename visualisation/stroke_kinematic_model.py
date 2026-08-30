@@ -75,6 +75,17 @@ def section_from_sidecar(pad_csv, cls="right"):
     return None
 
 
+def rest_window_from_sidecar(pad_csv):
+    base = os.path.splitext(pad_csv)[0] + ".session.json"
+    if not os.path.exists(base):
+        return None
+    rw = json.load(open(base)).get("rest_window")
+    if not rw:
+        return None
+    return (int(rw["paddle_frame_start"]), int(rw["paddle_frame_end"]),
+            int(rw["boat_frame_start"]), int(rw["boat_frame_end"]))
+
+
 def load_cols(path, cols, flo=None, fhi=None):
     out = {c: [] for c in cols}; frames = []
     with open(path, newline="") as f:
@@ -195,6 +206,56 @@ def main():
     gspeed = np.mean(bs("gps_speed_ms")[bs("gps_fix")>0])
     print("  pseudo-ZUPT: model tip aft-sweep while immersed median %.2f m/s "
           "(boat speed %.2f m/s)" % (np.median(aft), gspeed))
+
+    # ---- calibrate the body constants from the jig pose --------------------
+    # The jig held the paddle in a known pose relative to the boat; its rest
+    # window gives the orientation BORESIGHT (the constant sensor-mount skew).
+    # Referencing the relative orientation to it, and fitting the reach
+    # DIRECTION d_hat to the measured acceleration, replaces the two assumed
+    # constants that ARE recoverable. The reach MAGNITUDE R is not recoverable
+    # from inertial+GPS data (see note below), so it stays anthropometric.
+    def score_d(Rr, dh):
+        aa = bandpass_fft(d2(Rr @ dh), fs, lo, hi)
+        return np.mean([1 - np.var(am[:,k]-(np.sum(am[:,k]*aa[:,k])/np.sum(aa[:,k]**2))*aa[:,k])
+                        / np.var(am[:,k]) for k in range(3)])
+
+    rw = rest_window_from_sidecar(PAD)
+    if rw is not None:
+        prw = load_cols(PAD, ["q_w","q_x","q_y","q_z"], rw[0], rw[1])
+        brw = load_cols(BOAT, ["kayak_qw","kayak_qx","kayak_qy","kayak_qz"], rw[2], rw[3])
+        def mean_R(q):
+            q = q/np.linalg.norm(q,axis=1,keepdims=True)
+            q = q*np.sign(np.sum(q*q[0],1,keepdims=True)); m = q.mean(0); m/=np.linalg.norm(m)
+            return quat_to_R(*[np.array([x]) for x in m])[0]
+        Rp0 = mean_R(np.stack([prw["q_w"],prw["q_x"],prw["q_y"],prw["q_z"]],1))
+        Rb0 = mean_R(np.stack([brw["kayak_qw"],brw["kayak_qx"],brw["kayak_qy"],brw["kayak_qz"]],1))
+        Q_OFFSET = Rb0.T @ Rp0
+        resid = np.degrees(np.arccos(np.clip((np.trace(Q_OFFSET)-1)/2, -1, 1)))
+        Rrel_cal = np.einsum("ji,njk->nik", Q_OFFSET, Rrel)  # boresight-referenced
+
+        # fit d_hat over a physically-sensible forward/down grid (accel score
+        # is scale-free, so R does not enter this fit)
+        best = None
+        for azd in np.arange(-40,41,4):
+            for dipd in np.arange(-5,61,4):
+                a,dd = np.radians(azd), np.radians(dipd)
+                dh = np.array([np.sin(a)*np.cos(dd), np.cos(a)*np.cos(dd), -np.sin(dd)])
+                v = score_d(Rrel_cal, dh)
+                if best is None or v > best[0]: best = (v, azd, dipd, dh)
+        vC, azC, dipC, dhC = best
+        print("\n  -- calibration from the jig pose --")
+        print("     jig boresight residual (mount skew) = %.1f deg" % resid)
+        print("     assumed constants               : var-explained %.2f" % np.mean(ve_all))
+        print("     + jig boresight (assumed d_hat)  : var-explained %.2f" % score_d(Rrel_cal, D_REST))
+        print("     + fitted d_hat (no boresight)    : var-explained %.2f"
+              % max(score_d(Rrel, np.array([np.sin(np.radians(a))*np.cos(np.radians(dp)),
+                    np.cos(np.radians(a))*np.cos(np.radians(dp)),-np.sin(np.radians(dp))]))
+                    for a in np.arange(-40,41,8) for dp in np.arange(-5,61,8)))
+        print("     + boresight + fitted d_hat       : var-explained %.2f   "
+              "d_hat=%s (az %.0f, dip %.0f)" % (vC, np.round(dhC,3), azC, dipC))
+        print("     reach magnitude R: NOT recoverable from inertial+GPS (tip velocity is")
+        print("       dominated by measured blade rotation; the accel score is scale-free).")
+        print("       Keep R anthropometric, or set it from the jig's measured geometry.")
 
     _figure(t, swing, elev, c, am, aM, ve_all, aft, gspeed, fs, cpm)
 
