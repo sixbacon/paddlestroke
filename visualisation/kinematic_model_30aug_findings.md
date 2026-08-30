@@ -6,6 +6,7 @@ forward-paddling session (clip-on-jig calibration at its start), right-handed
 classification (paddle frames 58 966–197 628: **138 663 frames, 23 min, 37 CPM**).
 **Script:** `visualisation/stroke_kinematic_model.py`
 **Figure:** `visualisation/kinematic_model_30aug.png`
+**Illustrated explainer:** [Where is the paddle? — dynamic modelling from orientation](https://claude.ai/code/artifact/d7e7f597-8380-4110-856d-fcd2c2cd5472) (Artifact — a plain-language, diagram-led walk-through of this model)
 **Reference:** `firmware/specs/functional_spec.md` §8.1.1.
 
 ## Question
