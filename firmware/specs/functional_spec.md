@@ -2,7 +2,7 @@
 
 **Project:** paddlestroke  
 **Date:** 2026-07-09  
-**Version:** 2.10  (§8.1 extended — 14 Aug 2026 design discussion on paddle-vs-boat position: a clip-on calibration jig captures the constant orientation boresight + an anchor pose; live paddle-centre translation is unobservable from two IMUs by integration, but a seat-anchored kinematic model driven by the well-measured shaft orientation (+ per-stroke GPS-velocity re-zero) can approximate it, bounded by an unobservable torso lean/twist residual. User to collect a well-calibrated forward-paddling session so the kinematic-model estimate can be examined offline.)  
+**Version:** 2.11  (§8.1.1 — kinematic-model estimate **examined 30 Aug 2026** on the well-calibrated forward-paddling session via `visualisation/stroke_kinematic_model.py`: a one-pivot arm-swing model driven by the measured relative orientation explains ≈55 % of stroke-band paddle-centre acceleration variance (≈63 % forward) with no fitted per-frame DOF, corroborated by a GPS pseudo-ZUPT check; the ~40–45 % residual is the predicted lean/twist unobservable — about the ceiling for an inertial-only estimate. Prior 2.10: §8.1 extended — 14 Aug 2026 design discussion on paddle-vs-boat position: a clip-on calibration jig captures the constant orientation boresight + an anchor pose; live paddle-centre translation is unobservable from two IMUs by integration, but a seat-anchored kinematic model driven by the well-measured shaft orientation (+ per-stroke GPS-velocity re-zero) can approximate it, bounded by an unobservable torso lean/twist residual.)  
 **Version:** 2.9  (Phase 10 RELEASED — commit d8ce219 bumps PadLog v8.7→v8.8, BoatLog v1.0→v1.1, PadDis v8.10→v8.11 as a coordinated set. Bench-verified: banners + payload sizes + MAG_CAL emission on both TX units + new SD file naming (`/PadLog##.CSV`). Outstanding hardware tests documented in §15.7.)  
 **Version:** 2.8  (§15 extended — Phase 10 now also bundles boat accelerometer forwarding: `BoatDataPayload` gains three `float` accel fields, boat CSV gains `boat_accel_x/y/z` columns, test T-46 added. Same coordinated release: PadLog v8.8 / BoatLog v1.1 / PadDis v8.11.)  
 **Version:** 2.7  (§15 added — Phase 10 magnetometer calibration support: mag report enable, on-change serial status, DCD save on first convergence, `mag_cal` CSV column on paddle + boat, Phase 10 test plan T-40 to T-45, release-coupling requirement PadLog v8.8 / BoatLog v1.1 / PadDis v8.11.)
@@ -446,6 +446,27 @@ constant) vs **position** (time-varying, the hard part):
   kinematic-model estimate (orientation-only forward kinematics, then + GPS-velocity
   re-zero) can be examined offline in `visualisation/stroke_*.py` to see how far it gets
   before the lean/twist residual dominates.
+
+- **Examined 30 Aug 2026** on that well-calibrated session (`PadLog20260830.CSV` /
+  `BoatLog20260830.CSV`, right-handed section, 138 663 frames / 23 min / 37 CPM) with
+  `visualisation/stroke_kinematic_model.py` (findings +
+  `visualisation/kinematic_model_30aug.png` in `visualisation/kinematic_model_30aug_findings.md`).
+  A one-pivot arm-swing model — paddle centre on a sphere of radius R about a shoulder
+  pivot fixed in the boat frame, direction slaved to the measured relative orientation,
+  `c(t)=R·R_rel(t)·d̂` — was scored **in acceleration space** (differentiate the model
+  twice; compare to the gravity-removed paddle accelerometer, stroke-band, no
+  integration). Results: the frame pipeline is validated (mean world accel [0.02, −0.00,
+  9.73] ≈ [0,0,g]); the model explains **≈55 % of stroke-band acceleration variance
+  overall, ≈63 % on the forward axis** (correlation 0.70) from orientation alone with no
+  fitted per-frame DOF; the **GPS pseudo-ZUPT corroborates** (modelled planted-blade
+  aft-sweep median 3.26 m/s brackets boat speed 2.44 m/s); **fused beats GRV** (0.55 vs
+  0.39, matching visualisation spec §15.12). The unexplained **~40–45 % is the predicted
+  lean/twist residual** — the fixed-pivot model structurally cannot produce it, so this is
+  about the ceiling for an inertial-only estimate. Confirms the design intuition:
+  arm-swing is recoverable from orientation; exact live tracking still needs the UWB /
+  camera ranging sensor (§8.1). Software follow-ons if pursued: jig-calibrated per-limb
+  anthropometry (replacing the assumed R, d̂) and folding the pseudo-ZUPT in as an actual
+  per-stroke re-zero.
 
 ---
 

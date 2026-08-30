@@ -78,7 +78,7 @@ Expected output ends with `Results: 20 passed, 0 failed`.
 
 The `StrokeDetector.h` and `StrokeDetector.cpp` files inside `firmware/test/paddlestroke_sim_test/` are copies of those in `firmware/production/PadLog/`. Keep them in sync when changing the algorithm.
 
-For offline algorithm iteration against field CSVs there is a Python toolkit in `visualisation/stroke_*.py` (spec §16.5): `stroke_spectral.py` gives ground-truth CPM per file, `stroke_detector_sim.py` is a faithful Python port of StrokeDetector, `stroke_regression.py` ports the 20-test suite for quick pre-C++ checks, `stroke_acf.py` is the ACF cross-check prototype. Prototype algorithm changes there first; on-hardware sim remains authoritative for timing.
+For offline algorithm iteration against field CSVs there is a Python toolkit in `visualisation/stroke_*.py` (spec §16.5): `stroke_spectral.py` gives ground-truth CPM per file, `stroke_detector_sim.py` is a faithful Python port of StrokeDetector, `stroke_regression.py` ports the 20-test suite for quick pre-C++ checks, `stroke_acf.py` is the ACF cross-check prototype, `stroke_kinematic_model.py` examines the seat-anchored kinematic-model paddle-centre estimate (functional_spec §8.1.1) on a well-calibrated session. Prototype algorithm changes there first; on-hardware sim remains authoritative for timing.
 
 ## Development Status
 

@@ -1,0 +1,242 @@
+"""stroke_kinematic_model.py — offline examination of the seat-anchored
+kinematic-model paddle-centre estimate (functional_spec 8.1.1).
+
+Purpose
+-------
+The visualiser places the paddle relative to the boat from assumed constants;
+locating the paddle centre *through the stroke* is unobservable from two IMUs by
+integration (accel double-integration drifts in seconds). The proposed way in is
+a seat-anchored kinematic model: the paddle centre is a forward-kinematics
+function of the well-measured shaft orientation, anchored at the shoulders, with
+torso lean/twist (which moves the anchor) as the predicted unobservable residual.
+
+This script examines that model on a well-calibrated forward-paddling session
+(the 30 Aug 2026 clip-on-jig session), quantifies how much of the real paddle
+motion it reproduces, and where it breaks.
+
+Model
+-----
+One-pivot arm-swing. The paddle centre c sits on a sphere of radius R about a
+shoulder-centre pivot P fixed in the boat frame; its direction co-rotates with
+the measured paddle-vs-boat orientation R_rel(t):
+
+        c(t) = R * R_rel(t) * d_hat            (P at the boat-frame origin)
+
+R_rel(t) = R_boat(t)^T R_paddle(t) maps the paddle body frame into the boat body
+frame; d_hat is the fixed (paddle-body) direction from pivot to centre; R the
+reach radius. This is pure forward kinematics of the measured orientation — no
+per-frame free DOF, no integration. It captures arm-swing and, by construction,
+cannot represent lean/twist (moving P) — exactly the spec's unobservable.
+
+Validation (no position ground truth, no integration)
+------------------------------------------------------
+1. Frame check: rotate the paddle accelerometer to world; its mean must be
+   ~[0,0,g] (gravity-inclusive) — confirms the quaternion/frame pipeline.
+2. Acceleration space: differentiate the model position twice -> a_model;
+   rotate the measured accel to the boat frame and remove gravity -> a_meas
+   (the TRUE paddle-centre acceleration). Band-pass to the stroke band and report
+   the fraction of measured variance the model explains (a best-fit scale absorbs
+   the reach-radius/closure amplitude, so the score reflects SHAPE agreement).
+   The residual = lean/twist + model error.
+3. GPS pseudo-ZUPT: while the blade is immersed the planted tip is ~still in the
+   world, so in the boat frame it sweeps aft at ~boat speed. Compare the model
+   tip's aft sweep (while its modelled depth is in the lower third) to GPS speed.
+4. Fused vs GRV: re-score with each orientation source.
+
+Usage:  python stroke_kinematic_model.py [PadLog.CSV] [BoatLog.CSV]
+Defaults to the 30 Aug 2026 recordings. Emits visualisation/kinematic_model_30aug.png.
+numpy + matplotlib only (matches the rest of the stroke_*.py toolkit; no scipy).
+"""
+import csv, sys, json, os, numpy as np
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REC  = os.path.join(HERE, "recordings")
+PAD  = sys.argv[1] if len(sys.argv) > 1 else os.path.join(REC, "PadLog20260830.CSV")
+BOAT = sys.argv[2] if len(sys.argv) > 2 else os.path.join(REC, "BoatLog20260830.CSV")
+OUT  = os.path.join(HERE, "kinematic_model_30aug.png")
+G    = 9.80665
+
+# anthropometry / model constants (documented assumptions)
+REACH_R = 0.55                                   # m, pivot -> paddle centre
+L_HALF  = 1.05                                   # m, centre -> blade tip (2.10/2)
+D_REST  = np.array([0.0, 0.97, -0.24]); D_REST /= np.linalg.norm(D_REST)
+
+
+def section_from_sidecar(pad_csv, cls="right"):
+    """Return (start,end) paddle frames of the first classification of type cls
+    from the sibling .session.json, or None."""
+    base = os.path.splitext(pad_csv)[0] + ".session.json"
+    if not os.path.exists(base):
+        return None
+    j = json.load(open(base))
+    for s in j.get("classification_sections", []):
+        if s.get("type") == cls:
+            return int(s["start_frame"]), int(s["end_frame"])
+    return None
+
+
+def load_cols(path, cols, flo=None, fhi=None):
+    out = {c: [] for c in cols}; frames = []
+    with open(path, newline="") as f:
+        r = csv.reader(f); header = None; fi = -1
+        for row in r:
+            if not row or row[0].startswith("#"):
+                continue
+            if header is None:
+                header = row; idx = {c: header.index(c) for c in cols}; continue
+            fi += 1
+            if flo is not None and fi < flo: continue
+            if fhi is not None and fi > fhi: break
+            frames.append(fi)
+            for c in cols:
+                try: out[c].append(float(row[idx[c]]))
+                except Exception: out[c].append(np.nan)
+    res = {c: np.array(v) for c, v in out.items()}; res["_frame"] = np.array(frames)
+    return res
+
+
+def quat_to_R(qw, qx, qy, qz):
+    n = np.sqrt(qw*qw+qx*qx+qy*qy+qz*qz); qw,qx,qy,qz = qw/n,qx/n,qy/n,qz/n
+    N = len(qw); R = np.empty((N, 3, 3))
+    R[:,0,0]=1-2*(qy*qy+qz*qz); R[:,0,1]=2*(qx*qy-qz*qw); R[:,0,2]=2*(qx*qz+qy*qw)
+    R[:,1,0]=2*(qx*qy+qz*qw); R[:,1,1]=1-2*(qx*qx+qz*qz); R[:,1,2]=2*(qy*qz-qx*qw)
+    R[:,2,0]=2*(qx*qz-qy*qw); R[:,2,1]=2*(qy*qz+qx*qw); R[:,2,2]=1-2*(qx*qx+qy*qy)
+    return R
+
+
+def movavg(a, w):
+    if w <= 1: return a
+    k = np.ones(w)/w
+    if a.ndim == 1: return np.convolve(a, k, mode="same")
+    return np.vstack([np.convolve(a[:,j], k, mode="same") for j in range(a.shape[1])]).T
+
+
+def bandpass_fft(x, fs, lo, hi):
+    X = np.fft.rfft(x, axis=0); fr = np.fft.rfftfreq(x.shape[0], 1/fs)
+    m = ((fr >= lo) & (fr <= hi)).astype(float)
+    if x.ndim > 1: m = m[:, None]
+    return np.fft.irfft(X*m, n=x.shape[0], axis=0)
+
+
+def main():
+    sec = section_from_sidecar(PAD) or (58966, 197628)
+    print("Right-handed section (paddle frames): %d..%d" % sec)
+    pc = ["timestamp_ms","accel_x","accel_y","accel_z","q_w","q_x","q_y","q_z",
+          "cpm","rx_ms","grv_qw","grv_qx","grv_qy","grv_qz"]
+    pad = load_cols(PAD, pc, sec[0], sec[1])
+    N = len(pad["_frame"]); t = (pad["timestamp_ms"]-pad["timestamp_ms"][0])/1000.0
+    fs = 1.0/np.median(np.diff(t))
+    print("  N=%d  fs=%.1f Hz  dur=%.0f s" % (N, fs, t[-1]))
+
+    bc = ["gps_speed_ms","gps_fix","kayak_qw","kayak_qx","kayak_qy","kayak_qz",
+          "rx_ms","boat_grv_qw","boat_grv_qx","boat_grv_qy","boat_grv_qz"]
+    boat = load_cols(BOAT, bc)
+    order = np.argsort(boat["rx_ms"]); brx = boat["rx_ms"][order]
+    j = np.clip(np.searchsorted(brx, pad["rx_ms"]), 0, len(brx)-1)
+    bs = lambda n: boat[n][order][j]
+    gap = np.abs(brx[j]-pad["rx_ms"])
+    print("  boat sync |rx gap| median %.1f ms (95%% %.1f)" %
+          (np.median(gap), np.percentile(gap, 95)))
+
+    Rp = quat_to_R(pad["q_w"],pad["q_x"],pad["q_y"],pad["q_z"])
+    Rb = quat_to_R(bs("kayak_qw"),bs("kayak_qx"),bs("kayak_qy"),bs("kayak_qz"))
+    Rrel = np.einsum("nji,njk->nik", Rb, Rp)            # Rb^T Rp
+    u = Rrel @ np.array([1.0,0,0])                       # shaft dir, boat frame
+    swing = np.degrees(np.arctan2(u[:,0], u[:,1]))
+    elev  = np.degrees(np.arcsin(np.clip(u[:,2],-1,1)))
+    print("  shaft swing p2p %.0f deg   elevation [%.0f,%.0f] deg" %
+          (np.percentile(swing,97)-np.percentile(swing,3), elev.min(), elev.max()))
+
+    c   = REACH_R * (Rrel @ D_REST)                      # model paddle centre
+    tip = c + L_HALF * u                                 # right blade tip
+
+    a_body  = np.stack([pad["accel_x"],pad["accel_y"],pad["accel_z"]], axis=1)
+    a_world = np.einsum("nij,nj->ni", Rp, a_body)
+    print("  frame check: mean world accel = %s (expect ~[0,0,%.1f])" %
+          (np.round(a_world.mean(axis=0),2), G))
+    a_meas_world = a_world - np.array([0,0,a_world[:,2].mean()])
+    a_meas_boat  = np.einsum("nji,nj->ni", Rb, a_meas_world)
+
+    d2 = lambda x: movavg(np.gradient(np.gradient(movavg(x, max(1,int(fs*0.05))),
+                          t, axis=0), t, axis=0), max(1,int(fs*0.05)))
+    a_model_boat = d2(c)
+
+    cpm = np.median(pad["cpm"][pad["cpm"]>0]); f0 = cpm/60.0
+    lo, hi = 0.5*f0, 4.0*f0
+    print("  stroke f0=%.2f Hz (%.0f CPM); band %.2f-%.2f Hz" % (f0,cpm,lo,hi))
+    am = bandpass_fft(a_meas_boat, fs, lo, hi)
+    aM = bandpass_fft(a_model_boat, fs, lo, hi)
+    lab = ["X(stbd)","Y(fwd)","Z(up)"]; ve_all=[]
+    for k in range(3):
+        s = np.sum(am[:,k]*aM[:,k])/np.sum(aM[:,k]*aM[:,k])
+        ve = 1 - np.var(am[:,k]-s*aM[:,k])/np.var(am[:,k]); ve_all.append(ve)
+        print("  accel band %s : var-explained %+.2f (scale %.2f) meas_rms %.2f m/s2"
+              % (lab[k], ve, s, np.sqrt(np.mean(am[:,k]**2))))
+    corr = np.corrcoef(am.ravel(), aM.ravel())[0,1]
+    print("  overall band accel corr = %.3f   mean var-explained = %.2f"
+          % (corr, np.mean(ve_all)))
+
+    # fused vs GRV
+    def score(Rr):
+        aa = bandpass_fft(d2(REACH_R*(Rr @ D_REST)), fs, lo, hi)
+        v = np.mean([1-np.var(am[:,k]-(np.sum(am[:,k]*aa[:,k])/np.sum(aa[:,k]**2))*aa[:,k])
+                     /np.var(am[:,k]) for k in range(3)])
+        return v, np.corrcoef(am.ravel(), aa.ravel())[0,1]
+    Rrg = np.einsum("nji,njk->nik",
+                    quat_to_R(bs("boat_grv_qw"),bs("boat_grv_qx"),bs("boat_grv_qy"),bs("boat_grv_qz")),
+                    quat_to_R(pad["grv_qw"],pad["grv_qx"],pad["grv_qy"],pad["grv_qz"]))
+    vf,cf = np.mean(ve_all), corr; vg,cg = score(Rrg)
+    print("  orientation source var-explained/corr:  fused %.2f/%.2f   GRV %.2f/%.2f"
+          % (vf,cf,vg,cg))
+
+    # GPS pseudo-ZUPT while immersed
+    tsm = movavg(tip, max(1,int(fs*0.05))); vtip = np.gradient(tsm, t, axis=0)
+    imm = tsm[:,2] < np.percentile(tsm[:,2], 33); aft = -vtip[imm,1]
+    gspeed = np.mean(bs("gps_speed_ms")[bs("gps_fix")>0])
+    print("  pseudo-ZUPT: model tip aft-sweep while immersed median %.2f m/s "
+          "(boat speed %.2f m/s)" % (np.median(aft), gspeed))
+
+    _figure(t, swing, elev, c, am, aM, ve_all, aft, gspeed, fs, cpm)
+
+
+def _figure(t, swing, elev, c, am, aM, ve_all, aft, gspeed, fs, cpm):
+    import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
+    i0 = int(len(t)*0.45); w = slice(i0, i0+int(24*fs))
+    fig = plt.figure(figsize=(13,9)); fig.patch.set_facecolor("white")
+    fig.suptitle("Seat-anchored kinematic-model estimate — 30 Aug 2026 right-handed section "
+                 "(%d frames, %.0f min, %.0f CPM)\nmodel: c(t)=R·R_rel(t)·d̂  (paddle centre "
+                 "swings on a sphere about a fixed shoulder pivot)"
+                 % (len(t), t[-1]/60, cpm), fontsize=11)
+    ax=fig.add_subplot(2,2,1)
+    ax.plot(t[w],swing[w],lw=.9,label="swing (about vertical)")
+    ax.plot(t[w],elev[w],lw=.9,label="elevation")
+    ax.set_title("A · Measured shaft orientation (boat frame) — clean & stroke-periodic")
+    ax.set_xlabel("time (s)"); ax.set_ylabel("degrees"); ax.legend(fontsize=8); ax.grid(alpha=.3)
+    ax=fig.add_subplot(2,2,2)
+    ax.plot(c[w,1],c[w,0],lw=.7,color="tab:purple",label="centre XY (top-down)")
+    ax.plot(c[w,1],c[w,2],lw=.7,color="tab:green",label="centre YZ (side)")
+    ax.scatter([0],[0],c="k",s=40,marker="+"); ax.annotate("shoulder pivot",(0,0),fontsize=7)
+    ax.set_title("B · Model paddle-centre trajectory (arm-swing arc)")
+    ax.set_xlabel("boat +Y forward (m)"); ax.set_ylabel("boat +X stbd / +Z up (m)")
+    ax.axis("equal"); ax.legend(fontsize=8); ax.grid(alpha=.3)
+    ax=fig.add_subplot(2,2,3)
+    s=np.sum(am[w,1]*aM[w,1])/np.sum(aM[w,1]*aM[w,1])
+    ax.plot(t[w],am[w,1],lw=1,color="k",label="measured (accelerometer, gravity removed)")
+    ax.plot(t[w],s*aM[w,1],lw=1,color="tab:red",label="model prediction (scaled)")
+    ax.set_title("C · Forward-axis stroke-band acceleration: model explains %.0f%% of variance"
+                 % (100*ve_all[1]))
+    ax.set_xlabel("time (s)"); ax.set_ylabel("a_fwd (m/s²)"); ax.legend(fontsize=8); ax.grid(alpha=.3)
+    ax=fig.add_subplot(2,2,4)
+    ax.hist(aft,bins=50,range=(-2,7),color="tab:blue",alpha=.7,
+            label="model tip aft-sweep while immersed\n(median %.2f m/s)"%np.median(aft))
+    ax.axvline(gspeed,color="tab:orange",lw=2,label="GPS boat speed (%.2f m/s)"%gspeed)
+    ax.axvline(np.median(aft),color="tab:blue",lw=1,ls="--")
+    ax.set_title("D · GPS pseudo-ZUPT: planted-blade aft-sweep vs boat speed")
+    ax.set_xlabel("aft sweep of right-blade tip while immersed (m/s)"); ax.set_ylabel("count")
+    ax.legend(fontsize=8); ax.grid(alpha=.3)
+    fig.tight_layout(rect=[0,0,1,0.94]); fig.savefig(OUT, dpi=130)
+    print("saved figure:", OUT)
+
+
+if __name__ == "__main__":
+    main()
