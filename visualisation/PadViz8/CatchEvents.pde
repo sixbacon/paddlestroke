@@ -97,8 +97,13 @@ class CatchEvents {
         // Sample rate from median timestamp delta.
         float fs = estimateFs(fr);
 
-        grvUsed = pad.hasGrv;
-        boolean boatGrv = (boat != null && boat.frameCount() > 0 && boat.hasGrv);
+        // Orientation source honours the global v/V toggle (spec §15.12): GRV
+        // is preferred by default (§16.11) but the operator can force fused for
+        // a session where GRV yaw has drifted. The mode gates each sensor's GRV
+        // use; boatUsed below still forbids mixing fused-vs-GRV across the two.
+        boolean grvMode = (orientMode == ORIENT_GRV);
+        grvUsed = grvMode && pad.hasGrv;
+        boolean boatGrv = grvMode && (boat != null && boat.frameCount() > 0 && boat.hasGrv);
         boatUsed = (boat != null && boat.frameCount() > 0
                     && sync != null && (boatGrv || !grvUsed));
 

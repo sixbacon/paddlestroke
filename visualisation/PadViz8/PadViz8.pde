@@ -1,5 +1,5 @@
 // ############################################################################
-// #  PadViz8   —   LAST EDITED: 2026-08-30 17:49   —   v0.35                  #
+// #  PadViz8   —   LAST EDITED: 2026-08-30 18:22   —   v0.36                  #
 // #  (BUILD_STAMP below feeds the window title bar — keep the two in sync.)   #
 // ############################################################################
 //
@@ -23,7 +23,7 @@
 // Human-readable build stamp — shown in the window title bar so the running
 // version is identifiable at a glance. Keep in sync with the LAST EDITED banner
 // at the very top of this file; bump both on every edit.
-final String BUILD_STAMP = "PadViz8  v0.35  (last edited 2026-08-30 17:49)";
+final String BUILD_STAMP = "PadViz8  v0.36  (last edited 2026-08-30 18:22)";
 
 Calibration cal;
 Model3D     model3D;
@@ -305,6 +305,27 @@ int     refFrameBoat  = -1;
 float[] qRefPadGrv    = { 1, 0, 0, 0 };
 float[] qRefBoatGrv   = { 1, 0, 0, 0 };
 
+// Orientation source for the paddle-vs-boat relative render (Slice C) and the
+// entry/exit engine (CatchEvents). GRV (mag-free) is preferred by default
+// (spec §16.11), but GRV yaw has no magnetic lock, so the two units' yaw
+// estimates drift apart over a long session — for a well-mag-calibrated
+// session the fused solution is cleaner (30 Aug 2026 jig session: fused rest
+// alignment 3°, GRV 78° with ~72° of drift-swing during paddling — spec
+// §15.12). `v`/`V` toggles this so the operator can pick the better solution
+// per session and confirm on screen.
+//   ORIENT_GRV   = 0  — prefer GRV when both files have it (default, §16.11)
+//   ORIENT_FUSED = 1  — force fused quaternions everywhere
+final int ORIENT_GRV = 0, ORIENT_FUSED = 1;
+int orientMode = ORIENT_GRV;
+
+String orientSourceLabel() { return (orientMode == ORIENT_FUSED) ? "FUSED" : "GRV"; }
+
+// Effective "use GRV" decision, given per-file availability. Central so
+// drawSliceC() and CatchEvents apply the same rule.
+boolean useGrvActive(boolean padHasGrv, boolean boatHasGrv) {
+    return orientMode == ORIENT_GRV && padHasGrv && boatHasGrv;
+}
+
 // Slice-history ping-pong. Backspace / '-' swaps sliceMode with the last
 // value it held. Same model as GraphPanel's double-right-click zoom revert.
 int     prevSliceMode = -1;
@@ -582,7 +603,7 @@ void drawSliceC() {
     // that the entry/exit panel (GRV-based) didn't share. Gated on BOTH
     // files having GRV (not per-sensor) so paddle and boat are never
     // mixed fused-vs-GRV, which would reintroduce the same class of bug.
-    boolean useGrvC = paddleData.hasGrv && boatData.hasGrv;
+    boolean useGrvC = useGrvActive(paddleData.hasGrv, boatData.hasGrv);
 
     float[] qPad  = useGrvC ? new float[]{ fd.grvQw,  fd.grvQx,  fd.grvQy,  fd.grvQz  }
                              : new float[]{ fd.qw,     fd.qx,     fd.qy,     fd.qz     };
@@ -1079,13 +1100,18 @@ void drawHUD_sliceC() {
         text("refs = identity  (K captures paddle + matched boat rest simultaneously; U clears)", 20, y);
     }
 
-    // Quat source for this render — GRV (mag-free) when both files have
-    // it, else fused. See drawSliceC()'s useGrvC (spec §13.7 item 9).
-    boolean useGrvC = paddleData.hasGrv && boatData.hasGrv;
+    // Quat source for this render — GRV (mag-free) when both files have it and
+    // GRV mode is selected, else fused. Toggle with v/V (spec §15.12). See
+    // drawSliceC()'s useGrvC (spec §13.7 item 9).
+    boolean useGrvC   = useGrvActive(paddleData.hasGrv, boatData.hasGrv);
+    boolean grvAvail  = paddleData.hasGrv && boatData.hasGrv;
+    String  srcLabel;
+    if (useGrvC)                              srcLabel = "GRV (mag-free)  [v = fused]";
+    else if (orientMode == ORIENT_FUSED && grvAvail) srcLabel = "fused (forced)  [v = GRV]";
+    else                                      srcLabel = "fused (no GRV in one or both files)";
     fill(useGrvC ? color(150, 220, 150) : color(230, 220, 140));
     textSize(11);
-    text("relative-yaw source: " + (useGrvC ? "GRV (mag-free)" : "fused (no GRV in one or both files)"),
-         20, y + 20);
+    text("relative-yaw source: " + srcLabel, 20, y + 20);
     textSize(13);
 }
 
@@ -1198,6 +1224,21 @@ void keyPressed() {
         sideView.toggleLeftBow();
         triggerRefFlash("LEFT-BLADE VIEW  bow "
                         + (sideView.leftBowRight ? "RIGHT (mirrored)" : "LEFT (from port)"));
+        return;
+    }
+    // y = toggle the relative-yaw orientation source (Slice C + entry/exit):
+    // GRV (mag-free, default) <-> fused. GRV yaw drifts over a long session
+    // with no magnetic lock, so a well-mag-calibrated session often looks
+    // cleaner in fused (spec §15.12). Recompute the entry/exit engine, which
+    // bakes its heading reference at compute time. Gated to sliceMode != 0 so
+    // Slice 0's model-cal `y` (cal.handleKey, yaw nudge) is unaffected.
+    if ((key == 'y' || key == 'Y') && sliceMode != 0) {
+        orientMode = (orientMode == ORIENT_GRV) ? ORIENT_FUSED : ORIENT_GRV;
+        rebuildCatchEvents();
+        triggerRefFlash("RELATIVE-YAW SOURCE = " + orientSourceLabel()
+                        + (orientMode == ORIENT_FUSED
+                           ? "  (forced — GRV yaw drift bypassed)"
+                           : "  (mag-free, default)"));
         return;
     }
     // t = track window — the whole GPS track over an OpenStreetMap backdrop, a

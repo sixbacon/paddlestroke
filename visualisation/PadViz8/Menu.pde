@@ -83,6 +83,7 @@ class Menu {
         items.add(new MenuItem("1", "Slice A — paddle",            '1', 0));
         items.add(new MenuItem("2", "Slice B — kayak",             '2', 0));
         items.add(new MenuItem("3", "Slice C — combined",          '3', 0));
+        items.add(new MenuItem("y", "  └ relative-yaw source: GRV <-> fused", 'y', 0));
         items.add(new MenuItem("Bksp", "Previous slice (ping-pong)", (char) 8, 0));
         items.add(header("ANALYSIS WINDOWS"));
         items.add(new MenuItem("w", "Session-setup wizard (show / hide)",         'w', 0));
