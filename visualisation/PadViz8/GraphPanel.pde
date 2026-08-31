@@ -75,6 +75,20 @@ class GraphPanel {
     // Cached chart geometry (set during draw)
     int chartX, chartY, chartW, chartH;
 
+    // ── Min/max envelope cache (zoomed-out anti-aliasing, spec §15.15) ────────
+    // When more than one sample maps to a pixel column, point-sampling one
+    // sample per column aliases the ~0.6 Hz roll into a false low-frequency
+    // beat. Instead we draw, per column, a vertical line spanning the min..max
+    // of every sample in that column — the true amplitude envelope. It is
+    // recomputed only when the view range / width / fields change (envSig), so
+    // per-frame redraw stays cheap. envTopY = screen y of the column max,
+    // envBotY = screen y of the column min, envHas = whether the column has data.
+    String    envSig = null;
+    float[][] envTopY, envBotY;
+    boolean[][] envHas;
+    static final float DECIMATE_SPP = 1.5f;   // samples/pixel above which we decimate
+    static final int   ENV_SCAN_CAP = 160;    // max samples scanned per column
+
     GraphPanel(int x, int y, int w, int h) {
         gx = x;  gy = y;  gw = w;  gh = h;
     }
@@ -155,54 +169,25 @@ class GraphPanel {
 
         fill(15, 17, 24);  noStroke();  rect(chartX, chartY, chartW, chartH);
 
-        // Per-slot traces
-        for (int s = 0; s < N_SLOTS; s++) {
-            int fi = slotField[s];
-            if (fi < 0 || fi >= N_FIELDS) continue;
-            int src   = FIELD_MAP[fi][0];
-            int subFi = FIELD_MAP[fi][1];
+        // More visible samples than pixels? Draw the min/max envelope instead
+        // of point-sampling (which aliases). Otherwise draw the detail line.
+        boolean decimated = (float)(vB - vA + 1) / max(1, chartW) > DECIMATE_SPP;
 
-            float[] rng;
-            if (src == 0) {
-                rng = ds.fieldRange(subFi);
-            } else {
-                if (dsBoat == null || dsBoat.frameCount() == 0) continue;
-                rng = dsBoat.fieldRange(subFi);
+        if (decimated) {
+            String sig = vA + "_" + vB + "_" + chartW + "_" + chartH + "_" + chartY
+                       + "_" + slotField[0] + "_" + slotField[1] + "_" + slotField[2]
+                       + "_" + n + "_" + (dsBoat != null ? dsBoat.frameCount() : 0);
+            if (!sig.equals(envSig)) {
+                buildEnvelope(ds, dsBoat, syncMap, viewA, viewB, vA, vB, n);
+                envSig = sig;
             }
-            float mn = rng[0], mx = rng[1];
-
-            stroke(SLOT_COLS[s]);  strokeWeight(1);  noFill();
-            boolean inShape = false;
-            for (int pxi = 0; pxi < chartW; pxi++) {
-                float t = (float)pxi / max(1, chartW - 1);
-                int padIdx;
-                if (classify != null) {
-                    int vpos = round(vA + t * (vB - vA));
-                    padIdx = classify.rawForVisiblePos(vpos);
-                } else {
-                    padIdx = viewA + (int)(t * (viewB - viewA));
-                }
-                padIdx = constrain(padIdx, 0, n - 1);
-
-                float v;
-                if (src == 0) {
-                    v = ds.fieldAt(padIdx, subFi);
-                } else {
-                    int boatIdx = (syncMap == null) ? -1 : syncMap.boatIdxFor(padIdx);
-                    BoatFrameData bfd = (boatIdx >= 0 && dsBoat != null)
-                        ? dsBoat.frameAt(boatIdx) : null;
-                    if (bfd == null) {
-                        if (inShape) { endShape(); inShape = false; }
-                        continue;
-                    }
-                    v = bfd.field(subFi);
-                }
-
-                float vy = chartY + chartH - map(v, mn, mx, 0, chartH);
-                if (!inShape) { beginShape(); inShape = true; }
-                vertex(chartX + pxi, vy);
-            }
-            if (inShape) endShape();
+            drawEnvelope();
+            // quiet hint that this is a decimated view
+            noStroke();  fill(150, 150, 165);  textSize(9);  textAlign(RIGHT, TOP);
+            text("envelope — zoom in for detail", chartX + chartW - 2, chartY + 2);
+        } else {
+            envSig = null;   // invalidate so re-entry to decimated recomputes
+            drawDetailTraces(ds, dsBoat, syncMap, viewA, viewB, vA, vB, n);
         }
 
         // Classification shading + pending start/end cursors (Step 4, spec §14).
@@ -226,6 +211,127 @@ class GraphPanel {
         FrameData fA = ds.frameAt(viewA), fB = ds.frameAt(viewB);
         textAlign(LEFT,  TOP);  text(nf(fA.ts / 1000.0f, 0, 1) + "s", chartX, chartY + chartH + 1);
         textAlign(RIGHT, TOP);  text(nf(fB.ts / 1000.0f, 0, 1) + "s", chartX + chartW, chartY + chartH + 1);
+    }
+
+    // Detail (zoomed-in) rendering: one sample per pixel, connected by lines.
+    // Unchanged from the original drawChart; used when ≤ ~1 sample per pixel.
+    void drawDetailTraces(DataSource ds, BoatSource dsBoat, SyncMap syncMap,
+                          int viewA, int viewB, int vA, int vB, int n) {
+        for (int s = 0; s < N_SLOTS; s++) {
+            int fi = slotField[s];
+            if (fi < 0 || fi >= N_FIELDS) continue;
+            int src = FIELD_MAP[fi][0], subFi = FIELD_MAP[fi][1];
+
+            float[] rng;
+            if (src == 0) rng = ds.fieldRange(subFi);
+            else {
+                if (dsBoat == null || dsBoat.frameCount() == 0) continue;
+                rng = dsBoat.fieldRange(subFi);
+            }
+            float mn = rng[0], mx = rng[1];
+
+            stroke(SLOT_COLS[s]);  strokeWeight(1);  noFill();
+            boolean inShape = false;
+            for (int pxi = 0; pxi < chartW; pxi++) {
+                int padIdx = rawIdxForPixel(pxi, viewA, viewB, vA, vB, n);
+                float v;
+                if (src == 0) v = ds.fieldAt(padIdx, subFi);
+                else {
+                    int boatIdx = (syncMap == null) ? -1 : syncMap.boatIdxFor(padIdx);
+                    BoatFrameData bfd = (boatIdx >= 0 && dsBoat != null)
+                        ? dsBoat.frameAt(boatIdx) : null;
+                    if (bfd == null) { if (inShape) { endShape(); inShape = false; } continue; }
+                    v = bfd.field(subFi);
+                }
+                float vy = chartY + chartH - map(v, mn, mx, 0, chartH);
+                if (!inShape) { beginShape(); inShape = true; }
+                vertex(chartX + pxi, vy);
+            }
+            if (inShape) endShape();
+        }
+    }
+
+    // Recompute the per-column min/max envelope for the current view. For each
+    // pixel column, scan every visible sample that falls in it (capped at
+    // ENV_SCAN_CAP for speed) and store the screen y of its min and max.
+    void buildEnvelope(DataSource ds, BoatSource dsBoat, SyncMap syncMap,
+                       int viewA, int viewB, int vA, int vB, int n) {
+        int W = chartW;
+        if (envTopY == null || envTopY.length != N_SLOTS || envTopY[0].length != W) {
+            envTopY = new float[N_SLOTS][W];
+            envBotY = new float[N_SLOTS][W];
+            envHas  = new boolean[N_SLOTS][W];
+        }
+        for (int s = 0; s < N_SLOTS; s++) {
+            int fi = slotField[s];
+            boolean ok = (fi >= 0 && fi < N_FIELDS);
+            int src = ok ? FIELD_MAP[fi][0] : 0, subFi = ok ? FIELD_MAP[fi][1] : 0;
+            float[] rng = null;
+            if (ok) {
+                if (src == 0) rng = ds.fieldRange(subFi);
+                else if (dsBoat != null && dsBoat.frameCount() > 0) rng = dsBoat.fieldRange(subFi);
+            }
+            if (rng == null || rng[1] <= rng[0]) {
+                for (int px = 0; px < W; px++) envHas[s][px] = false;
+                continue;
+            }
+            float mn = rng[0], mx = rng[1];
+            for (int px = 0; px < W; px++) {
+                int i0 = rawIdxForPixel(px,     viewA, viewB, vA, vB, n);
+                int i1 = rawIdxForPixel(px + 1, viewA, viewB, vA, vB, n);
+                int lo = constrain(min(i0, i1), 0, n - 1);
+                int hi = constrain(max(i0, i1), 0, n - 1);
+                int stride = max(1, (hi - lo) / ENV_SCAN_CAP);
+                float vmin = Float.MAX_VALUE, vmax = -Float.MAX_VALUE;
+                boolean any = false;
+                for (int i = lo; i <= hi; i += stride) {
+                    float v;
+                    if (src == 0) v = ds.fieldAt(i, subFi);
+                    else {
+                        int bi = (syncMap == null) ? -1 : syncMap.boatIdxFor(i);
+                        if (bi < 0 || dsBoat == null) continue;
+                        BoatFrameData bfd = dsBoat.frameAt(bi);
+                        if (bfd == null) continue;
+                        v = bfd.field(subFi);
+                    }
+                    if (v < vmin) vmin = v;
+                    if (v > vmax) vmax = v;
+                    any = true;
+                }
+                if (any) {
+                    envTopY[s][px] = chartY + chartH - map(vmax, mn, mx, 0, chartH);
+                    envBotY[s][px] = chartY + chartH - map(vmin, mn, mx, 0, chartH);
+                    envHas[s][px]  = true;
+                } else envHas[s][px] = false;
+            }
+        }
+    }
+
+    // Draw the cached envelope: a vertical min..max line per column per slot.
+    void drawEnvelope() {
+        if (envHas == null) return;
+        for (int s = 0; s < N_SLOTS; s++) {
+            int fi = slotField[s];
+            if (fi < 0 || fi >= N_FIELDS) continue;
+            stroke(SLOT_COLS[s]);  strokeWeight(1);  noFill();
+            for (int px = 0; px < chartW; px++) {
+                if (!envHas[s][px]) continue;
+                float yt = envTopY[s][px], yb = envBotY[s][px];
+                if (yb - yt < 1) yb = yt + 1;   // keep flat channels visible
+                line(chartX + px, yt, chartX + px, yb);
+            }
+        }
+    }
+
+    // Pixel column → raw paddle-frame index, exclusion-aware. Shared by the
+    // detail traces and the envelope so both map pixels the same way.
+    int rawIdxForPixel(int px, int viewA, int viewB, int vA, int vB, int n) {
+        float t = constrain((float)px / max(1, chartW - 1), 0, 1);
+        if (classify != null) {
+            int vpos = round(vA + t * (vB - vA));
+            return constrain(classify.rawForVisiblePos(vpos), 0, n - 1);
+        }
+        return constrain(viewA + (int)(t * (viewB - viewA)), 0, n - 1);
     }
 
     // Dashed green vertical line at the given paddle-frame index, with a
