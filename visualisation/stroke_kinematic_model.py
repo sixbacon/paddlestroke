@@ -303,7 +303,8 @@ def _figure(t, swing, elev, c, am, aM, ve_all, aft, gspeed, fs, cpm):
     fig.suptitle("Seat-anchored kinematic-model estimate — 30 Aug 2026, four RH forward-paddling "
                  "runs (turns excluded)\npanels A–C: longest run (%d frames, %.0f min, %.0f CPM); "
                  "C/D var-explained + GPS are POOLED over all four\n"
-                 "model: c(t)=R·R_rel(t)·d̂  (paddle centre swings on a sphere about a fixed shoulder pivot)"
+                 "model: c(t)=R·R_rel(t)·" r"$\hat{d}$"
+                 "  (paddle centre swings on a sphere about a fixed shoulder pivot)"
                  % (len(t), t[-1]/60, cpm), fontsize=10)
     ax=fig.add_subplot(2,2,1)
     ax.plot(t[w],swing[w],lw=.9,label="swing (about vertical)")
@@ -313,7 +314,10 @@ def _figure(t, swing, elev, c, am, aM, ve_all, aft, gspeed, fs, cpm):
     ax=fig.add_subplot(2,2,2)
     ax.plot(c[w,1],c[w,0],lw=.7,color="tab:purple",label="centre XY (top-down)")
     ax.plot(c[w,1],c[w,2],lw=.7,color="tab:green",label="centre YZ (side)")
-    ax.scatter([0],[0],c="k",s=40,marker="+"); ax.annotate("shoulder pivot",(0,0),fontsize=7)
+    ax.scatter([0],[0],c="k",s=40,marker="+")
+    ax.annotate("shoulder pivot", (0,0), xytext=(-0.45,-0.03), fontsize=7,
+                ha="left", va="center", color="dimgray",
+                arrowprops=dict(arrowstyle="-", lw=.5, color="dimgray"))
     ax.set_title("B · Model paddle-centre trajectory (arm-swing arc)")
     ax.set_xlabel("boat +Y forward (m)"); ax.set_ylabel("boat +X stbd / +Z up (m)")
     ax.axis("equal"); ax.legend(fontsize=8); ax.grid(alpha=.3)
