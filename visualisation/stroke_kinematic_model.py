@@ -56,23 +56,37 @@ BOAT = sys.argv[2] if len(sys.argv) > 2 else os.path.join(REC, "BoatLog20260830.
 OUT  = os.path.join(HERE, "kinematic_model_30aug.png")
 G    = 9.80665
 
-# anthropometry / model constants (documented assumptions)
-REACH_R = 0.55                                   # m, pivot -> paddle centre
+# anthropometry / model constants
+REACH_R = 0.67                                   # m, pivot -> paddle centre
+                                                 # (measured 30 Aug 2026; was 0.55
+                                                 # assumed. Note: the accel score is
+                                                 # scale-free, so R changes only the
+                                                 # metric trajectory + GPS aft-sweep,
+                                                 # not any variance-explained number.)
 L_HALF  = 1.05                                   # m, centre -> blade tip (2.10/2)
 D_REST  = np.array([0.0, 0.97, -0.24]); D_REST /= np.linalg.norm(D_REST)
 
 
-def section_from_sidecar(pad_csv, cls="right"):
-    """Return (start,end) paddle frames of the first classification of type cls
-    from the sibling .session.json, or None."""
+def sections_from_sidecar(pad_csv, cls="right"):
+    """Return a sorted list of (start,end) paddle-frame ranges for every
+    classification of type cls in the sibling .session.json (empty if none).
+    The 30 Aug session is classified as FOUR separate right-handed forward-
+    paddling runs with the three turns left in the unclassified gaps between
+    them; each run is scored independently so no seam artefact enters the
+    double-differentiation / FFT band-pass."""
     base = os.path.splitext(pad_csv)[0] + ".session.json"
     if not os.path.exists(base):
-        return None
+        return []
     j = json.load(open(base))
-    for s in j.get("classification_sections", []):
-        if s.get("type") == cls:
-            return int(s["start_frame"]), int(s["end_frame"])
-    return None
+    out = [(int(s["start_frame"]), int(s["end_frame"]))
+           for s in j.get("classification_sections", []) if s.get("type") == cls]
+    return sorted(out)
+
+
+def section_from_sidecar(pad_csv, cls="right"):
+    """Back-compat: first range of type cls, or None."""
+    secs = sections_from_sidecar(pad_csv, cls)
+    return secs[0] if secs else None
 
 
 def rest_window_from_sidecar(pad_csv):
@@ -130,82 +144,98 @@ def bandpass_fft(x, fs, lo, hi):
 
 
 def main():
-    sec = section_from_sidecar(PAD) or (58966, 197628)
-    print("Right-handed section (paddle frames): %d..%d" % sec)
+    runs = sections_from_sidecar(PAD) or [(58966, 197628)]
+    print("Right-handed forward-paddling runs (paddle frames):")
+    for a, b in runs: print("  %d..%d" % (a, b))
+
     pc = ["timestamp_ms","accel_x","accel_y","accel_z","q_w","q_x","q_y","q_z",
           "cpm","rx_ms","grv_qw","grv_qx","grv_qy","grv_qz"]
-    pad = load_cols(PAD, pc, sec[0], sec[1])
-    N = len(pad["_frame"]); t = (pad["timestamp_ms"]-pad["timestamp_ms"][0])/1000.0
-    fs = 1.0/np.median(np.diff(t))
-    print("  N=%d  fs=%.1f Hz  dur=%.0f s" % (N, fs, t[-1]))
-
     bc = ["gps_speed_ms","gps_fix","kayak_qw","kayak_qx","kayak_qy","kayak_qz",
           "rx_ms","boat_grv_qw","boat_grv_qx","boat_grv_qy","boat_grv_qz"]
     boat = load_cols(BOAT, bc)
     order = np.argsort(boat["rx_ms"]); brx = boat["rx_ms"][order]
-    j = np.clip(np.searchsorted(brx, pad["rx_ms"]), 0, len(brx)-1)
-    bs = lambda n: boat[n][order][j]
-    gap = np.abs(brx[j]-pad["rx_ms"])
-    print("  boat sync |rx gap| median %.1f ms (95%% %.1f)" %
-          (np.median(gap), np.percentile(gap, 95)))
+    lab = ["X(stbd)","Y(fwd)","Z(up)"]
 
-    Rp = quat_to_R(pad["q_w"],pad["q_x"],pad["q_y"],pad["q_z"])
-    Rb = quat_to_R(bs("kayak_qw"),bs("kayak_qx"),bs("kayak_qy"),bs("kayak_qz"))
-    Rrel = np.einsum("nji,njk->nik", Rb, Rp)            # Rb^T Rp
-    u = Rrel @ np.array([1.0,0,0])                       # shaft dir, boat frame
-    swing = np.degrees(np.arctan2(u[:,0], u[:,1]))
-    elev  = np.degrees(np.arcsin(np.clip(u[:,2],-1,1)))
-    print("  shaft swing p2p %.0f deg   elevation [%.0f,%.0f] deg" %
-          (np.percentile(swing,97)-np.percentile(swing,3), elev.min(), elev.max()))
+    # Each run is processed independently (own fs, stroke band, differentiation
+    # and FFT band-pass) so no discontinuity at a run boundary leaks into the
+    # double derivative. Per-axis energies are then POOLED across runs and a
+    # single global scale per axis gives the combined variance-explained.
+    R = {"amaM":np.zeros(3), "aM2":np.zeros(3), "am2":np.zeros(3)}   # fused
+    Rg = {"amaM":np.zeros(3), "aM2":np.zeros(3), "am2":np.zeros(3)}  # GRV
+    aft_all=[]; gsp_all=[]; store=[]; Ntot=0
 
-    c   = REACH_R * (Rrel @ D_REST)                      # model paddle centre
-    tip = c + L_HALF * u                                 # right blade tip
+    for (f0f, f1f) in runs:
+        pad = load_cols(PAD, pc, f0f, f1f)
+        N = len(pad["_frame"]); t = (pad["timestamp_ms"]-pad["timestamp_ms"][0])/1000.0
+        fs = 1.0/np.median(np.diff(t)); Ntot += N
+        j = np.clip(np.searchsorted(brx, pad["rx_ms"]), 0, len(brx)-1)
+        bs = lambda n: boat[n][order][j]
 
-    a_body  = np.stack([pad["accel_x"],pad["accel_y"],pad["accel_z"]], axis=1)
-    a_world = np.einsum("nij,nj->ni", Rp, a_body)
-    print("  frame check: mean world accel = %s (expect ~[0,0,%.1f])" %
-          (np.round(a_world.mean(axis=0),2), G))
-    a_meas_world = a_world - np.array([0,0,a_world[:,2].mean()])
-    a_meas_boat  = np.einsum("nji,nj->ni", Rb, a_meas_world)
+        Rp = quat_to_R(pad["q_w"],pad["q_x"],pad["q_y"],pad["q_z"])
+        Rb = quat_to_R(bs("kayak_qw"),bs("kayak_qx"),bs("kayak_qy"),bs("kayak_qz"))
+        Rrel = np.einsum("nji,njk->nik", Rb, Rp)
+        u = Rrel @ np.array([1.0,0,0])
+        swing = np.degrees(np.arctan2(u[:,0], u[:,1]))
+        elev  = np.degrees(np.arcsin(np.clip(u[:,2],-1,1)))
+        c   = REACH_R * (Rrel @ D_REST); tip = c + L_HALF * u
 
-    d2 = lambda x: movavg(np.gradient(np.gradient(movavg(x, max(1,int(fs*0.05))),
-                          t, axis=0), t, axis=0), max(1,int(fs*0.05)))
-    a_model_boat = d2(c)
+        a_body  = np.stack([pad["accel_x"],pad["accel_y"],pad["accel_z"]], axis=1)
+        a_world = np.einsum("nij,nj->ni", Rp, a_body)
+        a_meas_world = a_world - np.array([0,0,a_world[:,2].mean()])
+        a_meas_boat  = np.einsum("nji,nj->ni", Rb, a_meas_world)
 
-    cpm = np.median(pad["cpm"][pad["cpm"]>0]); f0 = cpm/60.0
-    lo, hi = 0.5*f0, 4.0*f0
-    print("  stroke f0=%.2f Hz (%.0f CPM); band %.2f-%.2f Hz" % (f0,cpm,lo,hi))
-    am = bandpass_fft(a_meas_boat, fs, lo, hi)
-    aM = bandpass_fft(a_model_boat, fs, lo, hi)
-    lab = ["X(stbd)","Y(fwd)","Z(up)"]; ve_all=[]
+        d2 = lambda x, fs=fs, t=t: movavg(np.gradient(np.gradient(
+                movavg(x, max(1,int(fs*0.05))), t, axis=0), t, axis=0),
+                max(1,int(fs*0.05)))
+        cpm = np.median(pad["cpm"][pad["cpm"]>0]); ff = cpm/60.0; lo,hi = 0.5*ff, 4.0*ff
+        am = bandpass_fft(a_meas_boat, fs, lo, hi)
+        aM = bandpass_fft(d2(c), fs, lo, hi)
+        Rrg = np.einsum("nji,njk->nik",
+                quat_to_R(bs("boat_grv_qw"),bs("boat_grv_qx"),bs("boat_grv_qy"),bs("boat_grv_qz")),
+                quat_to_R(pad["grv_qw"],pad["grv_qx"],pad["grv_qy"],pad["grv_qz"]))
+        aMg = bandpass_fft(d2(REACH_R*(Rrg @ D_REST)), fs, lo, hi)
+
+        ve_run=[]
+        for k in range(3):
+            R["amaM"][k]+=np.sum(am[:,k]*aM[:,k]); R["aM2"][k]+=np.sum(aM[:,k]**2); R["am2"][k]+=np.sum(am[:,k]**2)
+            Rg["amaM"][k]+=np.sum(am[:,k]*aMg[:,k]); Rg["aM2"][k]+=np.sum(aMg[:,k]**2); Rg["am2"][k]+=np.sum(am[:,k]**2)
+            s = np.sum(am[:,k]*aM[:,k])/np.sum(aM[:,k]**2)
+            ve_run.append(1 - np.sum((am[:,k]-s*aM[:,k])**2)/np.sum(am[:,k]**2))
+        corr = np.corrcoef(am.ravel(), aM.ravel())[0,1]
+        store.append(dict(N=N, t=t, swing=swing, elev=elev, c=c, am=am, aM=aM,
+                          fs=fs, cpm=cpm, Rrel=Rrel, lo=lo, hi=hi, d2=d2,
+                          a_world_mean=a_world.mean(axis=0)))
+        tsm = movavg(tip, max(1,int(fs*0.05))); vtip = np.gradient(tsm, t, axis=0)
+        imm = tsm[:,2] < np.percentile(tsm[:,2], 33); aft_all.append(-vtip[imm,1])
+        gsp_all.append(bs("gps_speed_ms")[bs("gps_fix")>0])
+        print("  run %d..%d N=%d %.0fCPM  VE=[%s] mean %.2f  corr %.2f  swing p2p %.0f°"
+              % (f0f,f1f,N,cpm," ".join("%+.2f"%v for v in ve_run),
+                 np.mean(ve_run),corr,np.percentile(swing,97)-np.percentile(swing,3)))
+
+    # frame check (last run's world-accel mean is representative)
+    print("  frame check: mean world accel = %s (expect ~[0,0,%.1f])"
+          % (np.round(store[-1]["a_world_mean"],2), G))
+
+    def pool(D):
+        ve=[]
+        for k in range(3):
+            s=D["amaM"][k]/D["aM2"][k]
+            ve.append(1 - (D["am2"][k]-2*s*D["amaM"][k]+s*s*D["aM2"][k])/D["am2"][k])
+        return ve
+    ve_all = pool(R); veg = pool(Rg)
+    print("  POOLED (%d frames, %.0f min, single global scale/axis):" % (Ntot, Ntot/6000))
     for k in range(3):
-        s = np.sum(am[:,k]*aM[:,k])/np.sum(aM[:,k]*aM[:,k])
-        ve = 1 - np.var(am[:,k]-s*aM[:,k])/np.var(am[:,k]); ve_all.append(ve)
-        print("  accel band %s : var-explained %+.2f (scale %.2f) meas_rms %.2f m/s2"
-              % (lab[k], ve, s, np.sqrt(np.mean(am[:,k]**2))))
-    corr = np.corrcoef(am.ravel(), aM.ravel())[0,1]
-    print("  overall band accel corr = %.3f   mean var-explained = %.2f"
-          % (corr, np.mean(ve_all)))
+        print("    %-8s fused VE %+.2f   GRV VE %+.2f" % (lab[k], ve_all[k], veg[k]))
+    print("  MEAN fused VE %.2f   GRV VE %.2f" % (np.mean(ve_all), np.mean(veg)))
 
-    # fused vs GRV
-    def score(Rr):
-        aa = bandpass_fft(d2(REACH_R*(Rr @ D_REST)), fs, lo, hi)
-        v = np.mean([1-np.var(am[:,k]-(np.sum(am[:,k]*aa[:,k])/np.sum(aa[:,k]**2))*aa[:,k])
-                     /np.var(am[:,k]) for k in range(3)])
-        return v, np.corrcoef(am.ravel(), aa.ravel())[0,1]
-    Rrg = np.einsum("nji,njk->nik",
-                    quat_to_R(bs("boat_grv_qw"),bs("boat_grv_qx"),bs("boat_grv_qy"),bs("boat_grv_qz")),
-                    quat_to_R(pad["grv_qw"],pad["grv_qx"],pad["grv_qy"],pad["grv_qz"]))
-    vf,cf = np.mean(ve_all), corr; vg,cg = score(Rrg)
-    print("  orientation source var-explained/corr:  fused %.2f/%.2f   GRV %.2f/%.2f"
-          % (vf,cf,vg,cg))
+    aft = np.concatenate(aft_all); gspeed = np.mean(np.concatenate(gsp_all))
+    print("  pseudo-ZUPT (R=%.2f): model tip aft-sweep median %.2f m/s (boat %.2f m/s)"
+          % (REACH_R, np.median(aft), gspeed))
 
-    # GPS pseudo-ZUPT while immersed
-    tsm = movavg(tip, max(1,int(fs*0.05))); vtip = np.gradient(tsm, t, axis=0)
-    imm = tsm[:,2] < np.percentile(tsm[:,2], 33); aft = -vtip[imm,1]
-    gspeed = np.mean(bs("gps_speed_ms")[bs("gps_fix")>0])
-    print("  pseudo-ZUPT: model tip aft-sweep while immersed median %.2f m/s "
-          "(boat speed %.2f m/s)" % (np.median(aft), gspeed))
+    # pick the longest run for the illustrative time-series/trajectory panels
+    rep = max(store, key=lambda d: d["N"])
+    t, swing, elev, c, am, aM, fs, cpm = (rep["t"], rep["swing"], rep["elev"],
+        rep["c"], rep["am"], rep["aM"], rep["fs"], rep["cpm"])
 
     # ---- calibrate the body constants from the jig pose --------------------
     # The jig held the paddle in a known pose relative to the boat; its rest
@@ -214,10 +244,21 @@ def main():
     # DIRECTION d_hat to the measured acceleration, replaces the two assumed
     # constants that ARE recoverable. The reach MAGNITUDE R is not recoverable
     # from inertial+GPS data (see note below), so it stays anthropometric.
-    def score_d(Rr, dh):
-        aa = bandpass_fft(d2(Rr @ dh), fs, lo, hi)
-        return np.mean([1 - np.var(am[:,k]-(np.sum(am[:,k]*aa[:,k])/np.sum(aa[:,k]**2))*aa[:,k])
-                        / np.var(am[:,k]) for k in range(3)])
+    def dvec(az, dp):
+        a, d = np.radians(az), np.radians(dp)
+        return np.array([np.sin(a)*np.cos(d), np.cos(a)*np.cos(d), -np.sin(d)])
+
+    def score_d_pooled(dh, Qoff=None):
+        """Pooled (over all runs) variance-explained for reach-direction dh,
+        optionally boresight-referencing R_rel by Qoff. Scale-free (R absent)."""
+        amaM=np.zeros(3); aM2=np.zeros(3); am2=np.zeros(3)
+        for r in store:
+            Rr = r["Rrel"] if Qoff is None else np.einsum("ji,njk->nik", Qoff, r["Rrel"])
+            aa = bandpass_fft(r["d2"](Rr @ dh), r["fs"], r["lo"], r["hi"])
+            for k in range(3):
+                amaM[k]+=np.sum(r["am"][:,k]*aa[:,k]); aM2[k]+=np.sum(aa[:,k]**2)
+                am2[k]+=np.sum(r["am"][:,k]**2)
+        return np.mean([amaM[k]**2/(aM2[k]*am2[k]) for k in range(3)])
 
     rw = rest_window_from_sidecar(PAD)
     if rw is not None:
@@ -231,26 +272,21 @@ def main():
         Rb0 = mean_R(np.stack([brw["kayak_qw"],brw["kayak_qx"],brw["kayak_qy"],brw["kayak_qz"]],1))
         Q_OFFSET = Rb0.T @ Rp0
         resid = np.degrees(np.arccos(np.clip((np.trace(Q_OFFSET)-1)/2, -1, 1)))
-        Rrel_cal = np.einsum("ji,njk->nik", Q_OFFSET, Rrel)  # boresight-referenced
 
-        # fit d_hat over a physically-sensible forward/down grid (accel score
-        # is scale-free, so R does not enter this fit)
+        # fit d_hat over a physically-sensible forward/down grid, pooled over runs
         best = None
         for azd in np.arange(-40,41,4):
             for dipd in np.arange(-5,61,4):
-                a,dd = np.radians(azd), np.radians(dipd)
-                dh = np.array([np.sin(a)*np.cos(dd), np.cos(a)*np.cos(dd), -np.sin(dd)])
-                v = score_d(Rrel_cal, dh)
-                if best is None or v > best[0]: best = (v, azd, dipd, dh)
+                v = score_d_pooled(dvec(azd, dipd), Q_OFFSET)
+                if best is None or v > best[0]: best = (v, azd, dipd, dvec(azd, dipd))
         vC, azC, dipC, dhC = best
-        print("\n  -- calibration from the jig pose --")
+        nb = max(score_d_pooled(dvec(a, dp)) for a in np.arange(-40,41,8)
+                 for dp in np.arange(-5,61,8))
+        print("\n  -- calibration from the jig pose (pooled over runs) --")
         print("     jig boresight residual (mount skew) = %.1f deg" % resid)
         print("     assumed constants               : var-explained %.2f" % np.mean(ve_all))
-        print("     + jig boresight (assumed d_hat)  : var-explained %.2f" % score_d(Rrel_cal, D_REST))
-        print("     + fitted d_hat (no boresight)    : var-explained %.2f"
-              % max(score_d(Rrel, np.array([np.sin(np.radians(a))*np.cos(np.radians(dp)),
-                    np.cos(np.radians(a))*np.cos(np.radians(dp)),-np.sin(np.radians(dp))]))
-                    for a in np.arange(-40,41,8) for dp in np.arange(-5,61,8)))
+        print("     + jig boresight (assumed d_hat)  : var-explained %.2f" % score_d_pooled(D_REST, Q_OFFSET))
+        print("     + fitted d_hat (no boresight)    : var-explained %.2f" % nb)
         print("     + boresight + fitted d_hat       : var-explained %.2f   "
               "d_hat=%s (az %.0f, dip %.0f)" % (vC, np.round(dhC,3), azC, dipC))
         print("     reach magnitude R: NOT recoverable from inertial+GPS (tip velocity is")
@@ -264,10 +300,11 @@ def _figure(t, swing, elev, c, am, aM, ve_all, aft, gspeed, fs, cpm):
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
     i0 = int(len(t)*0.45); w = slice(i0, i0+int(24*fs))
     fig = plt.figure(figsize=(13,9)); fig.patch.set_facecolor("white")
-    fig.suptitle("Seat-anchored kinematic-model estimate — 30 Aug 2026 right-handed section "
-                 "(%d frames, %.0f min, %.0f CPM)\nmodel: c(t)=R·R_rel(t)·d̂  (paddle centre "
-                 "swings on a sphere about a fixed shoulder pivot)"
-                 % (len(t), t[-1]/60, cpm), fontsize=11)
+    fig.suptitle("Seat-anchored kinematic-model estimate — 30 Aug 2026, four RH forward-paddling "
+                 "runs (turns excluded)\npanels A–C: longest run (%d frames, %.0f min, %.0f CPM); "
+                 "C/D var-explained + GPS are POOLED over all four\n"
+                 "model: c(t)=R·R_rel(t)·d̂  (paddle centre swings on a sphere about a fixed shoulder pivot)"
+                 % (len(t), t[-1]/60, cpm), fontsize=10)
     ax=fig.add_subplot(2,2,1)
     ax.plot(t[w],swing[w],lw=.9,label="swing (about vertical)")
     ax.plot(t[w],elev[w],lw=.9,label="elevation")
