@@ -483,6 +483,14 @@ constant) vs **position** (time-varying, the hard part):
   jig-calibrated per-limb anthropometry (replacing the assumed R, d̂) and folding the
   pseudo-ZUPT in as an actual per-stroke re-zero.
 
+- **Dataset provenance (31 Aug 2026):** the on-disk `PadLog20260830.CSV` /
+  `BoatLog20260830.CSV` were later **trimmed to the paddling section** (excluded drive-home
+  tail removed — paddle now frames 0–195265, boat trimmed at the rx_ms-matched boundary so
+  the streams stay synced). All four analysed right-paddling runs (frames 65927–189730) are
+  fully preserved, so the results above remain reproducible from the trimmed files. The full
+  originals + original sidecar are backed up in `visualisation/recordings/backups_pretrim/*.orig`
+  if the pre-trim ~327k-frame file is needed.
+
 ---
 
 ## 9. Test Plan
