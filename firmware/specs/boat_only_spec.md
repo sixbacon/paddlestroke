@@ -2,7 +2,8 @@
 
 **Project:** paddlestroke
 **Date:** 2026-10-19
-**Version:** 0.1 (initial — feasibility recorded from the 12 Aug / 30 Aug 2026 sessions)
+**Version:** 0.2 (adds the phased test plan §9, companion-app choice §10, and the
+phone-GPS-optional hardware variants §3; feasibility from the 12 Aug / 30 Aug 2026 sessions)
 **Status:** concept + offline feasibility proven for cadence & speed; firmware not started.
 
 ---
@@ -61,6 +62,17 @@ the boat forward.
 on-board SD logging. Because Wi-Fi/ESP-NOW is gone, the Wi-Fi↔Bluetooth
 coexistence problem on the shared 2.4 GHz radio **does not arise** — the radio is
 BLE-only.
+
+**Two variants — and with a phone app the GPS is optional:**
+
+- **Minimal (phone-paired) variant — ESP32 + IMU + BLE + battery, NO GPS.** The
+  phone already has GPS, so **speed and location come from the phone**; cadence is
+  derived from the hull IMU surge (GPS never sees cadence — §4), so the hull needs
+  to send only the one thing the phone cannot derive itself. This is the cheapest,
+  smallest, lowest-power build and the recommended shape for the phone-app product.
+- **Standalone-logger variant — add GPS (+ optional SD).** Only needed if the unit
+  must record speed/track *without* a phone present. The **validation rig** should
+  carry GPS regardless, to provide an independent speed reference.
 
 ---
 
@@ -192,19 +204,82 @@ The boat-only unit answers "how fast, how far, how often" — not "how".
 
 ---
 
-## 9. Open validation items
+## 9. Test plan
 
-1. **Single-blade data.** Collect real **canoe and SUP** hull logs and run
-   `stroke_boat_cadence.py` to confirm §6 the way §4 confirms the kayak case.
-2. **Rough water.** All tested sections were fairly calm. Boat wake, swell and
-   wind chop inject surge at other frequencies and could swamp the stroke signal;
-   the amplitude/sharpness gate (§5) needs tuning against a choppy session.
-3. **On-device estimator.** Confirm the sliding-window ACF/FFT cadence runs in
-   real time on the ESP32 within power budget; pick ACF vs FFT.
-4. **BLE app / profile.** Decide standard RSC/LN profile vs a companion app;
-   implement and field-test the phone link and its range in practice.
-5. **Mode inference.** Validate the surge:sway ratio as a single-vs-double-blade
-   discriminator on mixed data.
+Four phases, cheapest first. Each test has a pass criterion; cadence accuracy uses
+the project's existing field-verification standard (median |err| ≤ 1 CPM steady).
+**Ground truth for cadence** = a stroke count from video over a timed interval,
+and — on a kayak only — the existing paddle unit run in parallel as a reference.
+
+### Phase A — Offline data analysis (extends §4; no new firmware)
+
+Needs recorded hull IMU (+ GPS) logs; run through `stroke_boat_cadence.py` and
+small extensions of it.
+
+| ID | Test | Pass criterion |
+|---|---|---|
+| A-1 | Generalise the kayak result over **more sessions** (varied pace, several outings) | surge→cadence median \|err\| ≤ 1 CPM vs reference |
+| A-2 | **Single-blade: canoe** log vs video count | ≤ 1 CPM; surge fundamental = stroke rate directly (no ×2) |
+| A-3 | **Single-blade: SUP** log vs video count | ≤ 1 CPM; paddler body-motion does not mask the surge |
+| A-4 | **Rough water** (chop / wake / wind / swell) | either ≤ 2 CPM, **or** the confidence metric correctly flags low-confidence (no confident wrong number) |
+| A-5 | **Sliding window** (8–16 s rolling ACF/FFT, not whole-session) tracks cadence incl. ramps and rest→paddle | ≤ 2 CPM during changes; settles ≤ ~1 window after a step change |
+| A-6 | **Glide / rest** produces no cadence | reports "no cadence" when surge below the amplitude/sharpness gate |
+| A-7 | **Mode discriminator** — surge:sway ratio over mixed single/double-blade data | correctly classifies 1:1 (single) vs 2:1 (double) ≥ 95 % of windows |
+| A-8 | **Side-switching** (canoe "hut", SUP side change) | cadence continuous through the switch; recovers ≤ 1 window |
+
+### Phase B — On-device firmware (bench)
+
+| ID | Test | Pass criterion |
+|---|---|---|
+| B-1 | Port the chosen estimator (ACF — reuse `CadenceACF` — vs FFT) to the ESP32 | runs in real time at 100 Hz within CPU/RAM budget |
+| B-2 | Feed recorded surge data (or a controlled manual/shaker oscillation) on-device | on-device cadence matches the offline result to ≤ 1 CPM |
+| B-3 | BLE advertise → phone connects → cadence streams | connect ≤ 5 s; update ≥ 1 Hz; latency < 1 s |
+| B-4 | BLE reconnection after link drop / unit power-cycle | auto-reconnects ≤ 5 s, no phone-app restart |
+| B-5 | Range | usable to ≥ 5 m (phone in a dry bag on the same craft) |
+| B-6 | Battery life (BLE-only, no GPS/SD in the minimal variant) | meets a target session length (e.g. ≥ 4 h) |
+
+### Phase C — On-water system (the real proof)
+
+| ID | Test | Pass criterion |
+|---|---|---|
+| C-1 | **Kayak, feathered** — live phone cadence vs reference | median \|err\| ≤ 1 CPM |
+| C-2 | **Kayak, zero-feather** — the case that breaks the paddle-roll detector | ≤ 1 CPM (confirms the §4 headline live) |
+| C-3 | **Kayak, two-piece paddle** (joint play) | ≤ 1 CPM (unaffected, unlike the paddle-side algorithm) |
+| C-4 | **Canoe** and **SUP** — live cadence vs reference | ≤ 2 CPM |
+| C-5 | **Phone GPS vs hull GPS** speed (validation rig carries both) | agree within GPS noise (≈ ±0.2 m/s) → confirms the hull GPS can be dropped |
+| C-6 | **Real conditions** — turns, stops/starts, chop, side-switches | no spurious cadence at rest; graceful recovery; no runaway |
+| C-7 | **Endurance** — a full-length outing | stable cadence, no dropouts, battery holds |
+
+### Phase D — Companion app
+
+| ID | Test | Pass criterion |
+|---|---|---|
+| D-1 | App reads the BLE characteristic(s) and displays cadence (+ speed/track) | values correct vs the unit's serial/log |
+| D-2 | Logging (phone-side) produces a usable session file | re-openable; timestamps sane |
+| D-3 | Platform coverage + backgrounding / screen-lock behaviour | per chosen platform (see §10) |
+
+---
+
+## 10. Companion app — platform choice
+
+The dashboard is trivial to drive (a few BLE reads), so the choice is about who
+builds it and which phones it must reach:
+
+| Option | Reach | Notes |
+|---|---|---|
+| **Web Bluetooth page** (HTML/JS, single file) | **Android + desktop Chrome** (not iOS — Apple blocks Web Bluetooth) | Zero install, nothing to publish — **fastest path for the validation phase**. Can be authored in full as code. |
+| **Flutter** (Dart) | **iOS + Android** | Mature BLE (`flutter_blue_plus`); the choice for a shippable cross-platform product. Full source can be authored; needs a build/deploy toolchain. |
+| **MIT App Inventor** | Android (iOS support limited) | Block-based/visual — capable (has a BluetoothLE extension) and easy to **build yourself**, but not authorable as code by an assistant, so help there is GATT + block-logic design, not source. |
+
+**Recommendation:** use a **Web Bluetooth page for validation** (immediate, Android,
+no install), move to **Flutter** if it becomes a product. App Inventor is a fine
+self-build alternative for an Android-only tool.
+
+**BLE service shape (all three can consume this):** expose cadence either on the
+standard **RSC** service (so off-the-shelf fitness apps may read it) or on a small
+custom GATT service — one notify characteristic carrying `{cadence, confidence,
+mode}` at ~1 Hz; optionally a second for hull speed/position if the
+standalone-logger variant is used.
 
 ---
 
