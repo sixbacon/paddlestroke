@@ -275,6 +275,11 @@ builds it and which phones it must reach:
 no install), move to **Flutter** if it becomes a product. App Inventor is a fine
 self-build alternative for an Android-only tool.
 
+**Full app development plan (validation-first strategy, the Bluetooth contract to
+lock first, Stage-1 milestones mapped to the §9 tests, risks and build ordering):**
+[Boat-only unit — companion app development plan](https://claude.ai/code/artifact/04cd70d6-b6b1-4085-82cb-e78cbf45fb5d)
+(Artifact, private). A browser-readable companion to this section.
+
 **BLE service shape (all three can consume this):** expose cadence either on the
 standard **RSC** service (so off-the-shelf fitness apps may read it) or on a small
 custom GATT service — one notify characteristic carrying `{cadence, confidence,
