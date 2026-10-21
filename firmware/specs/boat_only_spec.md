@@ -1,10 +1,15 @@
 # Boat-Only Unit — Functional Specification
 
 **Project:** paddlestroke
-**Date:** 2026-10-19
-**Version:** 0.2 (adds the phased test plan §9, companion-app choice §10, and the
-phone-GPS-optional hardware variants §3; feasibility from the 12 Aug / 30 Aug 2026 sessions)
-**Status:** concept + offline feasibility proven for cadence & speed; firmware not started.
+**Date:** 2026-10-21
+**Version:** 0.3 (adds §6.1 — first real single-blade data, 21 Oct 2026 canoe + SUP
+boat-only session: cadence recovered from the hull, cleanly on SUP (~30/min) and
+workably on canoe (~19/min), with two design consequences — a lower band floor and
+a fundamental-lock. v0.2 added the phased test plan §9, companion-app choice §10,
+and the phone-GPS-optional hardware variants §3.)
+**Status:** concept + offline feasibility proven for cadence & speed (double-blade
+kayak 12/30 Aug; **first single-blade canoe + SUP evidence 21 Oct 2026, §6.1**);
+firmware not started.
 
 ---
 
@@ -119,12 +124,18 @@ whole-session FFT:
    frequency. Two viable estimators, both already in the codebase's lineage:
    - **Autocorrelation** — reuse the firmware `CadenceACF` building block
      (`firmware/production/PadLog/CadenceACF.*`, ported for the zero-feather fix)
-     applied to the surge signal; robust and cheap.
+     applied to the surge signal; robust and cheap. For single blade, take the
+     **longest-period strong peak** (a *fundamental-lock*) — the §6.1 data showed an
+     asymmetric one-sided surge pulse is harmonically rich, so a plain
+     dominant-peak estimator flips between the fundamental and its 2×.
    - **FFT** — a 1024-point real FFT (arduinoFFT / ESP-DSP) is well within the
-     ESP32's budget at this rate; peak-pick within the plausible band.
+     ESP32's budget at this rate; peak-pick (or **harmonic-product**, to resolve the
+     fundamental vs 2× ambiguity above) within the plausible band.
 3. Gate to a plausible cadence band and require a minimum surge amplitude and
    peak sharpness (cf. the §4 "concentration" metric) before reporting, so glides
-   and chop don't produce spurious numbers.
+   and chop don't produce spurious numbers. **Set the band floor to ~0.2 Hz** (not
+   the kayak detector's 0.4 Hz / 24-per-min) — §6.1 measured a canoe fundamental of
+   ~0.32 Hz (≈ 19/min), below the kayak floor; single-blade cadence runs slower.
 4. Report the stroke rate; convert to the display convention per the detected
    paddling mode (§6).
 
@@ -154,6 +165,64 @@ single-blade data has been tested yet** — see §9):
 **Net:** for cadence and speed the boat-only unit should serve a canoe or SUP at
 least as well as a kayak, and more cleanly. The frontier item is confirming it on
 real single-blade logs (§9).
+
+### 6.1 First single-blade data — 21 Oct 2026 (canoe + SUP, boat unit only)
+
+A dedicated **boat-only** outing recorded the first single-blade logs:
+`data/2026-10-21/BoatLog29.CSV` (46.9 min, 100 Hz, full 25-column format, GPS fix
+throughout; git-ignored) with a written session note. One continuous file holds
+**canoe → out-of-water transition → SUP**; the GPS/motion phase boundaries match
+the note. Boat unit only — **no paddle unit and no video count, so there is no
+ground-truth cadence** yet; the numbers below are the data's *internal* consistency
+plus the paddler's recollection, not a verified count. Summary figure:
+`visualisation/boat_only_singleblade_20261021.png`.
+
+What the hull showed (surge-led spectral analysis, bangs ignored — see below):
+
+- **SUP (32–42 min) is the clean result.** Surge (`accel_y`), sway (`accel_x`) and
+  heave (`accel_z`) **independently agree** on the same ~**28–31 strokes/min** peak,
+  with the confidence metric high and steady — exactly the §6 prediction that for a
+  single blade the surge fundamental *is* the stroke rate directly.
+- **Canoe is recoverable but messier.** The slow, correction-heavy start sits at
+  ~**19–20 strokes/min** (which *matches the paddler's own sense that it was slower
+  than 24/min*); the steadier downriver leg settles to ~27–30/min.
+
+Two design consequences, both now folded into §5:
+
+1. **Lower the band floor to ~0.2 Hz.** The canoe fundamental (~0.32 Hz ≈ 19/min)
+   fell **below the old 0.4 Hz (24/min) floor** inherited from the kayak detector,
+   so the first pass wrongly pinned to the band edge. Single-blade cadence runs
+   slower than double-blade and the gate must allow for it.
+2. **Use a fundamental-lock, not a plain dominant-peak FFT.** A slow one-sided
+   stroke makes an *asymmetric* surge pulse, which is **harmonically rich**, so a
+   short-window dominant-peak estimator flips between the fundamental (~19) and its
+   2× (~38–40). An ACF taking the **longest-period strong peak** (reuse
+   `CadenceACF`), or a harmonic-product spectrum, resolves it. This is the real
+   algorithmic challenge for single blade — not SNR.
+
+Secondary observations:
+
+- **Sway ≈ surge for single blade.** As predicted in §6, the one-sided catch drives
+  a strong per-stroke sway/yaw-correction wobble at the **same** frequency as the
+  surge (≈ 1:1), versus ≈ 2:1 for the symmetric double blade — extra SNR and
+  supporting evidence for the §6 mode discriminator (A-7).
+- **The out-of-water transition reads as low-confidence** (bow propped to ~90° while
+  moving kit to the SUP) — the method did not false-lock during handling, a good
+  sign for a real "am I paddling?" gate (A-6).
+- **Rough-water degradation is real.** The downriver leg (composite hull, little
+  damping, wave-slap noise) measurably blunted the surge peak — the §9 A-4 concern,
+  partially realised.
+- **Hull bangs / SUP-rail squeaks are NOT a durable cadence signal.** The paddler
+  banged the hull / squeaked the rail most strokes, producing an 8–40 Hz impulse
+  train tempting to count — but it is an artifact of rough technique and this
+  boat/paddle (a clean stroke is silent), and the impulse count ran *higher* than
+  the surge fundamental (it double-counts knocks). Cadence must come from the
+  **surge**, which carries the rhythm on its own.
+
+**Status against the test plan:** this is first evidence toward **A-2 (canoe)** and
+**A-3 (SUP)** but does not pass them — both require a **video stroke count** over a
+timed interval as ground truth (no paddle-unit reference exists on a single-blade
+craft). The surge-vs-video check is the next on-water task.
 
 ---
 
@@ -216,11 +285,19 @@ and — on a kayak only — the existing paddle unit run in parallel as a refere
 Needs recorded hull IMU (+ GPS) logs; run through `stroke_boat_cadence.py` and
 small extensions of it.
 
+> **TODO (noted 21 Oct 2026):** `stroke_boat_cadence.py` currently locates its
+> analysis window via the *paddle* CSV's frame range, so it cannot yet ingest a
+> **boat-only** single-blade log (no paddle unit). Add a **"boat-only +
+> time-window" mode** (select rows by `timestamp_ms`/`rx_ms` range, or
+> whole-file) and fold in the 21 Oct canoe/SUP windows as reproducible cases,
+> with the ~0.2 Hz floor and the longest-period ACF lock from §5–§6.1. The 21 Oct
+> figure was produced by a throwaway session script pending this promotion.
+
 | ID | Test | Pass criterion |
 |---|---|---|
 | A-1 | Generalise the kayak result over **more sessions** (varied pace, several outings) | surge→cadence median \|err\| ≤ 1 CPM vs reference |
-| A-2 | **Single-blade: canoe** log vs video count | ≤ 1 CPM; surge fundamental = stroke rate directly (no ×2) |
-| A-3 | **Single-blade: SUP** log vs video count | ≤ 1 CPM; paddler body-motion does not mask the surge |
+| A-2 | **Single-blade: canoe** log vs video count | ≤ 1 CPM; surge fundamental = stroke rate directly (no ×2). *First data 21 Oct 2026 (§6.1): canoe cadence recovered ~19–30/min, but no video count yet — not passed.* |
+| A-3 | **Single-blade: SUP** log vs video count | ≤ 1 CPM; paddler body-motion does not mask the surge. *First data 21 Oct 2026 (§6.1): clean ~30/min across surge+sway+heave, but no video count yet — not passed.* |
 | A-4 | **Rough water** (chop / wake / wind / swell) | either ≤ 2 CPM, **or** the confidence metric correctly flags low-confidence (no confident wrong number) |
 | A-5 | **Sliding window** (8–16 s rolling ACF/FFT, not whole-session) tracks cadence incl. ramps and rest→paddle | ≤ 2 CPM during changes; settles ≤ ~1 window after a step change |
 | A-6 | **Glide / rest** produces no cadence | reports "no cadence" when surge below the amplitude/sharpness gate |
@@ -289,6 +366,8 @@ standalone-logger variant is used.
 ---
 
 *Provenance: feasibility numbers in §4 produced by
-`visualisation/stroke_boat_cadence.py` on the 12 Aug / 30 Aug 2026 recordings;
-this spec written by Claude Opus 4.8 (Claude Code session), 19 Oct 2026. See
-`PROVENANCE.md`.*
+`visualisation/stroke_boat_cadence.py` on the 12 Aug / 30 Aug 2026 recordings; the
+§6.1 single-blade findings and `boat_only_singleblade_20261021.png` produced by a
+throwaway session analysis script on `data/2026-10-21/BoatLog29.CSV` (to be promoted
+into `stroke_boat_cadence.py` — §9 A TODO); this spec written by Claude Opus 4.8
+(Claude Code session), 19–21 Oct 2026. See `PROVENANCE.md`.*
