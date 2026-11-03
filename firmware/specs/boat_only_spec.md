@@ -1,15 +1,20 @@
 # Boat-Only Unit — Functional Specification
 
 **Project:** paddlestroke
-**Date:** 2026-10-21
-**Version:** 0.3 (adds §6.1 — first real single-blade data, 21 Oct 2026 canoe + SUP
-boat-only session: cadence recovered from the hull, cleanly on SUP (~30/min) and
-workably on canoe (~19/min), with two design consequences — a lower band floor and
-a fundamental-lock. v0.2 added the phased test plan §9, companion-app choice §10,
-and the phone-GPS-optional hardware variants §3.)
+**Date:** 2026-11-03
+**Version:** 0.4 (first firmware: `firmware/production/BoatRate/` computes cadence
+on-device from the hull surge and streams it to a phone over BLE while keeping the
+100 Hz ESP-NOW→CYD→SD logging byte-identical; §5 fundamental-lock wording corrected
+to "first strong ACF peak"; §7 pins the BLE GATT contract; companion Web Bluetooth
+dashboard `app/index.html`. v0.3 added §6.1 — first real single-blade data, 21 Oct
+2026 canoe + SUP: cadence recovered cleanly on SUP (~30/min) and workably on canoe
+(~19/min), with two design consequences — a lower band floor and a fundamental-lock.
+v0.2 added the phased test plan §9, companion-app choice §10, and the phone-GPS-
+optional hardware variants §3.)
 **Status:** concept + offline feasibility proven for cadence & speed (double-blade
-kayak 12/30 Aug; **first single-blade canoe + SUP evidence 21 Oct 2026, §6.1**);
-firmware not started.
+kayak 12/30 Aug; **first single-blade canoe + SUP evidence 21 Oct 2026, §6.1**).
+**First firmware written 3 Nov 2026** (`BoatRate` v0.1 + `app/index.html`) — compiles;
+on-water Phase B/C/D verification pending.
 
 ---
 
@@ -124,10 +129,17 @@ whole-session FFT:
    frequency. Two viable estimators, both already in the codebase's lineage:
    - **Autocorrelation** — reuse the firmware `CadenceACF` building block
      (`firmware/production/PadLog/CadenceACF.*`, ported for the zero-feather fix)
-     applied to the surge signal; robust and cheap. For single blade, take the
-     **longest-period strong peak** (a *fundamental-lock*) — the §6.1 data showed an
-     asymmetric one-sided surge pulse is harmonically rich, so a plain
-     dominant-peak estimator flips between the fundamental and its 2×.
+     applied to the surge signal; robust and cheap. The *fundamental-lock* is the
+     **first (smallest-lag) strong ACF peak after the zero-lag hill** — the true
+     period T. This is what resolves the §6.1 harmonic ambiguity: an asymmetric
+     one-sided surge pulse is harmonically rich, so a plain FFT dominant-peak flips
+     to the 2× harmonic — but in the ACF a higher frequency is a *shorter* lag with
+     no genuine peak, so taking the first peak rejects it. **Do not take the
+     "longest-period" peak** — the ACF also has peaks at 2T, 3T (sub-harmonics), so a
+     longest-period scan reports *half* the real cadence (verified offline 3 Nov 2026:
+     it read the 21 Oct SUP as 15/min instead of ~31). This is implemented in
+     `firmware/production/BoatRate/SurgeCadence.*`, mirrored by the `sc_*` functions in
+     `visualisation/stroke_boat_cadence.py`.
    - **FFT** — a 1024-point real FFT (arduinoFFT / ESP-DSP) is well within the
      ESP32's budget at this rate; peak-pick (or **harmonic-product**, to resolve the
      fundamental vs 2× ambiguity above) within the plausible band.
@@ -196,9 +208,10 @@ Two design consequences, both now folded into §5:
 2. **Use a fundamental-lock, not a plain dominant-peak FFT.** A slow one-sided
    stroke makes an *asymmetric* surge pulse, which is **harmonically rich**, so a
    short-window dominant-peak estimator flips between the fundamental (~19) and its
-   2× (~38–40). An ACF taking the **longest-period strong peak** (reuse
-   `CadenceACF`), or a harmonic-product spectrum, resolves it. This is the real
-   algorithmic challenge for single blade — not SNR.
+   2× (~38–40). The fix (confirmed in firmware port, 3 Nov 2026) is an ACF taking the
+   **first (smallest-lag) strong peak** = the true period — see §5 for why that, and
+   not the "longest-period" peak (which grabs 2T/3T sub-harmonics and halves the
+   reading). This is the real algorithmic challenge for single blade — not SNR.
 
 Secondary observations:
 
@@ -258,6 +271,43 @@ Design choices:
 - **Logging** moves to the phone app (or a standard-profile recorder), removing
   the SD card from the unit.
 
+### 7.1 BLE GATT contract (as built, `BoatRate` v0.1)
+
+The single source of truth shared by `firmware/production/BoatRate/BoatRate.ino`
+and `app/index.html`. A custom 128-bit service with one **notify + read**
+characteristic emitting an **ASCII CSV line at ~1 Hz**:
+
+| | UUID |
+|---|---|
+| Service | `b0a7c0de-0001-4a7e-9c3b-1d2e3f405160` |
+| Cadence characteristic (notify, read) | `b0a7c0de-0002-4a7e-9c3b-1d2e3f405160` |
+
+Line format: `seq,ms,surge_cpm,sway_cpm,conf,mode,speed_ms,lat,lon,fix`
+
+- `surge_cpm` — hull forward-surge fundamental (blade plants/min), from `SurgeCadence`
+  on `accel_y`; `sway_cpm` — the same estimator on `accel_x` (sideways).
+- `mode` — `0` unknown / `1` single (surge:sway ≈ 1:1) / `2` double (≈ 2:1).
+- `conf` — surge ACF peak height 0–1 (periodicity quality / confidence cue).
+- The **firmware reports raw numbers only**; the app applies the display convention
+  (single → `surge_cpm` is the stroke rate; double/kayak → `sway_cpm` is the
+  left-right cycle "CPM"). The app also applies the **"am I paddling?" speed gate**
+  (fix & speed < 0.4 m/s ⇒ show *paused*) — this cleanly rejects the §6.1 out-of-water
+  transition false-lock, which occurred at 0.10 m/s.
+
+ASCII (not a packed struct) is deliberate: it is trivial to parse in the web page and
+directly readable in a generic tool like nRF Connect during bring-up. A larger ATT MTU
+is requested (185 B) so the full line fits one notify; Chrome negotiates this
+automatically. Standard RSC/LN profiles (§7 bullet) remain a future option for
+off-the-shelf fitness-app compatibility.
+
+**Dual-radio note (validation phase):** `BoatRate` keeps the full 100 Hz ESP-NOW→CYD→SD
+path running byte-identical to `BoatLog` v1.2 (same `BoatDataPayload`, PadDis untouched)
+so each outing still banks the raw CSV for offline ground truth, *and* streams BLE. The
+one 2.4 GHz radio is shared by Wi-Fi(ESP-NOW) and BLE via the ESP32 coexistence arbiter;
+BLE runs at ~1 Hz to keep that load small. **Verify ESP-NOW survives** by watching the
+CYD-logged `seq` for gaps with the phone connected (Phase B). A shippable product would
+drop ESP-NOW and run BLE-only (no coexistence concern, §3).
+
 ---
 
 ## 8. What it cannot do (by design)
@@ -285,13 +335,14 @@ and — on a kayak only — the existing paddle unit run in parallel as a refere
 Needs recorded hull IMU (+ GPS) logs; run through `stroke_boat_cadence.py` and
 small extensions of it.
 
-> **TODO (noted 21 Oct 2026):** `stroke_boat_cadence.py` currently locates its
-> analysis window via the *paddle* CSV's frame range, so it cannot yet ingest a
-> **boat-only** single-blade log (no paddle unit). Add a **"boat-only +
-> time-window" mode** (select rows by `timestamp_ms`/`rx_ms` range, or
-> whole-file) and fold in the 21 Oct canoe/SUP windows as reproducible cases,
-> with the ~0.2 Hz floor and the longest-period ACF lock from §5–§6.1. The 21 Oct
-> figure was produced by a throwaway session script pending this promotion.
+> **DONE (3 Nov 2026):** `stroke_boat_cadence.py` now has the **boat-only +
+> time-window mode** (`test_boat_only()` reads a boat CSV directly, selecting rows
+> by a minutes-from-start window), and the surge-ACF estimator the firmware mirrors
+> (`sc_*` functions = the `SurgeCadence` contract). The 21 Oct canoe/SUP windows are
+> reproducible cases in `main()`. It reproduces §4/§6.1: 21 Oct SUP 30.9/min &
+> canoe-back 29.3 (single, surge≈sway ≈1:1); 30 Aug 72.8, 12 Aug zero-feather 66.3,
+> 12 Aug feathered 70.3 (double, ≈2:1, surge/2 = the §4 cycle rate). This run also
+> **corrected the fundamental-lock** to "first strong ACF peak" (§5).
 
 | ID | Test | Pass criterion |
 |---|---|---|
@@ -352,6 +403,13 @@ builds it and which phones it must reach:
 no install), move to **Flutter** if it becomes a product. App Inventor is a fine
 self-build alternative for an Android-only tool.
 
+**Built (3 Nov 2026):** `app/index.html` — the validation Web Bluetooth dashboard.
+Single self-contained file; connects to the §7.1 service, shows cadence (mode-aware
+convention) + speed + confidence + GPS, and holds a **screen Wake Lock** so the phone
+stays on. Must be served over HTTPS (host on GitHub Pages — the repo is already on
+GitHub) and opened in **Android Chrome** (Web Bluetooth is unavailable on iOS and from
+`file://`). Note: it cannot be a claude.ai Artifact — that sandbox blocks Web Bluetooth.
+
 **Full app development plan (validation-first strategy, the Bluetooth contract to
 lock first, Stage-1 milestones mapped to the §9 tests, risks and build ordering):**
 [Boat-only unit — companion app development plan](https://claude.ai/code/artifact/04cd70d6-b6b1-4085-82cb-e78cbf45fb5d)
@@ -368,6 +426,8 @@ standalone-logger variant is used.
 *Provenance: feasibility numbers in §4 produced by
 `visualisation/stroke_boat_cadence.py` on the 12 Aug / 30 Aug 2026 recordings; the
 §6.1 single-blade findings and `boat_only_singleblade_20261021.png` produced by a
-throwaway session analysis script on `data/2026-10-21/BoatLog29.CSV` (to be promoted
-into `stroke_boat_cadence.py` — §9 A TODO); this spec written by Claude Opus 4.8
-(Claude Code session), 19–21 Oct 2026. See `PROVENANCE.md`.*
+throwaway session analysis script on `data/2026-10-21/BoatLog29.CSV` (now promoted into
+`stroke_boat_cadence.py`); the v0.4 firmware (`BoatRate`), Web Bluetooth app
+(`app/index.html`), and the surge-ACF estimator contract written/validated by Claude
+Opus 4.8 (Claude Code session), 3 Nov 2026; this spec written 19 Oct – 3 Nov 2026. See
+`PROVENANCE.md`.*

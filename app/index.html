@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1f33">
+<title>BoatRate — paddling dashboard</title>
+<!--
+  BoatRate companion dashboard — boat_only_spec.md §10 (Web Bluetooth, validation phase).
+
+  Receives the BoatRate unit's ~1 Hz BLE notify and shows cadence + speed + GPS.
+  Keeps the screen awake while connected (Screen Wake Lock API).
+
+  REQUIREMENTS
+    - Android Chrome (or desktop Chrome/Edge). Web Bluetooth is NOT available on
+      iOS — use a Flutter build there (spec §10).
+    - A SECURE CONTEXT: serve over HTTPS (e.g. GitHub Pages) or open from
+      http://localhost. Opening the file directly (file://) will NOT enable
+      Bluetooth.
+
+  BLE CONTRACT — must match firmware/production/BoatRate/BoatRate.ino:
+    service b0a7c0de-0001-4a7e-9c3b-1d2e3f405160
+    char    b0a7c0de-0002-4a7e-9c3b-1d2e3f405160  (notify, read)
+    value   ASCII: seq,ms,surge_cpm,sway_cpm,conf,mode,speed_ms,lat,lon,fix
+            mode 0=unknown 1=single(≈1:1) 2=double(≈2:1 kayak)
+-->
+<style>
+  :root{
+    --bg:#f4f6f8; --panel:#ffffff; --ink:#0b1f33; --muted:#5a6b7b;
+    --line:#dde4ea; --accent:#1f6feb; --good:#1a9d5a; --warn:#c9820a;
+    --bad:#c23b3b; --shadow:0 1px 3px rgba(16,42,67,.10),0 6px 20px rgba(16,42,67,.06);
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#071320; --panel:#0e2235; --ink:#eaf2fa; --muted:#8aa0b4;
+      --line:#1c3346; --accent:#4f9bff; --good:#35c27f; --warn:#e5a93a;
+      --bad:#ef6b6b; --shadow:0 1px 3px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#f4f6f8; --panel:#ffffff; --ink:#0b1f33; --muted:#5a6b7b;
+    --line:#dde4ea; --accent:#1f6feb; --good:#1a9d5a; --warn:#c9820a; --bad:#c23b3b;
+  }
+  :root[data-theme="dark"]{
+    --bg:#071320; --panel:#0e2235; --ink:#eaf2fa; --muted:#8aa0b4;
+    --line:#1c3346; --accent:#4f9bff; --good:#35c27f; --warn:#e5a93a; --bad:#ef6b6b;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    min-height:100dvh; padding:max(14px,env(safe-area-inset-top)) 14px 24px;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .wrap{max-width:560px; margin:0 auto; display:flex; flex-direction:column; gap:14px}
+  header{display:flex; align-items:center; justify-content:space-between; gap:12px}
+  .brand{display:flex; align-items:center; gap:10px; font-weight:700; letter-spacing:.2px}
+  .dot{width:11px; height:11px; border-radius:50%; background:var(--bad); flex:none;
+       box-shadow:0 0 0 4px color-mix(in srgb,var(--bad) 22%,transparent)}
+  .dot.on{background:var(--good); box-shadow:0 0 0 4px color-mix(in srgb,var(--good) 22%,transparent)}
+  .dot.stale{background:var(--warn); box-shadow:0 0 0 4px color-mix(in srgb,var(--warn) 22%,transparent)}
+  .status{font-size:.82rem; color:var(--muted)}
+  button{
+    font:inherit; font-weight:650; color:#fff; background:var(--accent);
+    border:0; border-radius:12px; padding:12px 18px; cursor:pointer; min-height:46px;
+  }
+  button.ghost{background:transparent; color:var(--accent); border:1.5px solid var(--line)}
+  button:disabled{opacity:.5; cursor:default}
+
+  .hero{
+    background:var(--panel); border:1px solid var(--line); border-radius:20px;
+    box-shadow:var(--shadow); padding:22px; text-align:center;
+  }
+  .hero .label{font-size:.8rem; text-transform:uppercase; letter-spacing:.12em; color:var(--muted)}
+  .hero .big{font-size:clamp(68px,26vw,132px); font-weight:800; line-height:.95;
+             font-variant-numeric:tabular-nums; margin:6px 0 2px}
+  .hero .unit{font-size:1rem; color:var(--muted); font-weight:600}
+  .hero.paused .big{color:var(--muted)}
+  .modepill{display:inline-block; margin-top:12px; font-size:.78rem; font-weight:650;
+            padding:4px 12px; border-radius:999px; border:1px solid var(--line); color:var(--muted)}
+  .modepill.single{color:var(--good); border-color:color-mix(in srgb,var(--good) 45%,var(--line))}
+  .modepill.double{color:var(--accent); border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
+
+  .grid{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:16px;
+        box-shadow:var(--shadow); padding:16px}
+  .card .k{font-size:.74rem; text-transform:uppercase; letter-spacing:.1em; color:var(--muted)}
+  .card .v{font-size:2rem; font-weight:750; font-variant-numeric:tabular-nums; margin-top:4px}
+  .card .sub{font-size:.82rem; color:var(--muted); margin-top:2px}
+
+  .conf{height:8px; border-radius:999px; background:var(--line); overflow:hidden; margin-top:10px}
+  .conf > i{display:block; height:100%; width:0; background:var(--good); transition:width .4s ease}
+
+  details{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:4px 14px}
+  details summary{cursor:pointer; padding:10px 0; color:var(--muted); font-size:.85rem}
+  .raw{font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.78rem; color:var(--muted);
+       word-break:break-all; padding-bottom:12px}
+  .foot{font-size:.74rem; color:var(--muted); text-align:center; line-height:1.5}
+  .hint{background:color-mix(in srgb,var(--warn) 14%,transparent);
+        border:1px solid color-mix(in srgb,var(--warn) 40%,var(--line));
+        color:var(--ink); border-radius:12px; padding:12px 14px; font-size:.85rem; display:none}
+  .hint.show{display:block}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand"><span id="dot" class="dot"></span> BoatRate</div>
+    <button id="btn">Connect</button>
+  </header>
+
+  <div id="hint" class="hint"></div>
+
+  <section id="hero" class="hero paused">
+    <div class="label" id="heroLabel">Cadence</div>
+    <div class="big" id="cadence">—</div>
+    <div class="unit" id="cadenceUnit">waiting for unit</div>
+    <div class="modepill" id="modePill">mode —</div>
+  </section>
+
+  <div class="grid">
+    <div class="card">
+      <div class="k">Speed</div>
+      <div class="v"><span id="speedKn">—</span> <span style="font-size:1rem;color:var(--muted)">kn</span></div>
+      <div class="sub"><span id="speedMs">—</span> m/s · <span id="speedKmh">—</span> km/h</div>
+    </div>
+    <div class="card">
+      <div class="k">Confidence</div>
+      <div class="v"><span id="confPct">—</span><span style="font-size:1rem;color:var(--muted)">%</span></div>
+      <div class="conf"><i id="confBar"></i></div>
+      <div class="sub">surge/sway <span id="ratio">—</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="k">Position</div>
+    <div class="v" style="font-size:1.1rem"><span id="gps">no fix</span></div>
+    <div class="sub">surge <span id="surgeV">—</span>/min · sway <span id="swayV">—</span>/min · updated <span id="age">—</span></div>
+  </div>
+
+  <details>
+    <summary>Raw telemetry</summary>
+    <div class="raw" id="raw">—</div>
+  </details>
+
+  <div class="foot">
+    Keeps the screen awake while connected. Android Chrome over HTTPS only.<br>
+    © paddlestroke · BoatRate validation dashboard
+  </div>
+</div>
+
+<script>
+"use strict";
+const SERVICE = "b0a7c0de-0001-4a7e-9c3b-1d2e3f405160";
+const CHAR    = "b0a7c0de-0002-4a7e-9c3b-1d2e3f405160";
+const MOVING_MS = 0.4;            // speed below this (m/s) with a fix ⇒ "paused" gate
+const STALE_MS  = 3500;           // no packet for this long ⇒ stale
+
+const $ = id => document.getElementById(id);
+let device=null, char=null, wakeLock=null, lastRx=0, ageTimer=null;
+
+function hint(msg){ const h=$("hint"); if(!msg){h.classList.remove("show");return;} h.textContent=msg; h.classList.add("show"); }
+
+function setConn(state){ // 'off' | 'on' | 'stale'
+  const d=$("dot");
+  d.className="dot"+(state==="on"?" on":state==="stale"?" stale":"");
+  $("btn").textContent = device ? "Disconnect" : "Connect";
+}
+
+async function requestWakeLock(){
+  try{
+    if("wakeLock" in navigator){ wakeLock = await navigator.wakeLock.request("screen"); }
+  }catch(e){ /* non-fatal */ }
+}
+document.addEventListener("visibilitychange", ()=>{
+  if(document.visibilityState==="visible" && device && !wakeLock) requestWakeLock();
+});
+
+async function connect(){
+  if(!navigator.bluetooth){ hint("This browser has no Web Bluetooth. Use Android Chrome over HTTPS."); return; }
+  hint("");
+  try{
+    device = await navigator.bluetooth.requestDevice({
+      filters:[{ services:[SERVICE] }, { namePrefix:"BoatRate" }],
+      optionalServices:[SERVICE]
+    });
+    device.addEventListener("gattserverdisconnected", onDrop);
+    const gatt = await device.gatt.connect();
+    const svc  = await gatt.getPrimaryService(SERVICE);
+    char       = await svc.getCharacteristic(CHAR);
+    await char.startNotifications();
+    char.addEventListener("characteristicvaluechanged", onValue);
+    await requestWakeLock();
+    setConn("on");
+    startAgeTimer();
+  }catch(e){
+    if(e && e.name==="NotFoundError"){ /* user cancelled chooser */ }
+    else hint("Connect failed: "+(e&&e.message?e.message:e));
+    device=null; setConn("off");
+  }
+}
+
+function onDrop(){
+  char=null;
+  if(wakeLock){ wakeLock.release().catch(()=>{}); wakeLock=null; }
+  setConn("off");
+  $("btn").textContent="Connect";
+  hint("Unit disconnected. Tap Connect to resume.");
+}
+
+async function disconnect(){
+  try{ if(device && device.gatt.connected) device.gatt.disconnect(); }catch(e){}
+  device=null; onDrop();
+}
+
+const dec = new TextDecoder();
+function onValue(ev){
+  lastRx = Date.now();
+  const line = dec.decode(ev.target.value).trim();
+  $("raw").textContent = line;
+  const p = line.split(",");
+  if(p.length < 10) return;
+  const surge=+p[2], sway=+p[3], conf=+p[4], mode=+p[5],
+        spd=+p[6], lat=+p[7], lon=+p[8], fix=+p[9];
+  render({surge,sway,conf,mode,spd,lat,lon,fix});
+}
+
+function render(d){
+  setConn("on");
+  const moving = !(d.fix===1 && d.spd < MOVING_MS);     // "am I paddling?" speed gate
+  // headline cadence: single→surge (strokes/min); double→sway (kayak cycle "CPM")
+  let head, label, unit, pillTxt, pillCls;
+  if(d.mode===2){ head=d.sway; label="Cadence"; unit="cycles / min (CPM)"; pillTxt="double blade · 2:1"; pillCls="double"; }
+  else if(d.mode===1){ head=d.surge; label="Cadence"; unit="strokes / min"; pillTxt="single blade · 1:1"; pillCls="single"; }
+  else { head=d.surge; label="Cadence"; unit="acquiring…"; pillTxt="mode —"; pillCls=""; }
+
+  const hero=$("hero");
+  if(!moving || head<=0){
+    hero.classList.add("paused");
+    $("cadence").textContent = moving ? "—" : "0";
+    $("cadenceUnit").textContent = moving ? "acquiring…" : "paused (not moving)";
+  }else{
+    hero.classList.remove("paused");
+    $("cadence").textContent = head.toFixed(1);
+    $("cadenceUnit").textContent = unit;
+  }
+  $("heroLabel").textContent = label;
+  const pill=$("modePill"); pill.textContent=pillTxt; pill.className="modepill "+pillCls;
+
+  const kn=d.spd*1.94384, kmh=d.spd*3.6;
+  $("speedKn").textContent=kn.toFixed(1);
+  $("speedMs").textContent=d.spd.toFixed(2);
+  $("speedKmh").textContent=kmh.toFixed(1);
+
+  const pct=Math.max(0,Math.min(100,Math.round(d.conf*100)));
+  $("confPct").textContent=pct;
+  const bar=$("confBar"); bar.style.width=pct+"%";
+  bar.style.background = pct>=70?"var(--good)":pct>=45?"var(--warn)":"var(--bad)";
+  $("ratio").textContent = (d.sway>0? (d.surge/d.sway).toFixed(2) : "—");
+
+  $("surgeV").textContent=d.surge.toFixed(1);
+  $("swayV").textContent=d.sway.toFixed(1);
+  $("gps").textContent = d.fix===1 ? (d.lat.toFixed(5)+", "+d.lon.toFixed(5)) : "no fix";
+}
+
+function startAgeTimer(){
+  clearInterval(ageTimer);
+  ageTimer=setInterval(()=>{
+    if(!device){ $("age").textContent="—"; return; }
+    const dt=Date.now()-lastRx;
+    $("age").textContent = lastRx? (Math.round(dt/100)/10)+"s ago" : "—";
+    if(dt>STALE_MS && lastRx) setConn("stale");
+  },500);
+}
+
+$("btn").addEventListener("click", ()=> device ? disconnect() : connect());
+setConn("off");
+if(!navigator.bluetooth) hint("Web Bluetooth unavailable — open this page in Android Chrome over HTTPS (not file://).");
+</script>
+</body>
+</html>
