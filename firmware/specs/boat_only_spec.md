@@ -13,8 +13,14 @@ v0.2 added the phased test plan §9, companion-app choice §10, and the phone-GP
 optional hardware variants §3.)
 **Status:** concept + offline feasibility proven for cadence & speed (double-blade
 kayak 12/30 Aug; **first single-blade canoe + SUP evidence 21 Oct 2026, §6.1**).
-**First firmware written 3 Nov 2026** (`BoatRate` v0.1 + `app/index.html`) — compiles;
-on-water Phase B/C/D verification pending.
+**First firmware written + BENCH-VERIFIED 3 Nov 2026** (`BoatRate` v0.1 + `app/index.html`).
+Bench PASS: boots (BNO085 + GPS fix + mag), `SurgeCadence` tracks an imposed hand rhythm
+(surge locked ~45/min, confidence to 0.94), **Android Chrome Web Bluetooth dashboard connects
+and streams live**, and **Wi-Fi(ESP-NOW)+BLE coexistence holds** — the CYD logs at 100 Hz
+gap-free (`seq` +100/s, 0 gaps) with the phone connected, same speed shown on CYD and phone.
+Needed one fix: BLE advertising packet overflow (128-bit UUID + name = 31 B) → UUID in the ADV,
+name in the scan response. On-water Phase C (real paddling + a video stroke count to pass
+A-2/A-3) and Phase B battery/range pending.
 
 ---
 
