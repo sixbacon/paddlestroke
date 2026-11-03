@@ -208,11 +208,22 @@ static void initBLE() {
         NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
     g_cadenceChar->setValue("waiting");
     svc->start();
+
+    // Keep the advertising packet under the 31-byte BLE limit: the 128-bit
+    // service UUID (18 B) goes in the ADV packet (Web Bluetooth's service
+    // filter needs it there), and the device name goes in the SCAN RESPONSE
+    // (otherwise UUID + name + flags = 31 B exactly, which can overflow and
+    // stop advertising from starting at all).
     NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
-    adv->addServiceUUID(BLE_SERVICE_UUID);
-    adv->setScanResponse(true);
-    NimBLEDevice::startAdvertising();
-    Serial.println("BLE: advertising as " BLE_DEVICE_NAME);
+    NimBLEAdvertisementData advData;
+    advData.setFlags(BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP);
+    advData.setCompleteServices(NimBLEUUID(BLE_SERVICE_UUID));
+    adv->setAdvertisementData(advData);
+    NimBLEAdvertisementData scanData;
+    scanData.setName(BLE_DEVICE_NAME);
+    adv->setScanResponseData(scanData);
+    bool ok = NimBLEDevice::startAdvertising();
+    Serial.printf("BLE: advertising %s as %s\n", ok ? "STARTED" : "FAILED", BLE_DEVICE_NAME);
 }
 
 // Build the ASCII CSV line and send it over BLE notify + serial.
